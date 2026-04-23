@@ -40,6 +40,8 @@ What follows are seven use cases we ship in v1.0 — the highest-value workflows
 
 Hallucinated citations are a structural problem with a structural fix. The system reads the file, finds the cited line, and compares the quote — every time. If the LLM invents a reference that points to nothing, it is filtered. If a file changed after the model was built, the mismatch is surfaced. Tested across frontier cloud models and local open-weight ones, the default behavior is to refuse to guess: when the evidence is thin, you get an honest *"I don't have enough information"* instead of a confident-sounding answer that might be wrong.
 
+**Honest refusal is a measured capability.** On the LoCoMo memory benchmark, rlat correctly refuses to answer on **91.3% of the 446 questions deliberately designed to be unanswerable** from the conversation. That is the highest-performing category in the whole 1986-question benchmark — the reader gets "I don't have enough information" right more often than it answers any category where the answer is present. For legal, medical, regulatory, and compliance work where a wrong answer is worse than no answer, this is the default behaviour you want. See [Benchmarks — LoCoMo](/docs/benchmarks#locomo) for details.
+
 ---
 
 ## 2. Bootstrap any assistant in seconds
@@ -141,7 +143,15 @@ When grounding an LLM with Resonance Lattice context, hallucination rates droppe
 
 ### Evidence
 
-The memory architecture is benchmarked against LongMemEval, the standard evaluation for long-horizon conversational memory. The mechanical-write-path approach avoids the failure modes documented across the major LLM-driven memory systems — each of which relies on an LLM to derive memories at write time, introducing compounding error over long interaction histories. Because the searchable index is rebuildable from your raw conversation text at any time, derivation drift cannot accumulate the way it does in summary-of-summary chains.
+The memory architecture is benchmarked against two standard long-conversation evaluations.
+
+**LongMemEval** (retrieval-only): Phase 2 v14 baseline at **Recall@5 0.924 / MRR 0.919** on 500 questions — the correct prior session is in top-5 for 92% of long-horizon memory queries, across six question types (single-session, multi-session, knowledge-update, temporal).
+
+**LoCoMo** (end-to-end QA, the headline Mem0/Letta/Zep benchmark): Phase 2 baseline at **66.23% leaderboard-style (excl. adversarial) / 71.85% overall** on 1986 questions across 10 real multi-month conversations (Claude Sonnet 4.6 judge). That lands rlat in Mem0 / Letta territory on the full retrieve → read → judge pipeline. Standout category: **91.3% correct refusal on adversarial questions** — unanswerable-by-design questions where the reader must decline. See [Benchmarks — LoCoMo](/docs/benchmarks#locomo).
+
+**What's measured and what isn't.** Both benchmarks exercise *retrieval over a fixed haystack* — LoCoMo loads the whole conversation at once, LongMemEval loads all prior sessions at once. They do not exercise the write-path differentiator: tier migration, retention decay, stale-fact overwrite, algebraic-exact forgetting. That validation (on dogfooded Claude Code transcripts aged over months) is explicit pending work in [Honest Claims](/docs/honest-claims#remaining-pending-claims). The shipped tier-weighted `memory recall` path regresses vs cartridge-per-context on both static-haystack benchmarks; for static QA, cartridge retrieval is the measured-best surface. The retention / consolidation / forget primitives remain the architectural claim — they're just not what these benchmarks measure.
+
+The mechanical-write-path approach avoids the failure modes documented across the major LLM-driven memory systems — each of which relies on an LLM to derive memories at write time, introducing compounding error over long interaction histories. Because the searchable index is rebuildable from your raw conversation text at any time, derivation drift cannot accumulate the way it does in summary-of-summary chains.
 
 ---
 

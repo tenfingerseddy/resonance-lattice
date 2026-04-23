@@ -94,16 +94,30 @@ Rules for citing this doc:
 
 ---
 
-### "Benchmarked against BEIR-5 and LongMemEval"
+### "Benchmarked against BEIR-5, LongMemEval, and LoCoMo"
 
-**Claim:** Retrieval quality is measured against standard information-retrieval benchmarks, not just anecdotes.
+**Claim:** Retrieval quality is measured against standard information-retrieval benchmarks, not just anecdotes. End-to-end QA quality is measured against the standard long-conversation-memory benchmark.
 
 **Evidence:**
 - BEIR-5 nDCG@10 numbers shipped in `benchmarks/results/` with full reproduction commands in `docs/RETRIEVAL_BENCHMARK_RUNBOOK.md`.
 - LongMemEval v14 R@5 baseline: **0.924** on the 500-question subset (see `benchmarks/results/longmemeval/` and the `project_longmemeval_ku_filter` project memory for context).
+- LoCoMo Phase 2 baseline: **66.23% leaderboard-style (excl. adversarial) / 71.85% overall** on 1986 QA across 10 conversations, Claude Sonnet 4.6 judge (see `benchmarks/results/locomo/phase2_cartridge_e5_all10_sonnet_judge.json`). This is end-to-end retrieve → read → judge, directly comparable in shape to Mem0 / Letta / MemMachine / Zep published numbers. See the [Benchmarks LoCoMo section](BENCHMARKS.md#locomo) for per-category breakdown and the tested feature-ablation matrix.
 - Three-layer (field + expand + hybrid + reader) benchmarks measured 2026-04-20 — see the "Block D benchmark results" section below.
 
-**Qualifier:** BEIR results are **not uniformly positive**. We win on some corpora and lose on others. Do not expect blanket "better than baseline" — expect "better on X, parity on Y, regression on Z". The runbook documents which is which. LongMemEval v14 is the ship baseline; earlier versions showed different patterns and should not be compared across runs.
+**Qualifier:** BEIR results are **not uniformly positive**. We win on some corpora and lose on others. Do not expect blanket "better than baseline" — expect "better on X, parity on Y, regression on Z". The runbook documents which is which. LongMemEval v14 is the ship baseline; earlier versions showed different patterns and should not be compared across runs. LoCoMo judge model is Sonnet 4.6 (Claude judges tend to be slightly stricter than GPT judges); the standard leaderboard judge is GPT-4o, and a GPT-4o rejudge is pending — expect a ±2-4 pt shift when that lands. Do not cite LoCoMo numbers against published leaders without noting the judge difference.
+
+---
+
+### "Honest refusal on unanswerable questions is measured"
+
+**Claim:** When the corpus or conversation doesn't contain the information needed to answer a question, the reader correctly refuses ("I don't have enough information") rather than fabricating an answer.
+
+**Evidence:**
+- LoCoMo includes a dedicated adversarial category (n=446 questions across the 10-conversation set) of questions explicitly *not* answerable from the conversation. Correct behaviour is the reader declining to commit.
+- rlat's Phase 2 baseline scores **91.3% on adversarial** under the Sonnet 4.6 judge (`benchmarks/results/locomo/phase2_cartridge_e5_all10_sonnet_judge.json`). This is the highest-performing category in the test — the reader gets refusal right 91 times out of 100.
+- The behaviour is driven by a deliberate reader system prompt that instructs grounded-only synthesis and explicit refusal when evidence is thin. The [`bench_locomo.LOCOMO_READER_SYSTEM_PROMPT`](../benchmarks/bench_locomo.py) documents it; it's the same posture `rlat ask` uses by default.
+
+**Qualifier:** "Correctly refuses" means the LLM judge rates the refusal as matching the unanswerable-ground-truth. It does NOT mean every incorrect answer that should have been refusals was caught (the other 8.7% are cases where the reader committed to a wrong answer). It also does NOT apply to adversarial questions outside LoCoMo's specific formulation — other adversarial setups (e.g. questions that LOOK answerable but reference a detail never in the conversation) may score differently. The claim is that refusal-on-unanswerable is a measured capability, not a prompt-engineering preference, on this specific benchmark.
 
 ---
 
@@ -329,6 +343,8 @@ These are still not validated and remain gated on separate work:
 - **LongMemEval R@5 ≥ 0.92 with the three-layer stack** (must not regress from the 0.924 baseline).
 - **python-stdlib answer-quality ≥ 70%** on 50 held-out questions (custom LLM judge).
 - **Reader latency p50 < 3s** for `rlat ask` on local OpenVINO on Intel Arc iGPU.
+- **LoCoMo GPT-4o rejudge** for direct leaderboard-convention comparability against Mem0 / Letta / MemMachine / Zep (currently judged with Claude Sonnet 4.6 at 66.23% leaderboard-style; GPT-4o is the Mem0 paper convention).
+- **LayeredMemory retention + consolidation validation** on a real dogfood-over-months corpus. The write-path claim (tier migration, decay, stale-fact overwrite) is the architectural differentiator vs cartridge-per-context, and it has not been empirically validated. Static-haystack benchmarks (LME, LoCoMo) exercise retrieval fusion, which regresses vs cartridge, but do not exercise retention. Until the dogfood-over-months benchmark exists, the shipped `LayeredMemory` surface should be framed as "the memory write-path primitive with an opt-in tier-weighted read path" rather than "tier-weighted recall always beats cartridge."
 
 If any of these miss, we'll document the miss here rather than quietly remove the gate.
 

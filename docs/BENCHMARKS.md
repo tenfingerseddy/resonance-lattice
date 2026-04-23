@@ -26,6 +26,7 @@ These are the strongest benchmark-backed claims the repo can make today:
 | LLM grounding | hallucination rate `0.78 -> 0.16`, fact recall `0.27 -> 0.91` | the grounded context materially improves answer quality on the internal evaluation |
 | BEIR / cross-corpus | production pipeline beat flat E5 on `3 of 5` tested datasets | the workflow generalizes beyond the internal corpus, but not uniformly |
 | LongMemEval / long-horizon memory | `Recall@5 = 0.924`, `MRR = 0.919` on 500 LongMemEval_s questions | the pipeline retrieves the correct session in top-5 for 92% of long-horizon conversational-memory queries across six question types |
+| LoCoMo / end-to-end conversational QA | `66.23%` leaderboard-style (excl. adversarial) / `71.85%` overall on 1986 QA across 10 conversations | the full retrieve-read-judge pipeline lands rlat in Mem0 / Letta territory on the standard long-conversation QA benchmark (Sonnet 4.6 judge; GPT-4o judge pending) |
 | Comparative / Obsidian | `Recall@5 1.00` vs `0.81`, `MRR 0.929` vs `0.714` on the published comparison | RL outperformed the best tested Obsidian LLM wiki workflow as a retrieval layer for grounded assistant use |
 
 If the question is "why should I spend time setting this up when I already have a wiki, skills, or memory?", the most relevant sections on this page are [Comparative / Obsidian](#comparative-obsidian), [Token Efficiency](#token-efficiency), and [LLM Grounding](#llm-grounding). Those three together answer whether RL is just another context wrapper or a materially better retrieval layer. For Obsidian specifically, the claim is that RL is the stronger retrieval system for assistant grounding, not merely a different UI preference.
@@ -221,6 +222,67 @@ The full RL pipeline is strong on multi-session conversational memory retrieval:
 
 See `benchmarks/results/longmemeval/v14_full500_800.json`.
 
+## LoCoMo
+
+### What this benchmark tests
+
+[LoCoMo](https://github.com/snap-research/locomo) is an end-to-end conversational memory QA benchmark. Each of 10 conversations contains 19–32 dialogue sessions between two speakers spanning 2–3 months, with 105–260 questions per conversation grounded in that history. Unlike LongMemEval (which measures retrieval only), LoCoMo measures the full retrieve → read → judge pipeline against an LLM judge: can the assistant answer correctly from its memory of the conversation?
+
+Five question categories:
+
+- **single-hop** — fact stated once in one session
+- **multi-hop** — fact synthesised across sessions
+- **temporal** — fact dependent on *when* it was said
+- **open-domain** — inference from conversation context
+- **adversarial** — **unanswerable from the conversation**. Correct answer is the reader refusing to commit ("I don't have enough information")
+
+Published leader numbers (leaderboard-style, excl. adversarial, GPT-4o judge): Mem0 ~67%, Letta ~68%, MemMachine ~73%, Zep ~79%.
+
+### Headline numbers
+
+Phase 2 baseline on 10 conversations, 1986 QA total, E5-large-v2, auto-routed retrieval, Claude Haiku 4.5 reader, cartridge-per-conversation:
+
+| | Claude Sonnet 4.6 judge | Claude Haiku 4.5 judge |
+|---|---|---|
+| **Overall (incl. adversarial)** | **71.85%** | 68.23% |
+| **Leaderboard-style (excl. adversarial)** | **66.23%** | — |
+
+Per-category (Sonnet 4.6 judge):
+
+| Category | n | Accuracy |
+|---|---|---|
+| **adversarial** (unanswerable) | 446 | **91.3%** |
+| single-hop | 841 | 82.0% |
+| temporal | 321 | 57.3% |
+| multi-hop | 282 | 42.2% |
+| open-domain | 96 | 28.1% |
+
+### Honest "I don't know" is a measured capability, not a claim
+
+The 91.3% on adversarial questions is the direct measurement of whether the reader correctly refuses to answer when the conversation doesn't contain the information. This is a specific failure mode for most memory systems — they commit to a best-guess rather than decline, because refusing looks like a capability gap. On LoCoMo's adversarial set, the rlat reader correctly says "I don't have enough information" on **91 of every 100** unanswerable questions. The grounded-by-default posture isn't just a prompt-engineering preference; it's a measured, verifiable behaviour.
+
+This is also why the leaderboard convention *excludes* adversarial: a system that aggressively refuses inflates its overall score without solving the harder answerable categories. The 66.23% leaderboard number is the one to compare against Mem0/Letta/Zep.
+
+### Strongest valid takeaway
+
+End-to-end on LoCoMo, rlat is in mid-tier memory-system territory (Mem0 / Letta class) with a measured strength in refusal accuracy that most systems don't report. Single-hop is well-handled (82%); multi-hop and open-domain are the clear weakness, as with the published leaders.
+
+### Limits and caveats
+
+- **Judge model matters.** The numbers above use Claude Sonnet 4.6 as the LLM judge. The LoCoMo leaderboard convention is GPT-4o; a GPT-4o rejudge is pending and likely shifts the number by 2–4 pt (Claude judges tend to be slightly stricter than GPT judges on this task). Do not cite the 66.23% against a published leader number without noting the judge difference.
+- **Reader matters.** The reader was Claude Haiku 4.5 direct-prompted (no citation-style injection; the built-in APIReader's `[N]` citation template hurts LoCoMo scores by ~15 pt because it instructs the reader to hedge, and we bypass it for this benchmark).
+- **LME-proven retrieval features don't transfer.** On LoCoMo's per-conversation cartridge shape (~150 chunks), the LME "full-stack" retrieval features regress hard: `subgraph` spectral expansion −30 pt (catastrophic — dilutes top-k in small cartridges), `diversify_by_session` −3.3 pt (small sessions carry complementary adjacency, not redundancy). `prefer_recent` and cross-encoder rerank are neutral. The shipped LoCoMo config uses the cartridge baseline + auto-routed retrieval without these features.
+- **Tier-weighted LayeredMemory regresses here too** (−11 pt aggregate on a 2-conversation smoke, with −27 pt craters on multi-hop and temporal for conv-30 — same 30d/180d tier-weight cliff the LME P1-tier hit). Since LoCoMo conversations span 2–3 months, the recency tier cliff down-weights older-session evidence that is the actual answer. The LoCoMo ship number uses cartridge retrieval, not tier-weighted recall.
+- **Fact extraction (LLM-assisted, `--extract-facts`) was tested and deferred.** The current fact-row ingest displaces raw chunks in top-k, cratering single-hop on some conversations. The path forward is facts-as-ranking-signal rather than facts-as-context-rows; that rewrite is post-launch work.
+
+### Raw outputs
+
+- `benchmarks/results/locomo/phase2_cartridge_e5_all10.json` — Haiku-judged baseline
+- `benchmarks/results/locomo/phase2_cartridge_e5_all10_sonnet_judge.json` — Sonnet-judged rejudge
+- `benchmarks/results/locomo/smoke/s1_baseline.json`, `s2_prefer_recent.json`, `s3_diversify.json`, `s4_cross_encoder.json`, `s5_subgraph.json`, `s6_combo_pr_ce.json` — per-feature ablation smokes
+- `benchmarks/results/locomo/smoke/s7_facts_5qa.json`, `s8_facts_30qa.json`, `s9_facts_topk20.json` — LLM-assisted fact-extraction smokes (deferred path)
+- `benchmarks/results/locomo/smoke/s10_layered.json` — LayeredMemory tiered-retrieval smoke
+
 ## Comparative / Obsidian
 
 ### What this benchmark tests
@@ -259,6 +321,8 @@ These claims are strong enough to use in repo-first positioning:
 - RL materially improves grounding on the current answer-quality evaluation
 - the system has meaningful cross-corpus evidence, even if the gains are not uniform across every dataset
 - RL retrieves the correct session in the top-5 for 92% of LongMemEval_s long-horizon conversational-memory queries (retrieval metric, not end-to-end QA accuracy)
+- End-to-end on LoCoMo (retrieve → read → judge, 1986 QA), rlat scores 66.2% leaderboard-style / 71.9% overall with a Claude Sonnet 4.6 judge — mid-tier memory-system territory alongside Mem0 and Letta
+- The LoCoMo adversarial subset measures correct refusal on unanswerable questions — rlat scores 91.3%, evidence that grounded-by-default refusal is a measured capability, not a prompt-engineering preference
 
 ## How To Read These Results
 
@@ -280,6 +344,7 @@ The repo preserves scripts and outputs under:
 - `benchmarks/results/llm_judge/`
 - `benchmarks/results/beir/`
 - `benchmarks/results/longmemeval/`
+- `benchmarks/results/locomo/`
 - `benchmarks/results/comparative/`
 
 Use [Benchmark Runbook](/docs/benchmark-runbook) when you need reproduction steps, thresholds, baseline policy, or CI gating guidance.

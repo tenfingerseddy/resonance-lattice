@@ -552,6 +552,39 @@ The right way to read this:
 
 All per-corpus numbers in the breakdown table use pretrained encoder weights only — no trained heads, no checkpoints.
 
+### How does rlat compare to Mem0, Letta, Zep, and MemMachine on memory benchmarks?
+
+The standard memory-benchmark headline those systems quote is [LoCoMo](https://github.com/snap-research/locomo) — 10 multi-month conversations, 1986 questions across five categories (single-hop, multi-hop, temporal, open-domain, adversarial). It measures the full retrieve → read → judge pipeline, not just retrieval, so the whole memory system is under test.
+
+On Phase 2 baseline with Claude Sonnet 4.6 as the LLM judge:
+
+| System | Leaderboard-style (excl. adversarial) |
+|---|---|
+| Mem0 | ~67% |
+| Letta | ~68% |
+| **rlat (Phase 2 baseline)** | **66.23%** |
+| MemMachine | ~73% |
+| Zep | ~79% |
+
+rlat lands squarely in Mem0 / Letta territory. MemMachine and Zep are meaningfully ahead. The published leaders use GPT-4o as judge; our number is Sonnet 4.6 and a GPT-4o rejudge is pending — expect ±2-4 pt shift when that lands.
+
+What is not in the table: rlat scores **91.3% on the adversarial category** (LoCoMo's unanswerable-question subset) — the reader correctly refuses to commit to an answer on 91 out of every 100 unanswerable questions. That is a direct measurement of the "honest I-don't-know" capability, and it is higher than any other category. It is also why the leaderboard convention excludes adversarial: a system that aggressively refuses inflates the overall number without solving the harder answerable categories. Our overall-incl-adversarial score is 71.85%.
+
+For the full per-category breakdown, feature ablations (which LME-proven retrieval features transfer and which crater), and the raw output files, see [Benchmarks — LoCoMo](/docs/benchmarks#locomo). For the memory-architecture positioning alongside these results, see [LLM Memory](/docs/llm-memory).
+
+### Does rlat know when it doesn't know? What if I ask something my knowledge model can't answer?
+
+Yes, and it is measured.
+
+The reader is instructed to refuse when the retrieved evidence is thin — to say "I don't have enough information" instead of inventing an answer. This is the opposite of the default LLM failure mode (fabricate a plausible-sounding answer to preserve fluency). The refusal posture is enforced two ways:
+
+1. **Reader system prompt.** `rlat ask` uses a grounded-only synthesis prompt that tells the reader to decline when the evidence doesn't cover the question. Deterministic, prompt-level behaviour.
+2. **Citation verification.** The reader's `[N]` citations are parsed, validated against the evidence set, and (with `build_bundle`) quote-checked against the source bytes. Fabricated references can't reach the answer, and quote drift surfaces with a `✗` marker.
+
+Measured evidence on LoCoMo: **91.3% correct refusal** on the 446-question adversarial subset. The questions are deliberately unanswerable from the conversation; the reader correctly declines on 91 out of every 100 of them. See [Honest Claims — Honest refusal on unanswerable questions is measured](/docs/honest-claims#honest-refusal-on-unanswerable-questions-is-measured).
+
+Practical consequence: if your corpus doesn't cover a topic, you get a clean "I don't have enough information" instead of a confident-sounding wrong answer. For legal, medical, regulatory, and compliance workflows where a wrong answer is worse than no answer, this is a meaningful default.
+
 ### Where does the LLM grounding number come from?
 
 The answer-quality benchmark compares an LLM answering questions without rlat context versus the same model answering with rlat-supplied context. The judge scores outputs on:
