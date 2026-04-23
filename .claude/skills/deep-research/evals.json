@@ -1,0 +1,69 @@
+{
+  "skill_name": "deep-research",
+  "description": "Trigger/behavior evals for deep-research. Mix of should-trigger multi-hop questions and should-NOT-trigger one-shot questions.",
+  "evals": [
+    {
+      "id": 1,
+      "category": "should-trigger",
+      "prompt": "Summarize the tradeoffs across all four workstreams — Rationalization, Dogfood, Semantic-Layer, Launch — and tell me where the biggest Ops risk sits for v1.0.0.",
+      "expected_behavior": [
+        "Recognizes this as cross-workstream synthesis → multi-hop.",
+        "Drafts 3-5 sub-queries (one per workstream + one for launch risk) BEFORE searching.",
+        "Runs iterative `rlat search` calls against project.rlat and/or memory knowledge models.",
+        "Synthesis cites specific issues / plans / workstreams, not just general claims.",
+        "Stays within the 8-search budget."
+      ]
+    },
+    {
+      "id": 2,
+      "category": "should-trigger",
+      "prompt": "Where have we contradicted ourselves on encoder choice over the last six months? I want every inconsistency, not just the current decision.",
+      "expected_behavior": [
+        "Recognizes contradiction detection across time as the core task.",
+        "Uses `rlat search --with-contradictions` or `rlat contradictions` on the encoder topic.",
+        "Follows up with targeted searches for specific conflicting claims surfaced.",
+        "Reports each contradiction with both sides cited, not a single resolved answer."
+      ]
+    },
+    {
+      "id": 3,
+      "category": "should-trigger",
+      "prompt": "Explain the full rationale for the three-layer semantic router pivot — what broke, what the alternatives were, and why we landed where we landed.",
+      "expected_behavior": [
+        "Drafts sub-queries covering: what broke (pre-pivot diagnosis), alternatives considered, the winning argument, and downstream consequences.",
+        "Iterates — second query depends on files/concepts surfaced by the first.",
+        "Flags single-sourced claims vs. corroborated ones in the synthesis."
+      ]
+    },
+    {
+      "id": 4,
+      "category": "should-NOT-trigger",
+      "prompt": "Where is `APIReader.answer` defined?",
+      "expected_behavior": [
+        "Recognizes exact-symbol lookup — one grep call, not a research loop.",
+        "Does NOT draft a multi-query plan.",
+        "Returns the file:line directly."
+      ]
+    },
+    {
+      "id": 5,
+      "category": "should-NOT-trigger",
+      "prompt": "How do I run the test suite?",
+      "expected_behavior": [
+        "One-shot answer from CLAUDE.md or a quick `rlat search` — no research loop.",
+        "Does NOT invoke deep-research — the answer is a single command."
+      ]
+    },
+    {
+      "id": 6,
+      "category": "should-trigger",
+      "prompt": "I asked rlat about the memory tier promotion policy and the answer was thin — coverage came back `partial`. Dig into how it actually works and cite the real rules.",
+      "expected_behavior": [
+        "Recognizes the explicit failed one-shot → multi-hop follow-up signal.",
+        "Uses expansion_hint from the prior search (if available) to target the next query.",
+        "Alternates `rlat search` with grep + Read on surfaced source files.",
+        "Honest about remaining uncertainty if coverage stays thin."
+      ]
+    }
+  ]
+}

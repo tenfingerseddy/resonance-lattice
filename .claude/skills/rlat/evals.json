@@ -1,0 +1,86 @@
+{
+  "skill_name": "rlat",
+  "description": "Trigger/behavior evals for the rlat skill. Mix of should-trigger conceptual + build/inspect queries and should-NOT-trigger exact-symbol / local-edit queries. Runnable with any skill-eval harness that understands the {prompt, expected_behavior} shape.",
+  "evals": [
+    {
+      "id": 1,
+      "category": "should-trigger",
+      "prompt": "How does the three-layer semantic router actually work in this repo? I want to understand where the field vs. registry vs. store boundaries sit.",
+      "expected_behavior": [
+        "Recognizes this as a conceptual, multi-file question about architecture.",
+        "Prefers `rlat search project.rlat` (or `rlat ask`) over raw grep as the orientation step.",
+        "Uses `--format json` when consuming results as research, not terminal display.",
+        "Summarizes findings with source citations before acting further."
+      ]
+    },
+    {
+      "id": 2,
+      "category": "should-trigger",
+      "prompt": "Why did we flip the default store mode from `embedded` to `local`? I want the rationale, not the flag.",
+      "expected_behavior": [
+        "Identifies this as a rationale / history question — multi-hop, needs cross-file synthesis.",
+        "Uses `rlat search` (or `rlat resonate` with `--mode knowledge`) against project.rlat and/or memory knowledge models.",
+        "Cites specific files (e.g. `docs/STORAGE_MODES.md`, memory/dogfood entries) in the answer.",
+        "Does NOT rely on grep alone — grep won't find rationale."
+      ]
+    },
+    {
+      "id": 3,
+      "category": "should-trigger",
+      "prompt": "Build a knowledge model from ./docs and ./src, output to project.rlat, and wire up an MCP server Claude Code can use.",
+      "expected_behavior": [
+        "Runs `rlat build ./docs ./src -o project.rlat` (default `local` store, no `--store-mode embedded`).",
+        "Runs `rlat mcp project.rlat` or offers the MCP config snippet for `.claude/mcp.json`.",
+        "Does not suggest the deprecated `embedded` store mode."
+      ]
+    },
+    {
+      "id": 4,
+      "category": "should-trigger",
+      "prompt": "The `project.rlat` on this branch drifted from the source files. What's the right way to refresh it without rebuilding from scratch?",
+      "expected_behavior": [
+        "Identifies this as a local-mode freshness question.",
+        "Suggests `rlat refresh project.rlat --source-root .` OR `rlat sync project.rlat ./docs ./src`.",
+        "Does NOT suggest `rlat freshness` / `rlat sync` on their own — those are remote-mode commands."
+      ]
+    },
+    {
+      "id": 5,
+      "category": "should-trigger",
+      "prompt": "Compare what our new internal knowledge model knows that the public fabric-docs knowledge model doesn't cover.",
+      "expected_behavior": [
+        "Recognizes the asymmetric comparison intent.",
+        "Suggests `rlat search project.rlat \"<query>\" --contrast fabric-docs.rlat` OR `rlat compare project.rlat fabric-docs.rlat`.",
+        "Reports asymmetric energy / overlap bands, not just a file diff."
+      ]
+    },
+    {
+      "id": 6,
+      "category": "should-trigger",
+      "prompt": "I need to inject grounded context into an LLM prompt so it cites only what's in our docs — no hallucination. How?",
+      "expected_behavior": [
+        "Picks `rlat resonate project.rlat \"<query>\" --mode constrain --format context`.",
+        "Explains `constrain` is the zero-hallucination mode vs `augment` / `knowledge`.",
+        "Does NOT default to `augment` for this stakes level."
+      ]
+    },
+    {
+      "id": 7,
+      "category": "should-NOT-trigger",
+      "prompt": "Rename the `EncoderConfig` class to `EncoderSettings` across the repo and update the imports.",
+      "expected_behavior": [
+        "Recognizes exact-symbol rename — uses Grep for `EncoderConfig` and Edit, not rlat search.",
+        "Does NOT run `rlat search` first — semantic search adds no value for deterministic symbol rewrites."
+      ]
+    },
+    {
+      "id": 8,
+      "category": "should-NOT-trigger",
+      "prompt": "Add a `print(f\"debug: {query}\")` right before the `encoder.encode(query)` call in src/resonance_lattice/reader/api.py:135.",
+      "expected_behavior": [
+        "Uses Read + Edit on the specific file.",
+        "Does NOT invoke rlat — the user already supplied the exact location."
+      ]
+    }
+  ]
+}

@@ -15,10 +15,12 @@ description: >-
   then follow up with grep for exact symbols.
 argument-hint: "[command] [query] or a natural-language question about an indexed corpus"
 
-# Knowledge Model integration — dynamic context from the project's own corpus.
-# Points at project.rlat (the ~2.7k chunk BGE external knowledge model built from
-# ./docs and ./src). Same pattern as fabric-lakehouse-medallion → fabric.rlat.
-# See memory/feedback_skill_cartridge_wiring.md for the wiring rule.
+# rlat skill-loader extensions (below) — NOT part of Anthropic's skill spec.
+# These fields are consumed by `rlat skill inject` / `rlat skill route` to wire
+# dynamic knowledge-model context into the skill at activation time. The standard
+# Claude skill loader ignores them harmlessly. Points at project.rlat — the BGE
+# knowledge model built from ./docs and ./src. Same pattern as fabric-lakehouse-
+# medallion → fabric.rlat. See memory/feedback_skill_cartridge_wiring.md.
 knowledge models:
   - project.rlat
 knowledge model-queries:
@@ -175,17 +177,18 @@ For full flag tables and detailed options, read [references/CLI_REFERENCE.md](re
 
 ## Knowledge Model Discovery
 
-**IMPORTANT**: Before using rlat, check what knowledge models are available:
+Before using rlat, check what knowledge models are available:
 
 1. **If MCP is configured**: Call `rlat_discover` first. It returns all available knowledge models, their domains, and freshness.
 2. **If using CLI**: Check `.rlat/manifest.json` or glob for `.rlat/*.rlat` files.
 3. **If neither exists**: Suggest `rlat init-project --auto-integrate` to the user.
 
 When a user asks a conceptual question:
-1. Check `rlat_discover` for available knowledge models
-2. Pick the knowledge model whose domain matches the question
-3. For cross-domain questions, use `--with` to compose multiple knowledge models
-4. For "what changed" questions, use `--diff` against a baseline
+
+1. Check `rlat_discover` for available knowledge models.
+2. Pick the knowledge model whose domain matches the question.
+3. For cross-domain questions, use `--with` to compose multiple knowledge models.
+4. For "what changed" questions, use `--diff` against a baseline.
 
 ---
 
@@ -228,7 +231,7 @@ rlat search project.rlat "query" --format prompt --mode augment
 | `--source-root PATH` | search, resonate, summary | Resolve evidence from local files (external store) |
 | `--onnx PATH` | search, resonate, mcp | ONNX backbone for 2-5x faster encoding |
 | `--no-worker` | search | Disable background warm worker |
-| `--store-mode` | build | `embedded` (default) or `external` (no text in knowledge model) |
+| `--store-mode` | build | `local` (default), `bundled` (self-contained), or `remote` (HTTP-backed). `embedded` is deprecated. |
 | `--compression` | build | `none`, `zstd`, `lz4` |
 | `--quantize-registry` | build | 0 (off), 8 (~50% smaller), 4 (~87% smaller) |
 | `--deep` | xray | Add topological analysis |
@@ -238,20 +241,19 @@ rlat search project.rlat "query" --format prompt --mode augment
 
 ## Knowledge Model Concepts
 
-### Three Layers
-
-| Layer | Contents | Scales with |
-|-------|----------|-------------|
-| **Field** | Semantic model of the corpus | Fixed-size |
-| **Registry** | Source coordinates and lookup structures | Source count |
-| **Store** | Evidence text, metadata, chunk content | Corpus size |
+A `.rlat` knowledge model has three layers: a fixed-size **field** (semantic router), a **registry** (source coordinates, scales with source count), and a **store** (evidence text, scales with corpus size). See the project `CLAUDE.md` / `resonance-context.md` primer for the architectural detail.
 
 ### Store Modes
 
-| Mode | What's in the .rlat | Trade-off |
-|------|---------------------|-----------|
-| `embedded` (default) | Field + registry + all evidence text | Portable, self-contained |
-| `external` | Field + registry only | Smaller; pass `--source-root` at query time |
+Three modes share one abstraction (`LosslessStore`) and differ only in where raw source files live. The canonical flag is `--store-mode {bundled,local,remote}`; `external` is still accepted as a synonym for `local`. See [docs/STORAGE_MODES.md](../../../docs/STORAGE_MODES.md) for the full reference.
+
+| Mode | Raw files live in | Pick when | Freshness command |
+|------|-------------------|-----------|-------------------|
+| `local` (default) | local directory resolved via `--source-root` | developing against a working copy; thin knowledge model | `rlat refresh` |
+| `bundled` | inside the `.rlat` (zstd frames) | shipping a self-contained artifact — demos, CI, offline | rebuild |
+| `remote` | HTTP origin with SHA-pinned local cache | pointing at an upstream repo you don't own (docs, public codebases) | `rlat freshness` / `rlat sync` |
+
+The legacy `embedded` mode (pre-chunked SQLite store) is **deprecated and scheduled for removal at v2.0.0** — it is a different thing from `bundled`. Rebuild old `embedded` knowledge models with `--store-mode bundled` (self-contained) or the default `--store-mode local` (thin).
 
 ### Bands
 
@@ -265,7 +267,10 @@ Resolution order: (1) `--encoder` flag, (2) stored encoder in knowledge model, (
 
 ## Recipes
 
+Six canonical flows. For variations (profiling pipelines, privacy-preserving export, layered memory, dual primers, skill injection, adaptive derived queries), read [references/RECIPES.md](references/RECIPES.md).
+
 ### 1. Bootstrap a new project
+
 ```bash
 rlat init-project
 # Or manually:
@@ -273,164 +278,63 @@ rlat build ./docs ./src -o .rlat/project.rlat
 rlat summary .rlat/project.rlat -o .claude/resonance-context.md
 ```
 
-### 2. Build with options
-```bash
-rlat build ./docs ./src -o project.rlat --compression zstd --quantize-registry 8
-```
+### 2. Search with different formats
 
-### 3. Search with different formats
 ```bash
 rlat search project.rlat "how does auth work?"                    # terminal
-rlat search project.rlat "how does auth work?" --format json      # scripting
+rlat search project.rlat "how does auth work?" --format json      # scripting / agent research
 rlat search project.rlat "how does auth work?" --format prompt    # LLM paste
 ```
 
-### 4. Keep knowledge model updated after file changes
+### 3. Keep a knowledge model fresh after file changes
+
 ```bash
-rlat sync project.rlat ./docs ./src
+rlat sync project.rlat ./docs ./src     # local mode — incremental add/update/remove
+rlat freshness fabric-docs.rlat         # remote mode — drift check (read-only)
+rlat sync fabric-docs.rlat              # remote mode — apply upstream diff
 ```
 
-### 5. Semantic profiling pipeline
-```bash
-rlat profile project.rlat                  # shape and coverage
-rlat xray project.rlat --deep              # health diagnostics
-rlat probe project.rlat health             # signal/noise analysis
-rlat probe project.rlat saturation         # capacity check
-```
+### 4. Grounded LLM injection
 
-### 6. Team knowledge model merging
 ```bash
-rlat merge frontend.rlat backend.rlat -o fullstack.rlat
-rlat compare frontend.rlat fullstack.rlat  # inspect overlap
-```
-
-### 7. Grounded LLM injection
-```bash
-# Zero-hallucination mode:
+# Zero-hallucination: answer only from retrieved evidence
 rlat resonate project.rlat "design constraints" --mode constrain --format context
-# Augmented mode:
+# Augmented: LLM blends own knowledge with citations
 rlat search project.rlat "design constraints" --format prompt --mode augment
 ```
 
-### 8. Find contradictions
-```bash
-rlat contradictions project.rlat "authentication approach"
-rlat search project.rlat "config precedence" --with-contradictions
-```
+### 5. MCP server for Claude Code
 
-### 9. Privacy-preserving export
-```bash
-rlat export project.rlat -o shared.rlat --field-only
-```
-
-### 10. Compare knowledge model versions
-```bash
-rlat compare v1.rlat v2.rlat
-rlat diff v2.rlat v1.rlat -o whats_new.rlat
-```
-
-### 11. MCP server for Claude Code
 ```bash
 rlat mcp project.rlat
 ```
+
 Add to Claude Code settings:
+
 ```json
 { "mcpServers": { "resonance": { "command": "rlat", "args": ["mcp", "project.rlat"] } } }
 ```
 
-### 12. Generate assistant primer
-```bash
-rlat summary project.rlat -o .claude/resonance-context.md
-```
-Then reference from CLAUDE.md: `@.claude/resonance-context.md`
+### 6. Research a subsystem (hybrid workflow)
 
-### 13. Research a subsystem (hybrid workflow)
 ```bash
 # Semantic orientation first — find which files discuss the topic and why
-rlat search <knowledge model>.rlat "scoring strategy rationale" --format json --top-k 5
+rlat search project.rlat "scoring strategy rationale" --format json --top-k 5
 # Then grep for exact symbols found in results
 grep -rn "score_function" src/
-# Then read the specific implementation
-```
-Use this pattern when the task involves understanding *why* something was built a certain way, then making changes. rlat finds the rationale and evidence; grep finds the exact code.
-
-### 14. Adaptive skill injection with derived queries
-```bash
-# Tiers 1-3: static header + foundational queries + user query
-rlat skill inject my-skill "create a notebook for REST API ingestion"
-
-# Tiers 1-4: add derived queries for implicit needs
-rlat skill inject my-skill "create a notebook for REST API ingestion" \
-  --derived "pyspark pagination retry patterns;Delta Lake merge upsert"
-
-# Get just the injectable body (for piping into prompts)
-rlat skill inject my-skill "create a notebook for REST API ingestion" --format context
-```
-Use this when a knowledge model-backed skill triggers. Generate 2-3 short, specific derived queries targeting knowledge the user didn't explicitly ask for but will need, then pass them via `--derived`. The skill's `knowledge model-queries` handle foundational context automatically.
-
-### 15. Route a query to the best skill
-```bash
-rlat skill route "how do I configure autoscaling?"
-```
-Ranks all knowledge model-backed skills by resonance energy. Use when you need to decide which skill's knowledge model has the most relevant knowledge for a question.
-
-### 16. Set up dual primers (code + memory)
-```bash
-# Code primer — summarizes the codebase
-rlat summary project.rlat -o .claude/resonance-context.md
-
-# Memory primer — summarizes conversation history with cross-primer novelty filtering
-rlat memory primer ./memory/ --code-knowledge model project.rlat -o .claude/memory-primer.md
-```
-Then reference both from CLAUDE.md:
-```
-@.claude/resonance-context.md
-@.claude/memory-primer.md
-```
-The memory primer automatically filters out passages already covered by the code primer, so the two are complementary with zero redundancy.
-
-### 17. Smart query with auto-lens selection
-```bash
-# Let rlat pick the right command for your question
-rlat ask project.rlat "how does authentication work?"
-
-# See which lens would be chosen without executing
-rlat ask project.rlat "what are the coverage gaps?" --explain
+# Then Read the specific implementation
 ```
 
-### 18. Initialize and use layered memory
-```bash
-# Set up 3-tier memory
-rlat memory init ./memory/
-
-# Write a session transcript to working tier
-rlat memory write ./memory/ --input-file session.jsonl \
-    --input-format claude_transcript --session s_001 --tier working
-
-# Recall from memory
-rlat memory recall ./memory/ "what did we decide about auth?"
-
-# Promote working -> episodic after session ends
-rlat memory consolidate ./memory/ --source-tier working --target-tier episodic
-
-# Generate primer from accumulated memory
-rlat memory primer ./memory/ -o .claude/memory-primer.md
-```
-
-For extended recipes with more variations, read [references/RECIPES.md](references/RECIPES.md).
+Use this pattern when the task involves understanding *why* something was built a certain way, then making changes. rlat finds the rationale and evidence; grep finds the exact code. For deep multi-hop investigation across many files, see the [deep-research](../deep-research/SKILL.md) skill.
 
 ---
 
 ## Invocation
 
-**Always use the `rlat` CLI entry point.** Do not use `python -m resonance_lattice.cli` — the module does not expose a standard `__main__` entry.
+Use the `rlat` CLI entry point, not `python -m resonance_lattice.cli` — the module has no `__main__` entry and the module form fails with `ModuleNotFoundError`.
 
 ```bash
-# Correct
 rlat search project.rlat "query"
-
-# Wrong — will fail with ModuleNotFoundError or missing entry point
-python -m resonance_lattice.cli search project.rlat "query"
 ```
 
 ### Format Selection
@@ -472,90 +376,13 @@ rlat --version
 
 ## Context Control Playbook
 
-These are decision rules for using rlat's composition, diagnostics, and injection features. Follow these when deciding HOW to search, not just WHAT to search.
+Decision rules for *how* to search — which composition operation, how to read the coverage assessment, which injection mode to pick, how to interpret `xray` / `profile` diagnostics, and when to compose proactively. Read [references/PLAYBOOK.md](references/PLAYBOOK.md) when the user's question involves multiple knowledge models, confidence assessment, or LLM grounding framing.
 
-### Composition Decision Tree
+Quick rules of thumb:
 
-Pick composition based on the user's intent:
-
-| User intent | Operation | MCP call |
-|-------------|-----------|----------|
-| Search across multiple domains | **merge** | `rlat_compose_search(query, with_cartridges=["code.rlat", "docs.rlat"])` |
-| Search from a specific perspective | **project** | `rlat_compose_search(query, through="compliance.rlat")` |
-| What changed since last version? | **diff** | `rlat_compose_search(query, diff_against="baseline.rlat")` |
-| Focus on a specific topic | **boost** | `rlat_compose_search(query, boost=["security", "auth"])` |
-| Exclude noise from results | **suppress** | `rlat_compose_search(query, suppress=["deprecated", "legacy"])` |
-
-**Decision rules:**
-- **Merge** when the question spans domains (e.g., "how does the frontend auth flow connect to the backend API?"). Merge is commutative — order doesn't matter.
-- **Project** when the question has a lens or perspective (e.g., "search the codebase from a compliance perspective"). The lens knowledge model shapes results but doesn't contribute its own passages.
-- **Diff** when the question is about change (e.g., "what's new since the last release?"). Only the newer knowledge model returns results; the baseline is subtracted.
-- **Boost** when the user's question could return noisy results and you want to amplify a specific signal (e.g., searching for "configuration" but the user cares about security config specifically).
-- **Suppress** when a known noise source dominates results (e.g., deprecated modules appearing in every search).
-
-These compose freely: you can merge + boost + suppress in a single call.
-
-### Pre-Search Assessment
-
-Before answering questions where confidence matters, use the Knowledge Assessment that `rlat_search` returns (the Coverage block at the top of results), or call `rlat_locate` for a standalone assessment:
-
-| Coverage label | What to do |
-|---------------|------------|
-| **strong** | Answer confidently. Cite sources. |
-| **partial** | Answer, but tell the user which aspects are thin. |
-| **edge** | Answer with heavy caveats. Use the expansion_hint to suggest where else to look. Consider boost to amplify weak signal, or --through another knowledge model. |
-| **gap** | Tell the user the knowledge model doesn't cover this. Suggest the nearest covered topic (expansion_hint). Fall back to Grep or your own knowledge. |
-
-Use the **band focus** to understand what kind of question it is:
-- Topic band dominant → conceptual question — broad context helps
-- Entity band dominant → specific lookup — exact match matters, consider Grep as supplement
-- Relations band dominant → structural question — how things connect
-
-When **anti-resonance is high** (>0.3), explicitly mention the gap to the user:
-> "The project knowledge model has limited coverage on [topic]. The nearest well-covered area is [expansion_hint]."
-
-### Injection Mode Selection
-
-Pick the injection mode based on the stakes of the question:
-
-| Scenario | Mode | Why |
-|----------|------|-----|
-| General questions, exploration, brainstorming | `augment` | LLM supplements from own knowledge |
-| Compliance, legal, safety-critical, "cite your sources" | `constrain` | Zero hallucination — answer ONLY from evidence |
-| Domain-specific or proprietary content | `knowledge` | Trust knowledge model primarily, flag gaps honestly |
-| User says "only from docs" or "cite sources" | `constrain` | Explicit user intent |
-| User says "what do you think?" or wants reasoning | `augment` | User wants LLM's perspective too |
-
-**Default to `knowledge`**. Escalate to `constrain` when accuracy is critical. Drop to `augment` when the user wants exploration.
-
-### Interpreting Diagnostics
-
-When using `rlat_xray`, `rlat_profile`, or reading diagnostic data from search results:
-
-**Band health labels:**
-- **rich** — No action. Report as healthy if asked.
-- **adequate** — Normal. Mention only if asked.
-- **thin** — Flag to user: "The [dimension] is thin — [conceptual/entity/structural] knowledge is sparse. Consider adding more [type] content."
-- **noisy** — Flag to user: "The [dimension] signal is noisy. Results in this area may be less reliable."
-
-**Saturation:**
-- <50% → "The knowledge model has room for significantly more content."
-- 50-80% → "Well-populated."
-- \>80% → "Approaching capacity. Consider splitting into domain-specific knowledge models and composing at query time with `--with`."
-
-**When comparing knowledge models (`rlat_compare`):**
-- High overlap (>70%) → "These knowledge models cover similar ground — merging adds little."
-- Low overlap (<30%) → "Largely different domains. Merge with `--with` for broad coverage."
-- Asymmetric energy → "Knowledge Model A has knowledge that B lacks in [band], suggesting [interpretation]."
-
-### Proactive Composition
-
-After calling `rlat_discover`, think about whether composition would help:
-
-- **Cross-domain question** → Merge relevant knowledge models automatically and explain: "I'm searching across both [domain A] and [domain B] to answer this."
-- **Review or audit context** → Suggest `--through` with a relevant knowledge model as lens: "I can search the codebase through a compliance lens — would that help?"
-- **Change tracking context** → Use `--diff-against` with baseline if one exists: "I'll compare against the baseline to show what's semantically new."
-- **Noisy or unfocused results** → Boost the relevant topic or suppress the noise source. Don't just re-run the same search — sculpt the field.
+- Cross-domain question → `--with` (merge). Specific perspective → `--through` (project). Change tracking → `--diff` against baseline. Noisy results → `--boost` / `--suppress`.
+- Coverage label: `strong` answer confidently, `partial` flag thin aspects, `edge` add heavy caveats + suggest expansion, `gap` admit the knowledge model doesn't cover this.
+- Injection mode: default `knowledge`, escalate to `constrain` for accuracy-critical, drop to `augment` for exploration.
 
 ---
 

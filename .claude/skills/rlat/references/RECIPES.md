@@ -2,6 +2,17 @@
 
 Extended recipes for common workflows. Each includes the commands, expected behavior, and useful variations.
 
+## Contents
+
+- [Getting Started](#getting-started) — bootstrap, first build, quick-start
+- [Searching](#searching) — format variants, enriched vs. raw, contradictions
+- [Keeping Knowledge Models Updated](#keeping-knowledge-models-updated) — sync, refresh, forget
+- [Inspection and Diagnostics](#inspection-and-diagnostics) — profile, xray, probe, topology
+- [Team and Version Workflows](#team-and-version-workflows) — compare, diff, merge
+- [LLM Integration](#llm-integration) — injection modes, primers, custom prompts
+- [External Store Workflow](#external-store-workflow) — thin knowledge model + `--source-root`
+- [Quick Reference: Common Flag Combinations](#quick-reference-common-flag-combinations)
+
 ---
 
 ## Getting Started

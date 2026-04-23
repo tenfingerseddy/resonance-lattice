@@ -2,6 +2,19 @@
 
 Complete flag reference for all commands. For quick lookup, see the command tables in SKILL.md.
 
+## Contents
+
+- [Primary Commands](#primary-commands) — search, ask, profile, compare, ls, info
+- [Build Commands](#build-commands) — build, add, sync, init, ingest, init-project
+- [Serve & Context Commands](#serve--context-commands) — serve, summary, mcp
+- [Query & Analysis Commands](#query--analysis-commands) — query, resonate, contradictions, topology, xray, locate, probe
+- [Algebra Commands](#algebra-commands) — merge, forget, diff
+- [Export Commands](#export-commands) — export (optional field-only)
+- [Choosing the Right Command](#choosing-the-right-command) — decision tree
+- [Warm Worker System](#warm-worker-system) — background worker semantics and `--no-worker`
+- [Skill Commands](#skill-commands) — skill build, inject, route, search, profile, freshness
+- [Environment Variables](#environment-variables)
+
 ---
 
 ## Primary Commands

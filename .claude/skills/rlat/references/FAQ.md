@@ -2,6 +2,13 @@
 
 Self-contained Q&A reference. All claims are evidence-backed or explicitly marked as architectural.
 
+## Contents
+
+- [What Is Resonance Lattice?](#what-is-resonance-lattice) — core thesis, three layers, what a `.rlat` is
+- [How It Compares](#how-it-compares) — vs grep, vs standard RAG, vs vector DBs, vs static skills
+- [Practical Questions](#practical-questions) — encoder choice, store modes, rebuilding, memory
+- [Integration](#integration) — CLI, MCP, assistant setup
+
 ---
 
 ## What Is Resonance Lattice?
