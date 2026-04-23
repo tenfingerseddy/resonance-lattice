@@ -17,7 +17,7 @@ The goal is not humility for its own sake — it's to be reliably trusted. If we
 Benchmark numbers below are drawn from three measurement sweeps on the same BEIR-5 harness:
 1. **2026-04-20** — E5-large-v2 full 5-BEIR + a 2-corpus BGE-large-en-v1.5 pilot.
 2. **2026-04-22** — BGE-large-en-v1.5 full 5-BEIR sweep (board item 239 launch verification; see Block D).
-3. **2026-04-22** — Qwen3-Embedding-8B full 5-BEIR sweep, field_only mode (see Block E).
+3. **2026-04-22 / 2026-04-23** — Qwen3-Embedding-8B full 5-BEIR sweep, field_only baseline + full probe grid (see Block E).
 
 All three encoder tiers are now shipped-grade measured. See [docs/ENCODER_CHOICE.md](ENCODER_CHOICE.md) for the side-by-side comparison and the pick-by-workload decision guide.
 
@@ -149,7 +149,7 @@ The largest knowledge models we've shipped are in the low GB range (unpacked sou
 |---|---|---|---|
 | E5-large-v2 (portable, old default) | 0.455 | −0.005 | ❌ |
 | BGE-large-en-v1.5 (portable, current default) | 0.445 | −0.015 | ❌ |
-| Qwen3-Embedding-8B (high-end, opt-in) | 0.500 | +0.040 | ✅ (see Block E) |
+| Qwen3-Embedding-8B (high-end, opt-in) | 0.5005 | +0.040 | ✅ (see Block E) |
 
 **Interpretation:** The portable tier (335M-class encoders) lands at-parity with 2024 open mid-tier retrievers but does not clear our internal 0.46 bar on its own. The opt-in high-end tier (Qwen3-8B) clears the bar on dense alone. Rather than gate-failing the v1.0.0 ship, we reframe the product position: **publish full per-encoder numbers, let users pick by workload**, and recommend Qwen3-8B for users who need the extra headroom. See [docs/ENCODER_CHOICE.md](ENCODER_CHOICE.md) for the decision guide.
 
@@ -205,41 +205,70 @@ Sources: [BEIR paper](https://arxiv.org/abs/2104.08663) (Thakur et al. 2021, Tab
 
 **Position:**
 - Portable tier (E5, BGE) sits with 2024 mid-tier open dense retrievers. The default (BGE) is tuned for ecosystem + general QA fit, not 5-BEIR-wins — see ENCODER_CHOICE.md for the tradeoffs.
-- High-end tier (Qwen3-Embedding-8B) is frontier-adjacent. Dense alone matches `text-embedding-3-large` on this harness. Stack probes are deferred (see Block E caveat).
+- High-end tier (Qwen3-Embedding-8B) is frontier-adjacent. Dense-only wins 4 of 5 corpora; the shipped cross-encoder rerankers are mismatched (trained atop weaker base retrievers) and regress strong-dense top-k. A Qwen3-matched reranker is the tier's remaining product gap. See Block E for full per-mode numbers.
 
-Full aggregates: [aggregate_5beir_sota_v1.json](../benchmarks/results/beir/new_arch/aggregate_5beir_sota_v1.json) (E5), [aggregate_5beir_horizon1_v239.json](../benchmarks/results/beir/new_arch/aggregate_5beir_horizon1_v239.json) (BGE), [baseline_qwen3_8b_v1/](../benchmarks/results/beir/new_arch/baseline_qwen3_8b_v1/) (Qwen3-8B). External anchors: [external_reference_sota.md](../benchmarks/results/beir/new_arch/external_reference_sota.md).
+Full aggregates: [aggregate_5beir_sota_v1.json](../benchmarks/results/beir/new_arch/aggregate_5beir_sota_v1.json) (E5), [aggregate_5beir_horizon1_v239.json](../benchmarks/results/beir/new_arch/aggregate_5beir_horizon1_v239.json) (BGE), [aggregate_5beir_qwen3_8b_v1.json](../benchmarks/results/beir/new_arch/aggregate_5beir_qwen3_8b_v1.json) (Qwen3-8B). External anchors: [external_reference_sota.md](../benchmarks/results/beir/new_arch/external_reference_sota.md).
 
-## Block E benchmark results (measured 2026-04-22; Qwen3-Embedding-8B high-end tier)
+## Block E benchmark results (measured 2026-04-22, full-stack probe measured 2026-04-23; Qwen3-Embedding-8B high-end tier)
 
 The `--encoder qwen3-8b` path (opt-in, needs GPU) replaces BGE-large as the
-retrieval engine. Same BEIR-5 harness, probe run with `field_only` mode only —
-cross-mode probe deferred.
+retrieval engine. Same BEIR-5 harness. Full probe grid (field_only +
+plus_cross_encoder + plus_cross_encoder_expanded + plus_full_stack, each
+with both `bge-reranker-v2-m3` and `mxbai-rerank-base-v1`) measured.
 
-### 5-BEIR results
+### 5-BEIR per-mode results
 
-| Corpus | BGE-large raw (Block D Apr 20) | Qwen3-8B (Block E Apr 22) | Δ |
-|--------|--------------------------------|---------------------------|---|
-| NFCorpus | 0.382 | **0.414** | +0.032 |
-| SciFact | 0.732 | **0.774** | +0.042 |
-| ArguAna | 0.392 | **0.466** | +0.074 |
+| Corpus | field_only | +cross_encoder | +CE expanded | +full_stack | **Best mode** |
+|--------|-----------:|---------------:|-------------:|------------:|:--------------|
+| NFCorpus | **0.414** | 0.413 | 0.413 | 0.385 | field_only |
+| SciFact | 0.774 | **0.776** | 0.776 | 0.750 | +CE (bge-v2-m3) |
+| ArguAna | **0.466** | 0.461 | 0.461 | 0.412 | field_only |
+| SciDocs | **0.278** | 0.228 | 0.228 | 0.189 | field_only |
+| FiQA | **0.568** | 0.506 | 0.506 | 0.446 | field_only |
+| **avg** | **0.5001** | 0.477 | 0.477 | 0.396 | **0.5005 (best-mode)** |
+
+### Headline finding: the stack hurts, not helps
+
+**Dense-only Qwen3-8B wins 4 of 5 corpora.** The cross-encoder rerankers we ship
+(`bge-reranker-v2-m3`, `mxbai-rerank-base-v1`) regress Qwen3-8B's top-k on NFCorpus,
+ArguAna, SciDocs, and FiQA — FiQA is hit hardest (field_only 0.568 → +CE 0.506 →
++full_stack 0.446). Only SciFact's claim-verification structure is regular enough
+for the reranker to add anything, and only marginally (+0.002).
+
+**Why:** both rerankers were trained atop weaker base retrievers (0.3–0.4 nDCG@10
+top-k). Qwen3-8B already produces 0.5+ top-k, so the reranker sees an input
+distribution mismatched with its training data. The extra cross-attention then
+reshuffles a mostly-correct top-k based on the wrong signal. Full-stack also adds
+BM25 fusion, which amplifies the harm on domains where lexical signal adds noise
+(finance jargon, specialised scientific citation networks).
+
+**Product consequence:** for the Qwen3-8B tier, the build-time probe correctly
+picks `field_only` for 4/5 corpora (the routing is encoder-agnostic as designed
+in board items 236c/238). Users who set `--encoder qwen3-8b` get dense-only
+retrieval by default via `__retrieval_config__`, no opt-out needed.
+
+### 5-BEIR best-mode vs BGE-large best-mode
+
+| Corpus | BGE-large best-mode (Block D) | Qwen3-8B best-mode (Block E) | Δ |
+|--------|------------------------------:|-----------------------------:|---|
+| NFCorpus | 0.392 | **0.414** | +0.022 |
+| SciFact | 0.755 | **0.776** | +0.021 |
+| ArguAna | 0.408 | **0.466** | +0.058 |
 | SciDocs | 0.214 | **0.278** | +0.064 |
-| FiQA | 0.442 | **0.568** | +0.126 |
-| **avg** | **0.432** | **0.500** | **+0.068** |
+| FiQA | 0.454 | **0.568** | +0.114 |
+| **avg** | **0.445** | **0.5005** | **+0.056** |
 
-The BGE-large column here is the field_only score per corpus (not best-mode) so the
-comparison is apples-to-apples with Qwen3-8B's field_only measurement. Block D has
-the BGE best-mode numbers (with per-corpus reranker routing) for a different cut.
-
-Full aggregate: `benchmarks/results/beir/new_arch/aggregate_5beir_qwen3_8b_v1.json`.
-Per-corpus probe records + sweep log: `benchmarks/results/beir/new_arch/baseline_qwen3_8b_v1/`.
+Full aggregate: [aggregate_5beir_qwen3_8b_v1.json](../benchmarks/results/beir/new_arch/aggregate_5beir_qwen3_8b_v1.json).
+Per-corpus probe records + sweep log: [qwen3_8b_fullstack_v1/](../benchmarks/results/beir/new_arch/qwen3_8b_fullstack_v1/).
 
 ### Position
 
-Qwen3-8B field-only (0.500) sits between text-embedding-3-large (0.512, proprietary)
-and NV-Embed-v2 / Gemini-Embedding-class ~0.62 frontier models. Our harness has a
-known ~0.05 gap vs Anserini-indexed published BEIR numbers (concentrated in ArguAna);
-after that adjustment, our Qwen3-8B result is consistent with Qwen3-8B's published
-~0.55 BEIR-5 subset average.
+Qwen3-8B best-mode (0.5005) sits just below `text-embedding-3-large` (0.512)
+and well above the portable tier. Our harness has a known ~0.05 gap vs
+Anserini-indexed published BEIR numbers (concentrated in ArguAna); after that
+adjustment, 0.5005 is consistent with Qwen3-8B's published ~0.55 BEIR-5 subset
+average. The gap to frontier (NV-Embed-v2 ~0.62) is held open by CC-BY-NC
+licensing, not measurement.
 
 ### Caveats worth naming (Block E)
 
@@ -249,10 +278,11 @@ after that adjustment, our Qwen3-8B result is consistent with Qwen3-8B's publish
    presets in `ENCODER_PRESETS` set `"pooling": "last"` — do not edit this
    without re-benchmarking. Evidence archived at
    `benchmarks/results/beir/new_arch/baseline_qwen3_8b_v1_meanpool_broken/`.
-2. **Stack probe not yet run.** Block D ran the full `field_only × plus_cross_encoder × plus_full_stack`
-   probe grid for BGE; Block E only probed `field_only`. We don't yet have cross-mode
-   numbers for Qwen3-8B. Anecdotally, cross-encoder rerankers trained atop weaker
-   retrievers often regress strong-dense top-k — expect a Qwen3-Reranker follow-up.
+2. **Shipped rerankers are mismatched.** `bge-reranker-v2-m3` and
+   `mxbai-rerank-base-v1` regress Qwen3-8B top-k on 4/5 corpora; see per-mode
+   table above. A Qwen3-matched reranker (e.g. `Qwen/Qwen3-Reranker-*`) is
+   the follow-up for the high-end tier. Until then, `__retrieval_config__`
+   correctly routes to dense-only for Qwen3-8B builds.
 3. **Compute tier difference.** BGE field_only encode is fast on CPU / Intel Arc iGPU;
    Qwen3-8B field_only needs a ~16 GB GPU for practical query latency.
    Not interchangeable deployment profiles.
@@ -272,7 +302,7 @@ and published Qwen3-Embedding card (Qwen team 2026).
 | **Ours BGE-large best-mode (2026-04, Block D)** | **0.455** | mid (portable tier default) |
 | jina-v3 (2024) | 0.461 | mid |
 | mE5-large-instruct (2024) | 0.464 | mid |
-| **Ours Qwen3-8B field_only (2026-04-22, Block E)** | **0.500** | high-end (opt-in via `--encoder qwen3-8b`) |
+| **Ours Qwen3-8B best-mode (2026-04-22/23, Block E)** | **0.5005** | high-end (opt-in via `--encoder qwen3-8b`; dense-only wins 4/5) |
 | text-embedding-3-large (OpenAI, 2024) | 0.512 | high-end (proprietary) |
 | Qwen3-Embedding-8B (published, different BEIR subset) | ~0.55 | high-end |
 | NV-Embed-v2 (2024, CC BY-NC) | 0.620 | frontier (research only) |

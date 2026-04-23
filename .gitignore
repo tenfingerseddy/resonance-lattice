@@ -172,6 +172,11 @@ benchmarks/results/locomo/*
 !benchmarks/results/locomo/phase2_cartridge_e5_all10.json
 !benchmarks/results/locomo/phase1_smoke_conv1_v3.json
 !benchmarks/results/locomo/phase2_5_cartridge_e5_cascade_all10.json
+!benchmarks/results/locomo/phase2_cartridge_e5_all10_sonnet_judge.json
+# Per-feature ablation smokes (2026-04-23) — kept as the audit trail for
+# project_locomo_feature_transfer.md memory claims.
+!benchmarks/results/locomo/smoke/
+!benchmarks/results/locomo/smoke/**
 
 # Benchmark working dirs (regenerable via benchmarks/extract_beir.py + rlat build)
 /benchmark_data/
