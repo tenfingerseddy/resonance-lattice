@@ -469,7 +469,7 @@ def check_remote_freshness(cartridge_path: str | Path) -> RemoteFreshnessReport:
             pinned_sha=pinned, head_sha=head, commits_behind=0,
             added=[], modified=[], removed=[],
         )
-    diff = fetcher.compare(pinned, head)
+    diff = fetcher.compare(pinned, head, path_prefix=origin_meta.get("path_prefix"))
     # GitHub's compare API returns a commit count under "total_commits"
     # when we request the full compare body; our minimal _http_json in
     # phase 3 doesn't carry that through, so derive a lower bound from
@@ -530,11 +530,17 @@ def sync_remote_cartridge(
     if pinned == head:
         return report  # already current
 
-    diff = fetcher.compare(pinned, head)
+    path_prefix_raw = origin_meta.get("path_prefix")
+    path_prefix = (path_prefix_raw.strip("/") + "/") if path_prefix_raw else ""
+    diff = fetcher.compare(pinned, head, path_prefix=path_prefix_raw)
     manifest = _extract_manifest(lattice)
 
     # Bucket existing manifest entries by source_file so we can apply
     # per-file reconciliation the same way refresh_cartridge does.
+    # Manifest paths are scope-relative for scoped builds; diff paths
+    # from the GitHub compare API are always repo-relative — so we strip
+    # the prefix from diff paths before lookup and re-apply it when
+    # fetching.
     by_file: dict[str, list[tuple[str, dict]]] = {}
     for sid, entry in manifest.items():
         if sid.startswith("__"):
@@ -547,38 +553,45 @@ def sync_remote_cartridge(
         if sf:
             by_file.setdefault(sf, []).append((sid, entry))
 
-    def _fetch_chunks(rel_path: str) -> list | None:
+    def _strip_prefix(upstream_rel: str) -> str:
+        if path_prefix and upstream_rel.startswith(path_prefix):
+            return upstream_rel[len(path_prefix):]
+        return upstream_rel
+
+    def _fetch_chunks(upstream_rel: str, manifest_rel: str) -> list | None:
         try:
-            raw = fetcher.fetch(head, rel_path)
+            raw = fetcher.fetch(head, upstream_rel)
         except Exception as exc:
-            report.warnings.append(f"fetch failed for {rel_path}: {exc}")
+            report.warnings.append(f"fetch failed for {upstream_rel}: {exc}")
             return None
         text = raw.decode("utf-8", errors="replace")
-        return auto_chunk(text, source_file=rel_path)
+        return auto_chunk(text, source_file=manifest_rel)
 
     # Removed files: drop every chunk bound to them.
-    for rel in diff.get("removed", []):
-        entries = by_file.get(rel, [])
+    for upstream_rel in diff.get("removed", []):
+        manifest_rel = _strip_prefix(upstream_rel)
+        entries = by_file.get(manifest_rel, [])
         if not entries:
             continue
         report.files_checked += 1
         report.files_missing += 1
         _reconcile_file_chunks(
             lattice=lattice, encoder=encoder,
-            source_file_display=rel,
+            source_file_display=manifest_rel,
             entries=entries, live_chunks=None, report=report,
         )
 
     # Modified files: refetch, re-chunk, reconcile against existing entries.
-    for rel in diff.get("modified", []):
-        entries = by_file.get(rel, [])
+    for upstream_rel in diff.get("modified", []):
+        manifest_rel = _strip_prefix(upstream_rel)
+        entries = by_file.get(manifest_rel, [])
         report.files_checked += 1
-        chunks = _fetch_chunks(rel)
+        chunks = _fetch_chunks(upstream_rel, manifest_rel)
         if chunks is None:
             continue
         changed = _reconcile_file_chunks(
             lattice=lattice, encoder=encoder,
-            source_file_display=rel,
+            source_file_display=manifest_rel,
             entries=entries, live_chunks=chunks, report=report,
         )
         if changed:
@@ -587,14 +600,15 @@ def sync_remote_cartridge(
             report.files_clean += 1
 
     # Added files: fetch, chunk, superpose (no existing entries to match).
-    for rel in diff.get("added", []):
+    for upstream_rel in diff.get("added", []):
+        manifest_rel = _strip_prefix(upstream_rel)
         report.files_checked += 1
-        chunks = _fetch_chunks(rel)
+        chunks = _fetch_chunks(upstream_rel, manifest_rel)
         if chunks is None:
             continue
         _reconcile_file_chunks(
             lattice=lattice, encoder=encoder,
-            source_file_display=rel,
+            source_file_display=manifest_rel,
             entries=[], live_chunks=chunks, report=report,
         )
         report.files_drifted += 1

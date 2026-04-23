@@ -972,6 +972,7 @@ class RemoteStore(LosslessStore):
         origin_key: str,
         manifest: dict[str, Any] | None = None,
         meta_store: SourceStore | None = None,
+        path_prefix: str | None = None,
     ) -> None:
         """
         Args:
@@ -988,12 +989,18 @@ class RemoteStore(LosslessStore):
             meta_store: Optional embedded metadata SourceStore for
                 ``__``-prefixed entries (encoder config,
                 ``__remote_origin__``, profile, ...).
+            path_prefix: Scope prefix (e.g. ``"Doc"`` for a CPython
+                build limited to ``Doc/``). Manifest paths are
+                scope-relative; the prefix gets prepended before
+                hitting the fetcher/cache so the wire path matches
+                the upstream repo layout.
         """
         super().__init__(manifest=manifest, meta_store=meta_store)
         self._fetcher = fetcher
         self._sha = commit_sha
         self._cache = cache
         self._origin_key = origin_key
+        self._path_prefix = (path_prefix.strip("/") + "/") if path_prefix else ""
 
     @property
     def commit_sha(self) -> str:
@@ -1013,24 +1020,29 @@ class RemoteStore(LosslessStore):
     def _read_file(self, rel_path: str) -> str:
         """Return decoded text for ``rel_path``. Cache-first, network on miss.
 
+        ``rel_path`` is the manifest-relative path (scope-stripped for
+        scoped builds); the wire/cache path is ``path_prefix + rel_path``
+        so the upstream repo layout is respected.
+
         Errors on the network fall through to a human-readable placeholder
         so a single flaky fetch doesn't crash the whole query; the
         surrounding retrieve() marks the source as resolved=False and
         downstream callers render the placeholder.
         """
+        upstream_rel = self._path_prefix + rel_path
         # In-memory LRU is handled by LosslessStore._get_chunks, which
         # keys on display_path (rel_path). Here we only consult the
         # persistent disk cache + fetch on miss.
-        cached = self._cache.get(self._origin_key, self._sha, rel_path)
+        cached = self._cache.get(self._origin_key, self._sha, upstream_rel)
         if cached is not None:
             data = cached
         else:
             try:
-                data = self._fetcher.fetch(self._sha, rel_path)
+                data = self._fetcher.fetch(self._sha, upstream_rel)
             except Exception as e:
                 import warnings
                 warnings.warn(
-                    f"Remote fetch failed for {rel_path} at {self._sha[:8]} "
+                    f"Remote fetch failed for {upstream_rel} at {self._sha[:8]} "
                     f"({type(e).__name__}: {e}). Returning empty passage; "
                     f"retry after the network recovers.",
                     RuntimeWarning,
@@ -1038,7 +1050,7 @@ class RemoteStore(LosslessStore):
                 )
                 return ""
             try:
-                self._cache.put(self._origin_key, self._sha, rel_path, data)
+                self._cache.put(self._origin_key, self._sha, upstream_rel, data)
             except OSError:
                 # Cache write failed (disk full / permission); still
                 # return the fetched bytes for this query.

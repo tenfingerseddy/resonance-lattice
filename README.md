@@ -177,6 +177,27 @@ The full walkthrough — profiling, composition, MCP, HTTP serving — is in [do
 
 ---
 
+## Prebuilt knowledge models
+
+Skip `rlat build` entirely — we publish five production-ready knowledge models on HuggingFace Hub. Each ships as both a `bundled` variant (self-contained, works offline) and a `remote` variant (SHA-pinned, `rlat sync`-able). Identical retrieval quality; the trade-off is network dependency at query time.
+
+| Corpus | HuggingFace repo |
+|---|---|
+| Microsoft Fabric docs | [`tenfingers/fabric-docs-rlat`](https://huggingface.co/datasets/tenfingers/fabric-docs-rlat) |
+| Power BI Developer docs | [`tenfingers/powerbi-developer-rlat`](https://huggingface.co/datasets/tenfingers/powerbi-developer-rlat) |
+| PowerShell docs | [`tenfingers/powershell-docs-rlat`](https://huggingface.co/datasets/tenfingers/powershell-docs-rlat) |
+| Python standard library | [`tenfingers/python-stdlib-rlat`](https://huggingface.co/datasets/tenfingers/python-stdlib-rlat) |
+| T-SQL docs | [`tenfingers/tsql-docs-rlat`](https://huggingface.co/datasets/tenfingers/tsql-docs-rlat) |
+
+```bash
+huggingface-cli download tenfingers/fabric-docs-rlat fabric-docs-bundled.rlat --local-dir .
+rlat search fabric-docs-bundled.rlat "how do I create a lakehouse"
+```
+
+See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the three workflows — **keep bundled** (offline-ready), **switch to repo-backed** (track upstream with `rlat freshness` / `rlat sync`), or **repoint to a local synced folder** (for vendored / air-gapped / editable checkouts).
+
+---
+
 ## Assistant integration
 
 Three composable entry points. Use what fits — they work side by side.

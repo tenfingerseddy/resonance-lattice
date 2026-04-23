@@ -1,9 +1,0 @@
-{
-	"id": "resonance-lattice",
-	"name": "Resonance Lattice",
-	"version": "0.1.0",
-	"minAppVersion": "1.0.0",
-	"description": "Semantic search across your vault using Resonance Lattice",
-	"author": "Kane Snyder",
-	"isDesktopOnly": true
-}

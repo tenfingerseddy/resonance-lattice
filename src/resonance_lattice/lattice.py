@@ -1347,12 +1347,19 @@ class Lattice:
         # so the existing manifest survives, since the manifest-rebuild
         # block below skips when self.store is already a LocalStore.
         if use_manifest:
-            for reserved_id in (
+            reserved_ids = [
                 "__retrieval_config__",
                 "__remote_origin__",
                 "__source_manifest__",
                 "__profile__",
-            ):
+            ]
+            # Preserve __encoder__ / __encoder_weights__ from the source
+            # store when no live encoder is attached (e.g. repoint + save
+            # cycles that loaded with restore_encoder=False). Guarded so
+            # a live encoder's fresh config above isn't overwritten.
+            if self.encoder is None:
+                reserved_ids.extend(["__encoder__", "__encoder_weights__"])
+            for reserved_id in reserved_ids:
                 cfg = self.store.retrieve(reserved_id)
                 if cfg is not None:
                     meta_store.remove(reserved_id)
@@ -1688,6 +1695,7 @@ class Lattice:
                         origin_key=origin.key,
                         manifest=manifest,
                         meta_store=meta,
+                        path_prefix=origin_meta.get("path_prefix"),
                     )
                 embedded_store_data = store_data
             elif source_root is not None:

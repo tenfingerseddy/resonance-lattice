@@ -1389,6 +1389,8 @@ def cmd_repoint(args: argparse.Namespace) -> None:
         cache = _DC()
         sha = origin_meta["commit_sha"]
         origin_key = origin.key
+        path_prefix_raw = origin_meta.get("path_prefix")
+        path_prefix = (path_prefix_raw.strip("/") + "/") if path_prefix_raw else ""
 
         manifest = getattr(lattice.store, "_manifest", {}) or {}
         if not manifest:
@@ -1421,20 +1423,21 @@ def cmd_repoint(args: argparse.Namespace) -> None:
             fetched = 0
             skipped = 0
             for i, rel in enumerate(sorted(rel_paths), 1):
-                cached = cache.get(origin_key, sha, rel)
+                upstream_rel = path_prefix + rel
+                cached = cache.get(origin_key, sha, upstream_rel)
                 if cached is None:
                     try:
-                        cached = fetcher.fetch(sha, rel)
+                        cached = fetcher.fetch(sha, upstream_rel)
                     except Exception as e:
                         skipped += 1
                         if skipped <= 5 or i % 500 == 0:
                             print(
-                                f"  skip {rel}: {type(e).__name__}: {e}",
+                                f"  skip {upstream_rel}: {type(e).__name__}: {e}",
                                 file=sys.stderr,
                             )
                         continue
                     try:
-                        cache.put(origin_key, sha, rel, cached)
+                        cache.put(origin_key, sha, upstream_rel, cached)
                     except OSError:
                         pass
                 dest = tmp_root / rel
@@ -1624,13 +1627,25 @@ def _maybe_stage_remote_build(args: argparse.Namespace) -> _RemoteStagingResult 
     origin = _parse_origin(url)
     fetcher = _GH(origin=origin)
     progress = getattr(args, "progress", False)
+    path_prefix_raw = getattr(args, "path", None)
+    path_prefix = path_prefix_raw.strip("/") if path_prefix_raw else None
 
     if progress:
-        print(json.dumps({"phase": "remote_resolve", "url": url}), flush=True)
+        print(json.dumps({
+            "phase": "remote_resolve", "url": url,
+            **({"path": path_prefix} if path_prefix else {}),
+        }), flush=True)
     else:
-        print(f"Resolving {url} ...", file=sys.stderr)
+        scope_note = f" (scope: {path_prefix}/)" if path_prefix else ""
+        print(f"Resolving {url}{scope_note} ...", file=sys.stderr)
 
-    sha, paths = fetcher.list_files()
+    sha, paths = fetcher.list_files(path_prefix=path_prefix)
+    if path_prefix and not paths:
+        _die(
+            f"--path {path_prefix!r} matched zero files in "
+            f"{origin.org}/{origin.repo} at {sha[:10]}. Check the "
+            f"subdirectory name (case-sensitive; no leading slash)."
+        )
     # Filter to ingestible extensions up front so we don't pay network
     # cost for assets that the build pipeline would ignore.
     keep = [p for p in paths if Path(p).suffix.lower() in INGEST_EXTENSIONS]
@@ -1676,6 +1691,8 @@ def _maybe_stage_remote_build(args: argparse.Namespace) -> _RemoteStagingResult 
         "commit_sha": sha,
         "base_url": origin.base_url,
     }
+    if path_prefix:
+        origin_meta["path_prefix"] = path_prefix
     return _RemoteStagingResult(root=root, origin_meta=origin_meta)
 
 
@@ -7199,6 +7216,17 @@ def main() -> None:
     p_build.add_argument(
         "--embedded", action="store_const", const="embedded", dest="store_mode",
         help="Shortcut for --store-mode embedded (deprecated; see --store-mode).",
+    )
+    p_build.add_argument(
+        "--path", default=None, metavar="SUBDIR",
+        help=(
+            "Remote builds only: scope the build to a subdirectory of the "
+            "repo (e.g., --path Doc/ for just CPython's docs). The scope is "
+            "persisted into __remote_origin__ so `rlat freshness` and "
+            "`rlat sync` also respect it — upstream changes outside the "
+            "scope are silently dropped. Ignored for local builds (pass "
+            "specific paths as inputs instead)."
+        ),
     )
     p_build.add_argument("--progress", action="store_true",
                           help="Emit JSON progress lines to stdout (for programmatic consumers)")

@@ -33,6 +33,12 @@ rlat build https://github.com/MicrosoftDocs/fabric-docs -o fabric-docs.rlat
 # remote, pinned to a specific ref
 rlat build https://github.com/MicrosoftDocs/fabric-docs#release-branch -o fabric-docs.rlat
 rlat build https://github.com/MicrosoftDocs/fabric-docs@abc1234 -o fabric-docs.rlat
+
+# remote, scoped to a subdirectory of a larger repo
+#   --path is persisted into __remote_origin__ so freshness + sync
+#   only see drift under that prefix
+rlat build https://github.com/python/cpython --path Doc -o python-stdlib.rlat
+rlat build https://github.com/MicrosoftDocs/sql-docs --path docs/t-sql -o t-sql.rlat
 ```
 
 ## Query

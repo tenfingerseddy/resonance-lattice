@@ -157,12 +157,18 @@ class GithubFetcher:
 
     # ── Fetcher protocol ───────────────────────────────────────────
 
-    def list_files(self, ref: str | None = None) -> tuple[str, list[str]]:
+    def list_files(
+        self, ref: str | None = None, path_prefix: str | None = None,
+    ) -> tuple[str, list[str]]:
         """Return ``(sha, rel_paths)`` — file list at the resolved sha.
 
         Uses the git-trees API with ``recursive=1``. Handles "truncated"
         responses (repos with > ~100k paths) by raising — callers can
         branch into pagination if that ever matters for rlat use cases.
+
+        If ``path_prefix`` is given, only paths under that subdirectory
+        are returned. The prefix is compared as ``<prefix>/`` so
+        ``Doc`` matches ``Doc/tutorial/...`` but not ``Doctor/...``.
         """
         sha = self.resolve_sha(ref)
         tree = _http_json(
@@ -181,6 +187,9 @@ class GithubFetcher:
             for node in tree.get("tree", [])
             if node.get("type") == "blob" and "path" in node
         )
+        if path_prefix:
+            prefix = path_prefix.strip("/") + "/"
+            paths = [p for p in paths if p.startswith(prefix)]
         return sha, paths
 
     def fetch(self, sha: str, rel_path: str) -> bytes:
@@ -197,12 +206,19 @@ class GithubFetcher:
         )
         return _http_bytes(url, token=self.token, timeout=self.timeout)
 
-    def compare(self, base_sha: str, head_sha: str) -> dict:
+    def compare(
+        self, base_sha: str, head_sha: str, path_prefix: str | None = None,
+    ) -> dict:
         """Return ``{added, modified, removed, head_sha}`` between two SHAs.
 
         Uses the GitHub compare API, which caps at 300 files per response.
         For larger diffs callers should fall back to re-listing the whole
         tree at head_sha and reconciling against the knowledge model manifest.
+
+        If ``path_prefix`` is given, only file entries under that
+        subdirectory are reported; upstream changes outside the scope
+        are silently dropped so scoped knowledge models don't pick up
+        drift they never indexed.
         """
         url = (
             f"{API_BASE}/repos/{self.origin.org}/{self.origin.repo}"
@@ -211,13 +227,16 @@ class GithubFetcher:
         )
         data = _http_json(url, token=self.token, timeout=self.timeout)
         assert isinstance(data, dict)
+        scope = (path_prefix.strip("/") + "/") if path_prefix else None
+        def _in_scope(p: str) -> bool:
+            return scope is None or p.startswith(scope)
         added: list[str] = []
         modified: list[str] = []
         removed: list[str] = []
         for f in data.get("files", []):
             status = f.get("status", "")
             path = f.get("filename", "")
-            if not path:
+            if not path or not _in_scope(path):
                 continue
             if status == "added":
                 added.append(path)

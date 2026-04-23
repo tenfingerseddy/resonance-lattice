@@ -14,8 +14,7 @@ This is the long-form support page for repo visitors evaluating Resonance Lattic
 Use it when you want:
 
 - the longer explanation of what the product is and why it matters
-- direct comparisons with grep, standard RAG, vector databases, and Obsidian
-- the practical answer to "I already have an Obsidian wiki, skills, or memory. Why bother?"
+- direct comparisons with grep, standard RAG, and vector databases
 - practical answers about adoption, integration, and limits
 - the fuller benchmark interpretation behind the headline claims
 - the longer trust and limitations story behind the repo-first positioning
@@ -455,27 +454,6 @@ You also control *how* the LLM uses your knowledge. The `--mode` flag controls h
 rlat resonate project.rlat "how does auth work?" --mode constrain --format context
 ```
 
-### Why not just create an Obsidian vault?
-
-Obsidian is a graph-based knowledge tool — a well-curated vault with wikilinks between documents acts like a graph database for your notes. It is excellent when you want manual structure, note-taking, and graph navigation.
-
-Resonance Lattice is better when the goal is grounded assistant retrieval. It builds a semantic model automatically from your existing files — no manual linking, curation, or LLM required. The model understands meaning, not just keywords or graph structure, and it runs entirely locally with no generative AI in the loop.
-
-We benchmarked both approaches on the same 2,246-document Fabric corpus in the main published comparison. The Obsidian vault was enriched with summaries, keywords, aliases, and 11,000+ wikilinks — a strong best-case baseline for an Obsidian LLM wiki workflow:
-
-| | Obsidian (best) | rlat (reranked) |
-|---|---|---|
-| **Recall@5** | 0.81 | 1.00 |
-| **MRR** | 0.714 | 0.929 |
-| **Failed retrieval** | 19% | 0% |
-
-Short version:
-
-- Resonance Lattice is the stronger retrieval layer for grounded assistant use
-- Obsidian can still be a good workspace, but the benchmark case here is that RL beats the Obsidian LLM wiki approach on retrieval quality
-
-If you like Obsidian as the interface, use the [Obsidian plugin](https://github.com/tenfingerseddy/resonance-lattice/tree/main/obsidian-plugin) and let RL provide the retrieval layer underneath.
-
 ### How much of the quality comes from the backbone versus the pipeline?
 
 The backbone matters, but the practical result you experience comes from the full system:
@@ -596,17 +574,6 @@ The answer-quality benchmark compares an LLM answering questions without rlat co
 - fact recall
 
 On the current internal run, adding rlat context reduced hallucination rate from `0.78` to `0.16` and lifted fact recall from `0.27` to `0.91`.
-
-### How should I interpret the Obsidian comparison?
-
-The Obsidian comparison is useful because it is not a trivial baseline. The tested vault was enriched with:
-
-- summaries
-- keywords
-- aliases
-- wikilinks
-
-That makes it a stronger-than-average Obsidian LLM wiki baseline. The point of the comparison is that RL outperformed that stronger baseline on grounded retrieval. Treat the main published comparison as the canonical message. Do not let the exploratory 10-question multi-hop add-on override it.
 
 ### Where can I inspect the raw benchmark outputs?
 
