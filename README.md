@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/rlat?label=pypi%20rlat)](https://pypi.org/project/rlat/)
 [![Python](https://img.shields.io/pypi/pyversions/rlat)](https://pypi.org/project/rlat/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+[![License: BSL 1.1](https://img.shields.io/badge/license-BSL%201.1-blue.svg)](LICENSE.md)
 [![Downloads](https://img.shields.io/pypi/dm/rlat?label=downloads%2Fmo)](https://pypistats.org/packages/rlat)
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20datasets-tenfingers-yellow)](https://huggingface.co/tenfingers)
 
