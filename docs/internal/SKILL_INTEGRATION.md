@@ -83,7 +83,9 @@ When any returned passage has `drift_status != "verified"` and `--strict` is not
 
 ### 5. Drift abort (strict mode)
 
-`--strict` + any drift → exit code 2 + stderr error message. No banner; no partial output (stdout-buffer is *not* flushed before the error — skill loaders should treat exit-non-zero as "do not load this skill").
+`--strict` + any drift → exit code 2 + stderr error message. No banner; no partial output (stdout-buffer is *not* flushed before the error).
+
+Verified 2026-04-28 against Claude Code: a non-zero exit from any inline `` !`<command>` `` block aborts the skill render entirely, surfaces a visible `Shell command failed for pattern "..."` error to the user (with stdout echoed into the error context, not the prompt), and the skill content never enters the conversation. Skill authors can therefore rely on rc=2 (drift) and rc=3 (`--strict-names`) as a hard gate — Claude Code itself enforces "do not load this skill" on non-zero exit; downstream tooling does not need to inspect the exit code separately. Anything written to stdout on the failure path appears in the user-visible error, so the rc=non-zero path must not emit secrets or noisy diagnostics.
 
 ### 6. Grounding-mode header (always ships)
 
