@@ -111,6 +111,14 @@ soak_*.log
 project.rlat
 smoke.rlat
 *.optimise_cache/
+# Session-scratch bench logs at repo root (ship-numbers committed under benchmarks/results/)
+/bench*.log
+/judge_*.log
+/primer_bench.log
+/rejudge_*.log
+/relaxed_*.log
+/soak_*.log
+/primer_bench.log
 
 # Claude Code worktrees (auto-created, can be very large)
 .claude/worktrees/

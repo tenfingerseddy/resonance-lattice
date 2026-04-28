@@ -62,6 +62,8 @@ rlat build ./docs ./src -o my-project.rlat \
 
 Three storage modes (`local` is the default) — see [STORAGE_MODES.md](./STORAGE_MODES.md) for the trade-offs.
 
+> **Big corpus, no local GPU?** CPU-only encoding of `gte-modernbert-base` runs at ~80-150 passages/sec; corpora over ~10K passages take an unpleasant amount of time. The [`rlat-build-on-kaggle`](../../.claude/skills/rlat-build-on-kaggle/SKILL.md) Claude skill walks through using Kaggle's free T4 GPU instead — account setup, kernel push, polling, and pulling the `.rlat` back. Just ask "can we build this on Kaggle?" inside Claude Code.
+
 ## Run your first query
 
 ```bash

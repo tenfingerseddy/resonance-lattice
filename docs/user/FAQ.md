@@ -183,6 +183,12 @@ Tested up to ~50K passages comfortably. The (N, N) cosine matrix used by `near_d
 
 Single `.rlat` files in the wild range from ~10 MB (a small docset) to ~2 GB (a large code repo + bundled source).
 
+## I don't have a GPU. Can I still build a big corpus?
+
+Yes — and the `rlat-build-on-kaggle` Claude skill at `.claude/skills/rlat-build-on-kaggle/SKILL.md` walks you through using Kaggle's free T4 GPU. T4 encodes `gte-modernbert-base` ~10-20× faster than ONNX-CPU, so anything over ~10K passages is meaningfully faster on Kaggle than locally. The skill covers Kaggle account setup, CLI install + auth, the kernel script (sparse-clones source from GitHub or mounts a Kaggle dataset), polling, and pulling the `.rlat` back. Free tier gives you 30 GPU-hours/week — enough to rebuild a ~500K-passage corpus several times.
+
+Skip Kaggle if your corpus is small (<2K passages — the round-trip overhead exceeds the encode time on CPU) or if you already have a CUDA GPU locally.
+
 ## Is the API key required?
 
 Only for two opt-in CLI commands: `rlat optimise` and `rlat deep-search`. The rest of the surface (build, search, profile, compare, summary, skill-context, memory, refresh, sync, freshness, convert, init-project) needs no LLM access — `rlat` is offline and LLM-free for the standard retrieval surface.

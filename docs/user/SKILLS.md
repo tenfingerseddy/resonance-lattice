@@ -237,7 +237,7 @@ See [docs/user/API_KEYS.md](API_KEYS.md) for when each surface is the right pick
 
 ### The two-skill structure
 
-`rlat` ships **two skills** in `.claude/skills/`, each handling a discrete capability:
+`rlat` ships **two core skills** in `.claude/skills/`, each handling a discrete capability:
 
 | Skill | What it does | Triggers on |
 |---|---|---|
@@ -247,6 +247,12 @@ See [docs/user/API_KEYS.md](API_KEYS.md) for when each surface is the right pick
 The two skills don't overlap: `rlat` orchestrates **CLI workflows**; `deep-research` orchestrates **the multi-hop research loop in conversation**. A single-hop fact question goes to `rlat search`; a multi-file synthesis question goes to `deep-research`. The CLI verb `rlat deep-search` (programmatic surface for the same loop, requires API key) is documented inside the `rlat` skill — not a separate skill — because it's just one more workflow in the rlat surface.
 
 This 2-skill design follows Anthropic's published guidance on composite workflow skills: one skill per discrete capability, positive trigger specificity, decision-gate-driven bodies that orchestrate sub-workflows internally rather than fragmenting into many narrow-trigger skills. Sources: [code.claude.com/docs/en/skills](https://code.claude.com/docs/en/skills), [platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices).
+
+### Optional: `rlat-build-on-kaggle` for big builds with no local GPU
+
+A third skill ships separately for users encoding large corpora without a local CUDA GPU. **`rlat-build-on-kaggle`** walks through Kaggle account + CLI setup, builds a kernel script that installs `rlat[build,ann]`, sparse-clones (or uploads) the source, encodes on a free T4, and pulls the `.rlat` back. T4 encodes `gte-modernbert-base` ~10-20× faster than CPU-only ONNX, so anything over ~10K passages is meaningfully faster on Kaggle than locally on CPU.
+
+Triggers on "use Kaggle", "no GPU here", "build remotely", or any corpus too large to encode on CPU in a reasonable time. Skip it if you already have a CUDA GPU (just `pip install rlat[build]` and run `rlat build` locally) or if your corpus is small (<2K passages — finishes in <2 min on CPU; the Kaggle round-trip is more overhead than the encode). See [rlat-build-on-kaggle/SKILL.md](../../.claude/skills/rlat-build-on-kaggle/SKILL.md) for the full walkthrough.
 
 ## Performance
 

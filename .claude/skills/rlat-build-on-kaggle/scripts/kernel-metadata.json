@@ -1,0 +1,15 @@
+{
+  "id": "<your-username>/rlat-build-<corpus-name>",
+  "title": "rlat build <corpus-name>",
+  "code_file": "build_corpus.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

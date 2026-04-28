@@ -97,6 +97,10 @@ rlat build ./repo/src -o code.rlat --source-root ./repo
 
 `decode` = file isn't valid UTF-8 (binary blob misnamed `.txt`, or a file in a non-UTF-8 encoding). `PermissionError` / `FileNotFoundError` on Windows often means a file is locked or the path is a broken symlink. Silent skips would be a footgun on first builds, so the summary is unconditional.
 
+### Building on a remote GPU (large corpora, no local GPU)
+
+Encoding `gte-modernbert-base` on CPU runs at ~80-150 passages/sec; on a CUDA T4 it runs at ~1500-2500 passages/sec. For corpora over ~10K passages where the local machine has no GPU, the [`rlat-build-on-kaggle`](../../.claude/skills/rlat-build-on-kaggle/SKILL.md) skill walks through using Kaggle's free T4 — account setup, kernel push, polling, and pulling the `.rlat` back. The skill is opt-in; small corpora finish faster on CPU than the Kaggle round-trip would take.
+
 ---
 
 ## `rlat search` *(shipped Phase 3 #26)*
