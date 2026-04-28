@@ -109,7 +109,7 @@ Every claim against named alternatives on committed test sets — methodology an
 
 ## How it's built
 
-Three layers: a **field** (`gte-modernbert-base` 768d CLS+L2, dense cosine, FAISS HNSW) routes the query to ranked passage IDs; a **store** (the `.rlat` archive) resolves IDs back to source bytes and verifies drift; **no reader** — `rlat` returns passages, your assistant composes synthesis. Single recipe — no rerank, no lexical sidecar, no query-prefix tuning, no auto-mode router. Empirically validated to match or beat tuned alternatives. Deep dive: [docs/internal/ARCHITECTURE.md](docs/internal/ARCHITECTURE.md).
+Three layers: the **field** (`gte-modernbert-base` 768d CLS+L2, dense cosine, FAISS HNSW) routes the query to ranked passage IDs; the **store** (the `.rlat` archive) resolves IDs back to source bytes and verifies drift; and **your assistant** composes the synthesis. The third layer is deliberately empty on `rlat`'s side — there is no reader. That keeps `rlat` LLM-free at retrieval time and lets every consumer impose its own grounding rules. Single recipe — no rerank, no lexical sidecar, no query-prefix tuning, no auto-mode router. Empirically validated to match or beat tuned alternatives. Deep dive: [docs/internal/ARCHITECTURE.md](docs/internal/ARCHITECTURE.md).
 
 ## Documentation
 
