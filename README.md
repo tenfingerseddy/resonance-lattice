@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/rlat?label=pypi%20rlat)](https://pypi.org/project/rlat/)
 [![Python](https://img.shields.io/pypi/pyversions/rlat)](https://pypi.org/project/rlat/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
-[![Downloads](https://static.pepy.tech/badge/rlat)](https://pepy.tech/project/rlat)
+[![Downloads](https://img.shields.io/pypi/dm/rlat?label=downloads%2Fmo)](https://pypistats.org/packages/rlat)
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20datasets-tenfingers-yellow)](https://huggingface.co/tenfingers)
 
 > **Give your AI assistant a local, citeable, drift-checked knowledge model of your docs, code, and notes.** One file you own. Every passage cited. No hosted index, no LLM in the retrieval loop.
