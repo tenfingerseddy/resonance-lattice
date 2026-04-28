@@ -1,5 +1,11 @@
 # Resonance Lattice (`rlat`)
 
+[![PyPI](https://img.shields.io/pypi/v/rlat?label=pypi%20rlat)](https://pypi.org/project/rlat/)
+[![Python](https://img.shields.io/pypi/pyversions/rlat)](https://pypi.org/project/rlat/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+[![Downloads](https://static.pepy.tech/badge/rlat)](https://pepy.tech/project/rlat)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20datasets-tenfingers-yellow)](https://huggingface.co/tenfingers)
+
 > **Give your AI assistant a local, citeable, drift-checked knowledge model of your docs, code, and notes.** One file you own. Every passage cited. No hosted index, no LLM in the retrieval loop.
 
 `rlat` packages a corpus — your codebase, your documentation, your research notes — into a single `.rlat` file. Where a semantic data model captures the meaning of a database, a knowledge model captures the semantic shape of unstructured text plus every coordinate needed to find, cite, and verify the underlying source. You query it with a CLI command and feed the results to whichever AI assistant you're already using (Claude Code, Cursor, Aider, Continue, your own agent).
