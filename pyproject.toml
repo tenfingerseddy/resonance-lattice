@@ -3,75 +3,97 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "resonance-lattice"
-version = "0.11.0"
-description = "Portable project memory knowledge models for AI assistants"
+name = "rlat"
+version = "2.0.0"
+description = "Knowledge-model retrieval for AI assistants — base-first, dense-only, three storage modes"
 readme = "README.md"
-license = {text = "BSL-1.1"}
-requires-python = ">=3.11"
+license = {file = "LICENSE.md"}
+requires-python = ">=3.12"
 authors = [
     {name = "Kane Snyder"},
 ]
-keywords = ["project-memory", "ai-assistants", "context-injection", "retrieval", "knowledge-knowledge model"]
+keywords = ["retrieval", "ai-assistants", "context-injection", "knowledge-model", "semantic-search"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: Other/Proprietary License",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+# v2.0 minimum install (CPU-primary read path: search / profile / serve / compare on
+# pre-built knowledge models). No torch, no transformers, no LLM SDK at base.
+# `tokenizers` ships at base because the read path needs to tokenize queries
+# (huggingface_hub can download but not encode text). OpenVINO is optional and
+# auto-detected on Intel CPUs (install separately).
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.11",
-    "torch>=2.0",
-    "transformers>=4.36",
-    "safetensors>=0.4",
-    "datasketch>=1.6",
     "zstandard>=0.22",
-    "faiss-cpu>=1.7",
-    "mcp>=1.0",
+    "huggingface_hub>=0.20",
+    "tokenizers>=0.15",
+    "onnxruntime>=1.17",
 ]
 
 [project.optional-dependencies]
-stream = [
-    "watchdog>=4.0",
+# Encoder building (rlat build): downloads HF weights, encodes passages.
+# transformers >=4.48 is required: gte-modernbert-base has model_type
+# "modernbert", which only landed in transformers 4.48.0.
+# onnxscript is a transitive runtime dep of torch.onnx.export at opset ≥ 17
+# — torch doesn't pull it automatically but install_encoder._export_onnx
+# fails ModuleNotFoundError without it (e.g. on Kaggle's torch image).
+build = [
+    "transformers>=4.48",
+    "torch>=2.0",
+    "onnxscript>=0.1",
 ]
-train = [
-    "datasets>=2.16",
-    "spacy>=3.7",
-    "accelerate>=0.25",
+# MRL optimised training (rlat optimise): synth queries + InfoNCE
+optimise = [
+    "anthropic>=0.25",
+    "torch>=2.0",
 ]
+# ANN indexing (rlat build for corpora with N > 5000 passages, all queries
+# against indexed knowledge models). FAISS locked at Audit 04 (Phase 1 #14):
+# hnswlib failed the audit's tertiary cross-platform-wheel gate (no Win+py3.12
+# wheel); FAISS has prebuilt wheels everywhere; ScaNN is Linux/macOS only.
+# Evidence: docs/internal/audits/03_format_ann_chunking.md +
+# benchmarks/results/ann_audit_04.json.
+ann = [
+    "faiss-cpu>=1.13",
+]
+# CUDA / GPU acceleration. Torch comes via [build] or [optimise]; this extra
+# only adds the GPU-specific ONNX runtime, so users compose [build,gpu] or
+# [optimise,gpu] as needed.
+#
+# IMPORTANT: `onnxruntime` (CPU, base dep) and `onnxruntime-gpu` (here) provide
+# the same `onnxruntime` Python package and clobber each other. Users wanting
+# CUDA inference must `pip uninstall onnxruntime` before installing this extra,
+# OR install with `--no-deps onnxruntime-gpu`. We keep `[gpu]` out of `[all]`
+# below so the default convenience install never triggers the clash.
+gpu = [
+    "onnxruntime-gpu>=1.17",
+]
+# BEIR / benchmarking harness, plus the user-facing comparison suite at
+# benchmarks/user_bench/*. anthropic is needed for the LLM-judged benches
+# (token usage, hallucination); chromadb + sentence-transformers are
+# named comparison baselines for build/query speed; psutil gives us
+# cross-platform peak-RSS measurement on Windows. `beir` transitively
+# pulls sentence-transformers (and therefore torch); installing `[bench]`
+# alone is enough for full BEIR runs without needing `[build]`
+# separately.
 bench = [
     "rank_bm25>=0.2",
     "beir>=2.0",
     "memory-profiler>=0.61",
+    "anthropic>=0.25",
+    "chromadb>=0.4",
+    "sentence-transformers>=2.5",
+    "psutil>=5.9",
 ]
-saas = [
-    "fastapi>=0.115",
-    "uvicorn>=0.30",
-    "pydantic-settings>=2.0",
-    "PyJWT>=2.8",
-    "stripe>=8.0",
-    "azure-storage-blob>=12.19",
-    "azure-servicebus>=7.11",
-    "azure-cosmos>=4.5",
-]
-fast = [
-    "onnxruntime>=1.17",
-]
-wizard = [
-    "questionary>=2.0",
-]
-code = [
-    "tree-sitter>=0.23",
-    "tree-sitter-go>=0.23",
-    "tree-sitter-rust>=0.23",
-    "tree-sitter-typescript>=0.23",
-    "tree-sitter-java>=0.23",
-]
+# Dev tooling. Intentionally NOT in `all` — `all` is the user-facing convenience
+# extra; dev tools are only for contributors.
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
@@ -79,44 +101,31 @@ dev = [
     "ruff>=0.2",
     "pyright>=1.1.400",
 ]
-all = ["resonance-lattice[stream,train,bench,fast,code,wizard,dev]"]
+# Convenience: full user-facing surface. Excludes [gpu] only — the
+# onnxruntime/onnxruntime-gpu package clobber means [gpu] users must
+# uninstall onnxruntime first (see [gpu] block).
+all = ["rlat[build,optimise,bench,ann]"]
 
 [project.scripts]
-rlat = "resonance_lattice.cli:main"
+rlat = "resonance_lattice.cli.app:main"
 
 [project.urls]
+Homepage = "https://github.com/tenfingerseddy/resonance-lattice"
 Repository = "https://github.com/tenfingerseddy/resonance-lattice"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["resonance_lattice*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
-[tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
-ignore = [
-    "N802",   # uppercase function names (math conventions)
-    "N803",   # uppercase argument names (B, D, N, M are standard)
-    "N806",   # uppercase variable in function (scientific notation)
-    "N812",   # lowercase imported as non-lowercase
-    "N814",   # camelcase imported as constant (used for defensive aliases like `LocalStore as _LS`)
-    "N817",   # camelcase imported as acronym
-    "E501",   # line too long (enforced at review, not CI gate)
-    "E701",   # multiple statements on one line
-    "E741",   # ambiguous variable name (b, l, I are fine in math)
-]
-
-[tool.ruff.lint.per-file-ignores]
-"src/resonance_lattice/cli.py" = ["E402"]
-"src/resonance_lattice/lattice.py" = ["E402"]
-"src/resonance_lattice/refresh.py" = ["E402"]      # late remote-mode import block (intentional)
-"src/resonance_lattice/serialise.py" = ["E402"]    # imports after module-level try/except
-"tests/test_lens_router.py" = ["E402"]             # imports after sys.path manipulation
-"tests/test_encoder_openvino_auto.py" = ["N801"]   # dummy inner classes mimic mock-library `class config:` shape
-"tests/test_mcp_ask.py" = ["N805"]                 # pytest hook signatures don't use `self`
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+include = ["src/resonance_lattice"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-x --tb=short"

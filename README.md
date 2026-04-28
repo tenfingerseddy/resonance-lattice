@@ -1,289 +1,111 @@
-# Resonance Lattice
+# Resonance Lattice (`rlat`)
 
-**A portable semantic model for knowledge.**
+> **Give your AI assistant a local, citeable, drift-checked knowledge model of your docs, code, and notes.** One file you own. Every passage cited. No hosted index, no LLM in the retrieval loop.
 
-Resonance Lattice turns docs, code, notebooks, and any other files into a `.rlat` knowledge model — a single-file semantic model of your corpus that you can search, inspect, compose, and share like any other artifact. One file. Local by default. Works across any LLM.
+`rlat` packages a corpus — your codebase, your documentation, your research notes — into a single `.rlat` file. Where a semantic data model captures the meaning of a database, a knowledge model captures the semantic shape of unstructured text plus every coordinate needed to find, cite, and verify the underlying source. You query it with a CLI command and feed the results to whichever AI assistant you're already using (Claude Code, Cursor, Aider, Continue, your own agent).
 
-```bash
-pip install resonance-lattice
-rlat build ./docs ./src -o project.rlat
-rlat search project.rlat "how does auth work?" --format text
-rlat ask    project.rlat "how does auth work?" --reader llm
-```
+## What it does
 
-See [docs/CORE_FEATURES.md](docs/CORE_FEATURES.md) for the seven use cases the knowledge model unlocks — grounding, primers, skills, memory, portability, inspection, and retrieval shaping.
+- **One `.rlat` file you own.** Embeddings + source coordinates + content hashes — all in one ZIP. Open it with `unzip`, inspect the registry with `jq`. No hosted index, no proprietary binary, no vendor lock-in.
+- **Every passage carries provenance.** Each result is `(text, source_file, char_offset, char_length, content_hash, drift_status)`. Citation is free. Drift detection is free. Refusal on stale evidence is one flag away.
+- **No LLM in the retrieval loop.** `rlat search`, `rlat profile`, `rlat compare`, `rlat summary`, `rlat refresh`, `rlat skill-context`, `rlat memory`, and the entire RQL surface need no API key and no model call. After a one-time `rlat install-encoder` (downloads the 768d encoder), local-mode build/search workflows run offline. Remote-mode `rlat sync` and `rlat freshness` are network-backed by design (HTTP + SHA-pin verify); `rlat optimise` and the `rlat deep-search` CLI verb are the two opt-in commands that need an Anthropic API key — see [docs/user/API_KEYS.md](docs/user/API_KEYS.md).
+- **A grounding directive your LLM sees.** `rlat search --format context` and `rlat skill-context` stamp an explicit instruction at the top of the markdown they emit (`augment` / `knowledge` / `constrain`) telling the consumer LLM how to weight the passages vs its training. The directive is non-negotiable — every consumer of the corpus sees the same rule.
+- **Three storage modes, switchable in place.** `bundled` (zstd-framed source inside the file, fully self-contained), `local` (default — source on disk, reconcile via `rlat refresh`), `remote` (HTTP-pinned, SHA-verified, reconcile via `rlat sync`). Switch with `rlat convert` — no rebuild, embeddings preserved.
+- **Multi-hop research, free with your Claude subscription.** A `deep-research` skill ships in `.claude/skills/` that drives a plan → retrieve → refine → synthesize loop natively in your Claude Code session — same loop and prompts as the `rlat deep-search` CLI verb, but no API key required because the LLM hops run through your existing Claude subscription. The CLI verb is the same loop exposed for non-Claude-Code agents / CI / batch consumers (Anthropic API key required).
 
----
-
-## Why a semantic model
-
-Data professionals already know the pattern. In BI, a semantic model sits between raw tables and the reports that query them — it names entities, defines measures, and makes the underlying data queryable without every report having to stitch joins itself. You build it once. Everything downstream gets the same honest answer.
-
-Resonance Lattice does the same thing, but for unstructured knowledge: the docs, notebooks, meeting notes, PDFs, spec sheets, and source code that sit between you and the answer you actually need. `rlat build` reads those files and writes a **knowledge model** — a compact semantic structure that any LLM, any tool, any workflow can query consistently. The model is the artifact. Retrieval is one thing the model does, not the whole product.
-
-This is why we call it a *semantic model for knowledge* rather than a retrieval library or a RAG framework. The framing matters because what you get is an inspectable, versionable, mathematically-structured object — not a pipeline.
-
----
-
-## Three-layer retrieval
-
-Under the hood, the knowledge model is a three-layer object. Each layer is independently auditable so you can stop at whichever one fits the workflow.
-
-| Layer | Question it answers | Command |
-|-------|---------------------|---------|
-| **1. Field** | *Which region of the corpus is relevant?* — fixed-size semantic router over your files | `rlat search` |
-| **2. Retrieval** | *What bytes do we return?* — adaptive expansion + optional lexical (ripgrep) hybrid pass | `rlat search --expand natural --hybrid on` |
-| **3. Reader** | *What answer does the user see?* — grounded synthesis with verified citations | `rlat ask --reader llm` |
-
-`rlat ask --reader context` returns the exact evidence pack a reader would see — cheap, deterministic, LLM-free. Citations link back to source files with line numbers and verification markers (✓/○) so every claim can be checked against the bytes it came from.
-
-The reader supports an on-device OpenVINO backend (Intel Arc iGPU / CPU / NPU) and Anthropic / OpenAI-compatible HTTP APIs. Pick via `--reader-backend` or set a project default in `.rlat.toml`.
-
----
-
-## How it differs from RAG
-
-Standard RAG is a pipeline: embed chunks, store vectors, retrieve top-k, stuff into a prompt. It solves a narrow problem and leaves you with plumbing — and usually a service dependency.
-
-Resonance Lattice ships a different primitive. Because the knowledge model is a real object with algebraic structure, you get operations that pipelines don't offer:
-
-- **Diff two versions** of a corpus and query the delta — not "what files changed" but "what *knowledge* changed".
-- **Forget a subset** cleanly, with a mathematical guarantee the removed source no longer contributes to the field.
-- **Merge** per-domain knowledge models into a unified view — order-independent, reproducible.
-- **Project** one model through the lens of another (*"show me code, but only through the compliance lens"*).
-- **Contradict** — find where two models disagree.
-- **X-ray** the corpus itself (signal quality, saturation, coverage gaps) before you even query.
-
-None of this requires running an LLM. The knowledge model is the analytical artifact; the LLM reader is optional on top.
-
-| If you use | What it is good at | What Resonance Lattice adds |
-|------------|--------------------|-----------------------------|
-| **grep** | Exact text match | Semantic retrieval, inspection, portable artifacts |
-| **Standard RAG / vector DB** | Hosted or index-backed retrieval | A portable `.rlat` file, local control, algebraic composition |
-| **LLM direct** | Reasoning and generation | Grounded evidence with verified citations |
-| **Note vaults / wikis** | Human-authored organization | Automatic semantic modeling over the files you already have |
-
----
-
-## Mathematical (and analytical, by consequence)
-
-The field has algebraic structure. That's not a marketing line — it's what makes the product different.
-
-- **Adding a source** accumulates onto the field; removing it subtracts cleanly. The same inputs produce the same field every time. No temperature, no sampling, no drift.
-- **Merging** is commutative and associative. `merge(merge(A, B), C) == merge(A, merge(B, C))`. You can compose by team, by domain, by time period — the result is stable.
-- **Diffing** is a signed semantic delta. Query the diff and get what changed in *meaning*, not what changed in text.
-- **Forget** is an exact rank-1 subtraction. The removed source's phase vector no longer contributes, and the operation returns a certificate quantifying any residual cross-talk.
-
-Because the field is a well-defined mathematical object, inspection is cheap and meaningful:
-
-| Command | What it tells you |
-|---------|-------------------|
-| `rlat xray corpus.rlat` | Corpus-level health: signal quality, saturation, diagnostic flags |
-| `rlat locate corpus.rlat "query"` | Where a query sits in the knowledge landscape, and what the field does not cover |
-| `rlat probe corpus.rlat <recipe>` | Pre-built insight recipes: novelty, saturation, coverage gaps, contradictions |
-| `rlat profile corpus.rlat` | Semantic shape of the corpus: per-band energy, rank, source distribution |
-
-The analytical surface is a consequence of the mathematical foundation. You can answer "what does my corpus *know*?" as cleanly as you can answer "find me a passage about X" — with the same object, the same commands, no extra infrastructure. See [docs/SEMANTIC_MODEL.md](docs/SEMANTIC_MODEL.md) for the fuller story.
-
----
-
-## Storage modes
-
-One lossless-store abstraction, three backends — pick the shape that fits the deployment. See [docs/STORAGE_MODES.md](docs/STORAGE_MODES.md) for details.
-
-| Mode | Where the source files live | Best for |
-|------|------------------------------|----------|
-| **`local`** (default) | On disk, resolved via `--source-root` at query time | Developing against a working copy; large corpora where the `.rlat` should stay thin |
-| **`bundled`** | Packed inside the `.rlat` as zstd frames | Self-contained artifacts — HF Hub demos, CI, offline distribution |
-| **`remote`** | Public HTTP origin, SHA-pinned against a commit, cached locally on first fetch | Pointing at an upstream repo you don't own — `rlat freshness` and `rlat sync` manage upgrades lockfile-style |
-
-All three serve the same retrieval pipeline. Re-chunking, drift detection, window expansion, and format dispatch work identically across modes.
-
-Legacy `embedded` mode (pre-chunked SQLite) is deprecated and scheduled for removal in v2.0.0; `bundled` is the canonical self-contained replacement.
-
----
-
-## Headline benchmarks
-
-Numbers are pointers — fit to your own data matters more than any leaderboard. Calibration rules, methodology, and caveats live in [docs/HONEST_CLAIMS.md](docs/HONEST_CLAIMS.md).
-
-- **Microsoft Fabric docs** (24,635-chunk corpus, 100 evaluation questions) — full `rlat` pipeline: **Recall@5 1.00**, **MRR 0.93**, **0% failed retrieval**.
-- **Token efficiency** (2,266-file codebase) — `rlat search` returned **24.6× fewer tokens** than a `grep + read top 5 files` workflow while keeping ranked passages and source attribution intact.
-- **Grounding quality** (LLM hallucination eval) — feeding `rlat` context reduced hallucinations from **78% → 16%** and raised fact recall from **0.27 → 0.91**.
-- **BEIR-5 best-mode avg (three encoders measured, 2026-04-22)**:
-  - `BGE-large-en-v1.5` (default, portable) — **0.445 nDCG@10**
-  - `E5-large-v2` (opt-in, portable) — **0.455 nDCG@10**
-  - `Qwen3-Embedding-8B` (opt-in, needs 16 GB GPU) — **0.500 nDCG@10** (field_only; stack probe deferred)
-
-  Portable tiers sit with 2024 mid-tier open dense retrievers (Cohere-embed-v3, jina-v3, mE5-large-instruct). Qwen3-8B is frontier-adjacent — ~1 pt below `text-embedding-3-large` on this harness.
-
-> **Pick by workload.** None of the three encoders wins everywhere. BGE is the rational middle; E5 wins on counter-argument / debate retrieval (ArguAna); Qwen3-8B wins in raw quality when you have the GPU. [docs/ENCODER_CHOICE.md](docs/ENCODER_CHOICE.md) has the full per-corpus table and the decision guide.
-
-The full story — including misses, per-corpus regressions, and what doesn't work — is in [HONEST_CLAIMS.md](docs/HONEST_CLAIMS.md) and [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
-
----
-
-## Quick start
-
-Python `>=3.11`. First build downloads the default encoder (`BAAI/bge-large-en-v1.5`, ~1.3 GB). Builds and queries run fully locally after that.
+## Quickstart (~2 min)
 
 ```bash
-pip install resonance-lattice
-pip install onnxruntime  # optional — 2-5× encoding speedup
+pip install rlat[build]                 # base + transformers/torch for first build
+rlat install-encoder                    # one-time, ~2 min on CPU
+rlat init-project                       # auto-detects docs/ + src/, builds + writes a primer
+rlat search myproject.rlat "how does auth work?"
 ```
 
-**Build** a knowledge model from your files:
+Once you have a `.rlat`, query-time only needs the base install — `pip install rlat` (no extras) on a different machine is enough to search a knowledge model someone else built. Full walkthrough: [docs/user/GETTING_STARTED.md](docs/user/GETTING_STARTED.md). Full CLI reference: [docs/user/CLI.md](docs/user/CLI.md).
+
+## A real query, end-to-end
 
 ```bash
-rlat build ./docs ./src -o project.rlat
+rlat build ./docs ./src -o resonance-lattice.rlat
+rlat search resonance-lattice.rlat "How does verified retrieval work?" \
+  --top-k 2 --format context
 ```
 
-Or against a public GitHub repo — the knowledge model pins to the current commit SHA and serves from a local cache thereafter:
+```markdown
+<!-- rlat-mode: augment -->
+> **Grounding mode: augment.** Use the passages below as primary context
+> for this corpus's domain. Cite them when answering; prefer them over
+> your training knowledge when the two conflict.
+
+<!-- docs/internal/STORE.md:10094+56 score=0.832 verified -->
+## Verified retrieval (`store.verified` — WS3 #292 port)
+
+<!-- docs/user/GLOSSARY.md:10864+279 score=0.758 verified -->
+**Verified retrieval** — the contract that every passage in every `.rlat` carries
+source provenance + content hash, so query-time results can be cited back to
+source and drift can be detected. `rlat`'s single biggest architectural
+advantage vs. opaque-embedding-store retrievers.
+```
+
+Zero LLM calls, zero network round-trip, all local. That block drops straight into a Claude / Cursor / agent prompt. Each comment line is a stable citation anchor your assistant can preserve in its answer; the `verified` tag is its drift contract; the grounding-mode header is the rule the LLM is being asked to follow.
+
+## Use it with your AI assistant
+
+`rlat` is assistant-neutral — every result is portable markdown your assistant of choice can read.
+
+### Claude Code
+
+A `deep-research` skill ships in `.claude/skills/`. For cross-file synthesis questions ("why did we pick X over Y?", "what are the trade-offs across Y?"), it drives a plan → retrieve → refine → synthesize loop natively in your Claude Code session. No API key required — your Claude subscription covers the LLM hops. For one-shot fact lookups, use `rlat search`. See [docs/user/SKILLS.md](docs/user/SKILLS.md) for skill `!command` integration with citations + drift status pre-baked.
+
+### Cursor, Aider, Continue, CLI-only, CI
 
 ```bash
-rlat build https://github.com/MicrosoftDocs/fabric-docs -o fabric-docs.rlat
+# Pipe the markdown straight into your assistant's prompt
+rlat search myproject.rlat "how does auth work?" --format context > context.md
+
+# Or for compliance / audit work where wrong-but-confident is unacceptable:
+rlat search myproject.rlat "what's our SOX retention policy?" \
+  --format context --mode constrain --strict-names --verified-only
 ```
 
-**Search** it:
+The output is plain markdown with citation anchors and a grounding-mode directive header. Paste it into your assistant's system prompt or include it via your IDE's context-injection mechanism. For programmatic multi-hop research outside Claude Code, `rlat deep-search` runs the same loop as the skill but as a CLI command (Anthropic API key required, ~$0.009-0.025 per question — see [API_KEYS.md](docs/user/API_KEYS.md)).
 
-```bash
-rlat search project.rlat "how does auth work?" --format text
-```
+## What's measured
 
-**Ask** a grounded question:
+Every claim against named alternatives on committed test sets — methodology and reproducibility recipes in [docs/user/BENCHMARKS.md](docs/user/BENCHMARKS.md).
 
-```bash
-# Full pipeline: expand + hybrid + LLM reader with cited answer
-rlat ask project.rlat "how does auth work?" --reader llm
-
-# Evidence over synthesis — no LLM, deterministic:
-rlat ask project.rlat "how does auth work?" --reader context
-```
-
-**Inspect** the shape of what you built:
-
-```bash
-rlat profile project.rlat
-rlat xray    project.rlat
-```
-
-For a one-command project setup that wires in `.claude/resonance-context.md`, `.rlat/manifest.json`, MCP config, and assistant integration:
-
-```bash
-rlat init-project --auto-integrate
-```
-
-The full walkthrough — profiling, composition, MCP, HTTP serving — is in [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
-
----
-
-## Prebuilt knowledge models
-
-Skip `rlat build` entirely — we publish five production-ready knowledge models on HuggingFace Hub. Each ships as both a `bundled` variant (self-contained, works offline) and a `remote` variant (SHA-pinned, `rlat sync`-able). Identical retrieval quality; the trade-off is network dependency at query time.
-
-| Corpus | HuggingFace repo |
+| Bench | Result |
 |---|---|
-| Microsoft Fabric docs | [`tenfingers/fabric-docs-rlat`](https://huggingface.co/datasets/tenfingers/fabric-docs-rlat) |
-| Power BI Developer docs | [`tenfingers/powerbi-developer-rlat`](https://huggingface.co/datasets/tenfingers/powerbi-developer-rlat) |
-| PowerShell docs | [`tenfingers/powershell-docs-rlat`](https://huggingface.co/datasets/tenfingers/powershell-docs-rlat) |
-| Python standard library | [`tenfingers/python-stdlib-rlat`](https://huggingface.co/datasets/tenfingers/python-stdlib-rlat) |
-| T-SQL docs | [`tenfingers/tsql-docs-rlat`](https://huggingface.co/datasets/tenfingers/tsql-docs-rlat) |
+| **Hallucination** (Microsoft Fabric, 63 hand-written questions, Sonnet 4.6, relaxed rubric) | `rlat deep-search` (default `--mode augment`): **92.2% accuracy / 2.0% answerable hallucination** at $0.009/q, vs LLM-only **56.9% / 19.6%**. `--mode knowledge` variant drops to **0% answerable hallucination** at the same accuracy; `--mode constrain` hits **91.7% distractor refusal** — pick for compliance / audit. Full 11-lane matrix in [BENCHMARKS.md](docs/user/BENCHMARKS.md#hallucination-reduction). The `--strict-names` namecheck gate catches the failure mode where the encoder surfaces a similarly-named real entity for a fake-product-name distractor and the LLM confidently answers about the wrong entity. |
+| **Token spend** (rlat repo, 20 questions, **single-shot** retrieval — note: predates `deep-search`) | `rlat skill-context --mode constrain` $0.012 per correct answer vs grep+read $0.044 (3.7× cheaper) vs full-corpus dump $0.796 (67× cheaper). Absolute accuracy is lower (35% vs 85%) — single-shot trades accuracy for cost. Deep-search lanes pending v2.0.1. |
+| **Session-start primer** (`resonance-lattice.rlat`, 25 scenarios × 5 lanes, Sonnet 4.6) | Code primer (`rlat summary`) wins **3/5 orientation**; memory primer (`rlat memory primer`) wins **5/5 memory recall**; `both_primers` loaded carries **48% turn-1 correct** vs cold's **0%**. Code primer ~1,708 tok/call, memory primer ~746 tok/call, both ~2,454 tok/call (~1,400× smaller than a full-corpus dump). [BENCHMARKS.md § Session-start primer](docs/user/BENCHMARKS.md#session-start-primer). |
+| **Query latency + on-disk size** (1K-passage corpus, Intel CPU + OpenVINO) | Warm query p50 **17 ms** vs Chroma **145 ms** (8.5× faster); **2.7 MB** on disk vs Chroma **8.6 MB** (3.2× smaller). |
+| **Retrieval quality** (BEIR-5 mean nDCG@10, gte-modernbert-base 768d) | **0.5144** locked floor — beats BGE-large by **+0.026** and E5-large by **+0.081** on the same `rlat` stack (apples-to-apples). [BENCHMARK_GATE.md](docs/internal/BENCHMARK_GATE.md). |
 
-```bash
-huggingface-cli download tenfingers/fabric-docs-rlat fabric-docs-bundled.rlat --local-dir .
-rlat search fabric-docs-bundled.rlat "how do I create a lakehouse"
-```
+## How it's built
 
-See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the three workflows — **keep bundled** (offline-ready), **switch to repo-backed** (track upstream with `rlat freshness` / `rlat sync`), or **repoint to a local synced folder** (for vendored / air-gapped / editable checkouts).
+Three layers: a **field** (`gte-modernbert-base` 768d CLS+L2, dense cosine, FAISS HNSW) routes the query to ranked passage IDs; a **store** (the `.rlat` archive) resolves IDs back to source bytes and verifies drift; **no reader** — `rlat` returns passages, your assistant composes synthesis. Single recipe — no rerank, no lexical sidecar, no query-prefix tuning, no auto-mode router. Empirically validated to match or beat tuned alternatives. Deep dive: [docs/internal/ARCHITECTURE.md](docs/internal/ARCHITECTURE.md).
 
----
+## Documentation
 
-## Assistant integration
-
-Three composable entry points. Use what fits — they work side by side.
-
-**MCP server** — native tool integration in Claude Code, Copilot, Cursor, and any MCP-compatible client. Single-line config:
-
-```json
-{ "mcpServers": { "rlat": { "command": "rlat", "args": ["mcp", "project.rlat"] } } }
-```
-
-**CLI** — zero-config, works with any assistant that can run shell commands. `--format json|context|prompt` controls how output is framed.
-
-**Knowledge-model-backed skills** — skills keep their workflow structure while their reference knowledge adapts to each request. Four-tier injection (static, foundational, user-query, derived). Skills without knowledge-model fields work exactly as they did.
-
-See [docs/MCP.md](docs/MCP.md), [docs/CLI.md](docs/CLI.md), and [docs/SKILL_INTEGRATION.md](docs/SKILL_INTEGRATION.md) for the detailed interfaces.
-
----
-
-## Common workflows
-
-**Keep a knowledge model fresh as sources change:**
-
-```bash
-rlat add  project.rlat ./new_docs              # append new sources
-rlat sync project.rlat ./docs ./src            # track additions, updates, deletions
-rlat refresh project.rlat --source-root .      # re-encode drifted chunks
-```
-
-**Compose across domains:**
-
-```bash
-rlat search docs.rlat "auth flow" --with code.rlat
-rlat search code.rlat "data handling" --through compliance.rlat
-rlat search current.rlat "what changed?" --diff baseline.rlat
-```
-
-**Shape retrieval without tuning knobs:**
-
-```bash
-# Task-matched presets
-rlat search corpus.rlat "exact error code" --tune focus
-rlat search corpus.rlat "design trade-offs" --tune explore
-
-# Asymmetric contrast: what does my corpus know that a baseline doesn't?
-rlat search internal-api.rlat "authentication" --contrast vendor-docs.rlat
-```
-
-**Generate an assistant primer** (compact, query-derived, auto-refreshes on build):
-
-```bash
-rlat summary project.rlat -o .rlat/resonance-context.md
-# Reference from CLAUDE.md / .github/copilot-instructions.md / .cursorrules
-```
-
----
-
-## Practical limits
-
-| What | Detail | What to do |
-|------|--------|------------|
-| **Initial build is CPU-intensive** | First build encodes every chunk through BGE-large-en-v1.5 | Incremental sync only re-processes changed files. ONNX runtime (`pip install onnxruntime`) gives 2-5× CPU speedup. CUDA GPU supported if available. |
-| **Default encoder is English-optimised** | Non-English retrieval less reliable with the default setup | `--encoder` is configurable; multilingual alternatives should be revalidated on your corpus. |
-| **Best numbers use the full pipeline** | Lexical injection + reranking helps on factual / technical corpora; short-prose corpora sometimes regress | `rlat search` auto-selects mode from signal-separation; `--hybrid` is opt-in with documented per-corpus sensitivity. |
-
-See [docs/STATUS_AND_BOUNDARIES.md](docs/STATUS_AND_BOUNDARIES.md) for shipped surfaces, experimental areas, and current limits.
-
----
-
-## Status
-
-**`0.11.0`** — heading to v1.0.0 on 2026-06-08. Roadmap and live workstreams are on the [public GitHub project board](https://github.com/users/tenfingerseddy/projects/1).
-
-## Docs
-
-- [Core Use Cases](docs/CORE_FEATURES.md) — the seven workflows the knowledge model unlocks
-- [Overview](docs/OVERVIEW.md) — product positioning and comparison matrix
-- [Getting Started](docs/GETTING_STARTED.md) — install → first query
-- [Knowledge Model Architecture](docs/KNOWLEDGE_MODEL_ARCHITECTURE.md) — file format + internals
-- [Storage Modes](docs/STORAGE_MODES.md) — bundled / local / remote, when to pick each
-- [Semantic Model](docs/SEMANTIC_MODEL.md) — the three-layer retrieval story in depth
-- [Honest Claims](docs/HONEST_CLAIMS.md) — calibration document, numbers with methodology
-- [Encoders](docs/ENCODERS.md) — encoder guide (backbones, projection heads, warm path); [Encoder Choice](docs/ENCODER_CHOICE.md) for the per-workload decision
-- [CLI Reference](docs/CLI.md), [MCP](docs/MCP.md), [Skill Integration](docs/SKILL_INTEGRATION.md)
-- [RQL Reference](docs/RQL_REFERENCE.md) — programmable field operations
-- [Benchmarks](docs/BENCHMARKS.md), [FAQ](docs/FAQ.md)
+- [docs/user/GETTING_STARTED.md](docs/user/GETTING_STARTED.md) — first knowledge model in 15 minutes
+- [docs/user/CLI.md](docs/user/CLI.md) — every command, every flag
+- [docs/user/CORE_FEATURES.md](docs/user/CORE_FEATURES.md) — seven things `rlat` enables
+- [docs/user/BENCHMARKS.md](docs/user/BENCHMARKS.md) — measured numbers vs named baselines
+- [docs/user/SKILLS.md](docs/user/SKILLS.md) — Anthropic-skill `!command` integration
+- [docs/user/STORAGE_MODES.md](docs/user/STORAGE_MODES.md) — bundled / local / remote decision guide
+- [docs/user/API_KEYS.md](docs/user/API_KEYS.md) — when an Anthropic API key is needed (and the free alternatives)
+- [docs/user/FAQ.md](docs/user/FAQ.md) — common questions, including licence
+- [docs/user/GLOSSARY.md](docs/user/GLOSSARY.md) — terminology
+- [docs/internal/ARCHITECTURE.md](docs/internal/ARCHITECTURE.md) — three-layer thesis + module map
+- [docs/internal/KNOWLEDGE_MODEL_FORMAT.md](docs/internal/KNOWLEDGE_MODEL_FORMAT.md) — `.rlat` v4.1 ZIP format spec (open it with `unzip` and `jq`; nothing proprietary)
+- [docs/internal/HONEST_CLAIMS.md](docs/internal/HONEST_CLAIMS.md) — calibrated claims, known limits
+- [docs/internal/BENCHMARK_GATE.md](docs/internal/BENCHMARK_GATE.md) — locked floor + reproduction recipe
+- [docs/VISION.md](docs/VISION.md) — the why
 
 ## License
 
-[Business Source License 1.1](LICENSE.md) — broad permitted use for internal development, CI/CD, coding assistants, and your own products. Each release converts to MPL 2.0 four years after it's first published. Plain-language summary: [LICENSE_FAQ.md](docs/LICENSE_FAQ.md).
+[BSL-1.1](LICENSE.md). Source-available, commercial-use restricted during the change-licence window. See the [licence FAQ](docs/user/FAQ.md) for the change date and what it means in practice.
+
+Issues, contributions, and corrections welcome at [tenfingerseddy/resonance-lattice](https://github.com/tenfingerseddy/resonance-lattice).

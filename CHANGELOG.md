@@ -1,128 +1,153 @@
 # Changelog
 
-All notable changes to Resonance Lattice. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely; dates are ISO. Dates are the day the work landed on `main`.
+All notable changes to Resonance Lattice. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
----
+## [2.0.0] — 2026-04-29
 
-## [Unreleased] — target v1.0.0 (2026-06-08)
+The v2.0.0 rebuild collapses the v0.11 surface to an evidence-backed minimum.
+Breaking changes are extensive — full list compiled per phase as work lands.
+Migration path from v0.11: there isn't one. Build fresh knowledge models with v2.0.
+
+### Added (2026-04-28 — Bench 5 primer effectiveness MVP)
+
+- **`benchmarks/user_bench/primer_effectiveness/`** ships — 5-lane × 25-scenario harness measuring code primer (`rlat summary`) vs memory primer (`rlat memory primer`) vs both-primers vs per-turn `rlat search` vs cold. Per-tier coverage profile: code primer wins orientation (3/5), memory primer wins memory recall (5/5), `rlat search` wins specific-factual (8/10). `both_primers` carries 48% turn-1 correct vs cold's 0%. Bench cost: $2.31. Result JSON committed at `benchmarks/results/user_bench/primer_effectiveness.json`.
+- **Token cost table** for primers added to `docs/user/BENCHMARKS.md` and `docs/internal/benchmarks/05_primer_effectiveness.md`: code primer ~1,708 tokens/call, memory primer ~746 tokens/call, both ~2,454 tokens/call. ~1,400× smaller than a full-corpus dump.
+- BENCHMARKS.md "deferred to v2.0.1" placeholder under § Session-start primer replaced with the real numbers + per-tier headline finding + honest framing on the 25-scenario sample size.
+
+### Added (2026-04-28 — Skill restructure 3 → 2 + composite workflow)
+
+- **`.claude/skills/rlat/`** restructured as a workflow-orchestration composite. Frontmatter description names all 9 sub-workflows (init / refresh / search / skill-context / memory / compare / convert / optimise / programmatic deep-search) for positive trigger specificity. `allowed-tools: Bash(rlat:*), Read, Write, Edit, Glob, Grep`. Pre-launch fix-up at commit `e493f050+` corrected three classes of stale commands flagged in the launch-readiness audit: removed `rlat install-encoder --check` (no `--check` flag), corrected memory subcommand syntax to `rlat memory --memory-root <path> {add|recall|primer|...} [args]` (the `--memory-root` flag goes on the parent command, not the subcommand), and replaced the non-existent `rlat rql ...` CLI surface with a Python-API reference (RQL ops are Python-only in v2.0). Replaced 500-line v0.11-stale `references/CLI_REFERENCE.md` with a slim pointer to the canonical [docs/user/CLI.md](docs/user/CLI.md).
+- **`.claude/skills/rlat-deep-research/`** removed — folded into the rlat skill's "Programmatic deep-search" workflow section. Eliminates 3-skills redundancy where `rlat deep-search` was both a CLI verb and a separate skill.
+- **`.claude/skills/deep-research/`** retained — Claude-driven multi-hop research over an rlat KM (uses the user's Claude Code subscription instead of the API key the CLI verb requires).
+- 15 evals at `.claude/skills/rlat/evals.json` covering should-trigger × 8 sub-workflows + should-defer-to-deep-research × 2 + should-NOT-trigger × 4 (exact-symbol-rename, specific-file-edit, other-vector-DB, training-knowledge).
+- `docs/user/SKILLS.md` documents the 2-skill structure with citations to Anthropic skill design guidance.
+
+### Added (2026-04-27 — `rlat deep-search` CLI verb + namecheck)
+
+- **`rlat deep-search km.rlat "<question>"`** ships. Multi-hop research loop (plan → retrieve → refine → maybe re-retrieve → synthesize) returning a final answer plus the union of evidence. Bench-validated headline: **92.2% answerable accuracy at 0% hallucination, $0.009/q** on the Microsoft Fabric corpus 11-lane v4 bench (63 questions, Sonnet 4.6, relaxed rubric). Within 2 pp of an LLM+grep/glob baseline at 6.5× lower spend.
+- **Namecheck** (`--strict-names`) — distinctive-token verification on the grounding-emit boundary. Catches name-aliasing distractor failures where the encoder surfaces a similarly-named real entity for a fake-product-name question. Wired through `rlat skill-context`, `rlat search --format context`, and `_grounding.py`. Harness suite at `tests/harness/name_check.py` (10 + 6 guarantees).
+- **CLI surface 15 → 16** (added `deep-search`).
+- **11-lane v4 bench results** (`benchmarks/results/user_bench/hallucination_v4.json`): 3 modes × 3 retrieval shapes + LLM-only + LLM+grep/glob. `rlat deep-search --mode knowledge` and default `augment` both hit 92.2% / 0% halluc / $0.009/q. `rlat search --mode constrain` is the compliance floor at 91.7% distractor refusal / 2.0% answerable hallucination.
+- New `src/resonance_lattice/deep_search/` module — `loop.py`, `prompts.py`, `types.py` (composable; `rlat deep-search` is a thin CLI wrapper).
+
+### Renamed (2026-04-28 — package distribution name)
+
+- PyPI distribution name `rlat2` → `rlat`. Was reserved as `rlat2` during the rebuild; now claims the canonical `rlat` namespace for v2.0 launch. `pip install rlat` works; `pip install rlat2` no longer publishes new versions.
+- README + all docs updated to `pip install rlat[bench]`, `pip install rlat[build]`, etc.
+
+### Added (2026-04-27 — Audit 08: storage-mode conversion)
+
+- **`rlat convert <km> --to {bundled|local|remote}`** ships. Switches a knowledge model between storage modes WITHOUT rebuilding embeddings — bands, registry, ANN, and the optimised W projection are preserved (`np.allclose` at 1e-6). All six pairwise transitions supported. Atomic in-place via `tmp + os.replace`.
+- **`Store.fetch_all(source_files)`** primitive on the ABC — bulk-reads every requested source file via the cached `_read_full_text`. Default impl works for all three subclasses; specific stores can override with parallel-fetch paths in v2.1+.
+- **`ConversionDriftError`** typed exception. Conversion validates every passage's `content_hash` against the live bytes resolved via the source mode's Store BEFORE write; if any drift, raises this error and does NOT write a new archive. The user runs `rlat refresh` (local) or `rlat sync` (remote) to reconcile, then retries convert. Same correctness pattern as Audit 07's codex P0 fix.
+- **"Optimise on remote" workflow** is now a clean two-command flow: `rlat convert upstream.rlat --to local --source-root <dir> -o working.rlat` then `rlat optimise working.rlat`. Documented in [docs/user/OPTIMISE.md](docs/user/OPTIMISE.md) and [docs/user/FAQ.md](docs/user/FAQ.md). The optimise pipeline stays storage-mode-agnostic.
+- **`tests/harness/conversion`** — 8 hermetic guarantees (3 round-trips × bands `np.allclose`; passage_id stable; content_hash stable; drift abort; idempotent no-op; error-shape).
+- **CLI surface count 14 → 15** (added `convert`).
+
+### Added (2026-04-26 — Audit 07: incremental refresh + sync)
+
+- **`rlat sync`** ships. Remote-mode incremental delta-apply: discover upstream changes via `RemoteIndex.changed_files_since(pinned_ref)`, fetch only the deltas, re-encode them, atomically write the new archive with the new manifest pinned. Two `RemoteIndex` modes:
+  - **Catalog mode** (`--upstream-manifest <url>`) — upstream serves a stable `{source_file: {url, sha256}}` endpoint; sync diffs in O(1) network calls and detects added + modified + removed.
+  - **Poll mode** (default) — re-fetches every URL in the existing manifest, diffs SHAs against the pinned values; detects modified + removed only.
+- **`rlat refresh`** rewritten as incremental delta-apply (was: full rebuild from `metadata.build_config.source_root`). Unchanged passages now keep their band rows untouched; only modified/added passages are re-encoded.
+- **Optimised band re-projection** in both refresh + sync. After a delta-apply, the optimised band is re-projected from the new base via `optimised = (new_base @ W.T)` row-wise L2-normalised. **Free** — no LLM call, no GPU. The earlier "refresh discards the optimised band, pay $14-21 + 30 min to regenerate" footgun is gone.
+- **Stable `passage_id`** in `passages.jsonl` (additive v4 → v4.1 schema bump). Each passage now carries `id = sha256(source_file + char_offset + char_length)[:16]` so a passage's identity survives across refresh/sync deltas. Verified-retrieval citations, `corpus_diff` continuity, and external bookmark consumers stay valid through reconciliation. Legacy v4 archives load through `registry.compute_id` — back-compat read.
+- **`--dry-run`** on both `refresh` and `sync` — walk + bucketise + report the four-bucket delta counts, no fetch, no write.
+- **`tests/harness/incremental_refresh`**, **`incremental_sync`**, **`optimised_reproject`** — three new harness suites enforcing the contracts (14 guarantees total, all hermetic — no live network).
+
+### Renamed (2026-04-26)
+
+- CLI `rlat specialise` → `rlat optimise`. Better word: the command both reduces
+  embedding dim (768 → 512 via the MRL projection) AND improves in-corpus
+  retrieval. "Specialise" was opaque about what it did; "optimise" is clearer
+  to users who haven't read the docs.
+- Module `src/resonance_lattice/specialise/` → `src/resonance_lattice/optimise/`.
+- pyproject extras `[specialise]` → `[optimise]`.
+- Band name in archive: `bands["specialist"]` → `bands["optimised"]`. v2.0
+  unreleased — no migration path needed for in-flight `.rlat` files; rebuild
+  with the new code.
+- Docs: `docs/user/SPECIALISE.md` → `OPTIMISE.md`, `docs/internal/SPECIALISE.md`
+  → `OPTIMISE.md`.
+- Harness suite: `tests/harness/specialise_roundtrip.py` →
+  `optimise_roundtrip.py`. Runner matcher updated.
+- Bench scripts: `bench_beir3_specialist_soak.py` → `bench_beir3_optimised_soak.py`,
+  `bench_fabric_specialist_probe.py` → `bench_fabric_optimised_probe.py`.
+
+Clean break — no aliases, no deprecation shim. Frozen artifacts under
+`benchmarks/results/` retain their original "specialist"/"specialise"
+filenames as historical-run records. Kaggle kernel slugs (e.g.
+`rlat2-beir-3-specialist-soak-v7`) likewise frozen as historical.
+
+### Removed (compared to v0.11)
+
+CLI commands deleted (21):
+- `ask` — LLM coupling broke LLM-free positioning. Use `rlat search --format context` and your own assistant.
+- `resonate` — redundant with `search --format context`.
+- `merge` — needs Intent operators; deferred to v2.1+.
+- `mcp` — MCP server dropped from v2.0; CLI is primary interface. Candidate for v2.1.
+- `query`, `ingest`, `add`, `ls`, `info`, `diff`, `encoders`, `export`, `probe`, `topology`, `xray`, `negotiate`, `forget` — replaced by `build` / `sync` / `profile` / RQL ops.
+- `contradictions` (top-level), `primer` (top-level), `locate` (top-level), `compose` (top-level) — folded into `rlat` RQL dispatch.
+- All `skill *` subcommands (10) — skills reference existing knowledge models via SKILL.md frontmatter.
+- All `lens *` subcommands (4) — replaced by RQL subspace algebra.
+
+CLI flags / knobs deleted (~50+):
+- Cross-encoder rerank: `--rerank`, `--probe-rerankers`. Measured null/negative on strong-dense.
+- Lexical: `--hybrid`, `--lexical-impl`, `--bm25-index`. BEIR-5 parity failure (4/5 corpora).
+- Encoder selection: `--encoder` (single recipe), `--bands`, `--dim`, `--field-type`, `--precision`, `--compression`, `--sparsify-mode`, `--soft-topk-tau`, `--sparsemax-scale`, `--quantize-registry`, `--compact`.
+- Routing: `--retrieval-mode`, `--mode`, `--cascade`, `--cascade-depth`, `--subgraph`, `--subgraph-k`, `--expand`. Dense-only thesis.
+- Inference: `--onnx`, `--openvino`, `--openvino-device`, `--openvino-static-seq-len`. Auto-detected.
+- Misc: `--no-worker`, `--probe-*`, `--contextual-chunking`, `--with-contradictions`, `--contradiction-threshold`.
+
+Modules deleted:
+- `reranker.py`, `query_router.py`, `lens_router.py`, `cascade.py`, `reversible_cascade.py`, `lens.py`, `projector.py`, `skill_projector.py`, `mcp_server.py`, `stream.py`.
+- `field/asymmetric_dense.py`, `field/multi_vector.py`, `field/factored.py`, `field/pq.py`.
+- `training/heads.py`, `training/trainer.py`, `training/asymmetric_*.py`. Trained heads closed 0-for-9.
+- `rql/eml*.py`. EML retrieval falsified 3×.
+- `_experimental/*` (9 modules). Stubs and prototypes.
+- `temporal.py`, `temporal_algebra.py`, `quantize.py`, `subspace.py`, `consciousness.py`, `quantum.py`, `symplectic.py`, `sculpting.py`, `pattern_injection.py`, `metabolism.py`, `interference.py`, `confidence.py`.
+- `reader/*` — no reader layer in v2.0; consumer synthesizes.
+
+Dependencies dropped from base install:
+- `torch`, `transformers` → moved to `[build]` / `[optimise]` / `[gpu]` extras.
+- `mcp` → MCP dropped from v2.0.
+- `datasketch`, `watchdog`, `questionary`, `tree-sitter-*` → unused in v0.11 src/, removed entirely.
+- Base install drops from ~2.5 GB to ~250 MB.
 
 ### Added
 
-- **Three-mode lossless store.** Knowledge models share one `LosslessStore` abstraction with three file-read backends, chosen via `--store-mode {bundled, local, remote}`:
-  - `bundled` — raw source files packed inside the `.rlat` as zstd frames (lossless, self-contained).
-  - `local` (default, historical alias `external`) — thin knowledge model + `--source-root` at query time.
-  - `remote` — HTTP-backed; knowledge model pins to a commit SHA on a public GitHub repo with a SHA-pinned local cache under `~/.cache/rlat/remote/`.
-- **Format v3** with extended `store_mode` enum (`0=embedded`, `1=local/external`, `2=remote`, `3=bundled`). v1/v2 knowledge models keep loading unchanged.
-- **`rlat build <github-url>`** — detects GitHub URLs, pins to a commit SHA at build time, fetches the tree via the GitHub API, stages into a temp directory, and runs the normal build pipeline.
-- **`rlat freshness <cart>`** — read-only upstream drift check for remote-mode knowledge models. One API call; exit `0` if up-to-date, `1` if drift (CI-friendly).
-- **`rlat sync <cart>`** — for remote mode, pulls the upstream diff via the GitHub compare API, applies changes via the same chunk-reconciliation pipeline `rlat refresh` uses, and atomically bumps `__remote_origin__.commit_sha`.
-- **`rlat repoint <cart> --to {local,remote,bundled}`** — switch a knowledge model's storage mode without re-encoding. Uses the shared manifest schema across modes; validates path overlap before writing (zero overlap = hard fail, <80% = warning). Supports `local ↔ remote`, `local → bundled`, and `remote → bundled`. Bundled → anything requires a rebuild.
-- **Three-layer retrieval** (the Semantic-Layer architecture). `rlat search` routes through the field; `rlat ask` adds adaptive expansion + optional lexical (ripgrep) hybrid pass + grounded reader synthesis with verified citations.
-- **Reader layer.** `rlat ask --reader llm` (OpenVINO local or Anthropic/OpenAI API) or `rlat ask --reader context` (evidence-only, deterministic, LLM-free). Citations structurally grounded — fabricated indices dropped; quote verification via ✓/○ markers.
-- **`docs/STORAGE_MODES.md`** — central reference documenting all three modes, their format layouts, and when to pick each.
-- **`docs/KNOWLEDGE_MODEL_ARCHITECTURE.md`** (renamed from `CARTRIDGE_ARCHITECTURE.md`), `docs/HONEST_CLAIMS.md` (calibration document), `docs/CORE_FEATURES.md` (seven v1.0 use cases), `docs/LICENSE_FAQ.md` (plain-language BSL reference).
-- **Governance files.** `SECURITY.md` (private disclosure via GitHub Security Advisories + email fallback), `CONTRIBUTING.md` (DCO via `git commit -s`), `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), `NOTICE` (third-party attributions).
-- **SPDX `BUSL-1.1` headers** on every `src/resonance_lattice/*.py` file (110 files).
-- **`GithubFetcher`** and **`DiskCache`** in `resonance_lattice.remote` — stdlib-`urllib` client with zero new runtime dependencies, two-tier (memory + disk) cache, SHA-pinned immutable keys, atime-LRU eviction bounded by `budget_bytes` (default 500 MB).
-- **`resonance_lattice.bundled.pack`** / **`BlobReader`** — zstd-framed blob store with per-file random-access decompression.
-- **Tiered encoder presets** with measured 5-BEIR numbers in [docs/HONEST_CLAIMS.md](docs/HONEST_CLAIMS.md):
-  - `BAAI/bge-large-en-v1.5` — default portable encoder, 0.445 5-BEIR best-mode avg (mid-tier).
-  - `intfloat/e5-large-v2` — opt-in via `--encoder e5-large-v2`, 0.455 avg; wins on counter-argument retrieval (ArguAna).
-  - `BAAI/bge-m3`, `Alibaba-NLP/gte-large-en-v1.5`, `jina-embeddings-v3` — additional portable encoders, measured on the same harness.
-  - `Qwen/Qwen3-Embedding-8B` — opt-in via `--encoder qwen3-8b`, 0.500 avg field_only, high-end tier (needs 16 GB GPU). Required a new `"last"` token pooling mode on the encoder — previous mean/CLS pooling collapsed Qwen3 embeddings.
-- **`docs/ENCODER_CHOICE.md`** — decision guide for picking the encoder per workload.
+CLI commands new (2):
+- `rlat install-encoder` — one-time HF download → ONNX export → optional OpenVINO conversion.
+- `rlat optimise <km.rlat>` — opt-in in-place MRL optimised band (~$14-21 + 30 min GPU).
+
+CLI flags new:
+- `rlat build --kind corpus|intent` — Intent Lattice kind tag (no operators in v2.0).
+
+API key discovery:
+- `RLAT_LLM_API_KEY_ENV` → `CLAUDE_API` → `ANTHROPIC_API_KEY`.
 
 ### Changed
 
-- **Terminology: "cartridge" → "knowledge model"** across all user-facing surfaces (README, docs, CLI help, MCP tool descriptions, error messages). Classes, function names, test file names, and the `.rlat` extension stay as-is for v1.0.0; internal rename tracked for v1.1.0.
-- **`ExternalStore` → `LocalStore`** with a module-level alias preserved for backward compatibility. All 21 call sites work unchanged.
-- **`--store-mode` default: `embedded` → `local`** (was `external`, renamed). Deprecation message on `embedded` now points users at `--store-mode bundled` as the self-contained replacement.
-- **Default encoder: `intfloat/e5-large-v2` → `BAAI/bge-large-en-v1.5`** (CLI default only; `EncoderConfig` dataclass default stays on E5 for legacy-knowledge-model back-compat). Pass `--encoder e5-large-v2` to reproduce the prior default.
-- **`LosslessStore.store` / `.remove`** no longer hard no-ops: they route `__`-prefixed reserved ids (encoder config, source manifest, remote origin, profile, retrieval config) to the attached `meta_store`. Chunk-text writes still drop.
-- **`Lattice.load` dispatch** generalised from `isinstance(..., ExternalStore)` to `isinstance(..., LosslessStore)` so all three modes get encoder restoration.
-- **`refresh_cartridge`**'s per-file reconciliation loop extracted to `_reconcile_file_chunks`, shared with the new `sync_remote_cartridge`. Local refresh behavior is byte-for-byte identical.
-- **`__all__` in `resonance_lattice/__init__.py`** is now the single source of truth for the public API. Mutations require a `CHANGELOG.md` entry. Removed 3 unused compiler chain presets (`precision_chain`, `exploration_chain`, `focused_chain`) — still importable from `resonance_lattice.compiler`, just not from the top-level package.
-- **Primer system rewritten** to be self-maintaining — commit-seeded topic discovery, lens-diverse retrieval, memory amplification, per-query reranking.
+- **Default encoder**: `gte-modernbert-base` 768d (was `e5-large-v2` / `bge-large-en-v1.5` depending on point release). One recipe, no presets.
+- **Knowledge-model format**: v4 — ZIP + JSON + NPZ multi-band slots. v0.11's binary format is no longer readable.
+- **Default storage mode**: `local` (`--source-root`).
+- **Python minimum**: 3.12 (was 3.11).
+- **Terminology**: "knowledge model" replaces "cartridge" in all surfaces.
 
-### Deprecated
+### Migration
 
-- **Legacy `embedded` mode** (pre-chunked SQLite `SourceStore`). Will stop working in v2.0.0. Migration path: `rlat build ... --store-mode bundled`.
-- **`CartridgeEntry`, `ComposedCartridge`, `CartridgeRef`, `CartridgeFreshness`** class names are preserved for v1.0.0 compatibility but will be renamed in v1.1.0 (Phase 2 internal rename).
+There is no in-place migration tool. v0.11 knowledge models cannot be read by v2.0. Rebuild from source:
 
-### Benchmarks (negative results, 2026-04-22)
+```bash
+pip install rlat
+rlat install-encoder
+rlat build ./your-source -o new.rlat
+```
 
-- **v15 LongMemEval rebench — v14 holds.** Two orthogonal experiments on LongMemEval_S (500 instances, 800/50 chunking, adaptive routing):
-  - **Q1 (LayeredMemory architecture)** — E5-large-v2 + per-instance `LayeredMemory.recall_enriched` with per-tier `enriched_query` fan-out + max-weighted fusion. Stratified 50-slice results in `benchmarks/results/longmemeval/kaggle_v15_phase1_e5/`. Three cells:
-    - E5-control (cartridge baseline): R@5 0.939, MRR 0.946.
-    - P1-null (all-working tier): R@5 0.957 (+0.018, sub-noise — 50-slice SE ±0.075). Neutral overall; small reordering from fusion tie-breaking.
-    - P1-tier (recency policy: ≤30d→working, ≤180d→episodic, else→semantic, weights 0.5/0.3/0.2): R@5 0.935. **knowledge-update R@5 drops 0.900→0.800 (−0.100)**. Root cause: `adaptive_memory_config` already sets `prefer_recent=True` for KU queries as post-processing; the tier-weight recency signal double-counts, pushing older-but-correct answers below recency-boosted distractors.
-  - **Q2 (BGE encoder flip on LME)** — BGE-large-en-v1.5 + v14's cartridge pipeline, full 500 on RunPod A100. Results in `benchmarks/results/longmemeval/runpod_v15_bge/`. Aggregate R@5 **0.916** vs v14 E5 **0.924** (**−0.008**). Three categories drop ≥0.01 vs v14: multi-session −0.017, single-session-user −0.016, temporal-reasoning −0.031. BGE wins single-session-preference (+0.067) and knowledge-update (+0.014). Pattern confirms the ArguAna-style BGE regression noted in `memory/project_arguana_bge_regression.md` — BGE hurts cross-session and counter-argument categories at full-500 scale.
-  - **Publish bar both cases: FAIL.** Requires R@5 improvement ≥0.005 AND no category drop ≥0.01. Q1 shows no positive signal and a category cliff; Q2 aggregates negatively and has three category cliffs. **v14 (E5-large-v2, cartridge, R@5 0.9244) remains the shipped LongMemEval baseline.**
-  - **`LayeredMemory.recall_enriched`** ships as API (fixes the pure-dense gap in `recall`/`recall_text`); it is the correct primitive for memory-architecture experiments in the future but does not improve the LME benchmark. Unit test coverage in `tests/test_layered_memory.py` (3 fusion tests).
-
-### License
-
-- **Business Source License 1.1** with broad permitted use for internal development, CI/CD, coding assistants, and downstream products. Each release converts to MPL 2.0 four years after its first public release (per-version dynamic formula — no manual re-anchoring). See [LICENSE.md](LICENSE.md) and [docs/LICENSE_FAQ.md](docs/LICENSE_FAQ.md).
+The `legacy/v0.11.0` tag preserves the v0.11 codebase if you need to read old `.rlat` files.
 
 ---
 
-## [0.11.0] — 2026-04-15 — EML corpus intelligence
+## Pre-2.0.0 history
 
-### Added
-
-- **EML corpus transforms.** Nonlinear spectral transforms that reshape the whole field before search, unsupervised: `--sharpen`, `--soften`, `--contrast`, `--tune {focus,explore}` presets.
-- **`MultiVectorField`** — per-source vector sets with soft-MaxSim retrieval (research lane; not default).
-- **Contextual chunking — "natural" format** as the default (+1.4% nDCG@10 over prior chunker defaults).
-- **A3 / A4 trainable circuits** research code + ternary cleanup in `rql/eml_circuits.py`.
-
-### Changed
-
-- **EML Phase A:** linear-calibrated emit fix + reranker compatibility.
-- **EML Stage 2:** registry per-band nonlinear scoring + SciFact benchmark coverage.
-- **Quality strategy** updated — closed BGE-M3 Tier 4 (SPLADE via multi-output retired after failing to beat dense+rerank).
-
----
-
-## [0.10.1] — 2026-04-15 — `--compact` build flag
-
-### Added
-
-- **`rlat build --compact`** — produces 16× smaller knowledge models by trimming non-essential metadata from the `.rlat` payload while preserving the field + registry.
-
-### Changed
-
-- **IDF reranking** updated in `bench_beir_pipeline.py` methodology.
-- **Asymmetric field v2** results recorded in `benchmarks/results/beir/` (asymmetric lane closed — did not beat symmetric).
-
----
-
-## [0.10.0] — 2026-04-15 — threshold default + encoder benchmarks
-
-### Added
-
-- **Threshold sparsification** as a default for key-head encoding — FLOPS-regularised, sparsity-aware.
-- **LongMemEval benchmark** harness in `benchmarks/` — R@5 / MRR across question categories.
-- **Asymmetric key/value field** (star-schema separation for matching vs retrieval) — research implementation; ultimately retired after BEIR regression analysis.
-- **Knowledge Physics** features across CLI, MCP, and skill integration — algebra-powered operations (merge, forget, diff, project, contradict).
-- **Obsidian plugin** explorer view, graph visualization, and advanced search controls.
-- **Lazy imports in `__init__.py`** — 15× faster warm CLI queries for the primary search path.
-- **Website docs overhaul** — serves from repo markdown, removes static duplicates.
-- **Batch build pipeline** covering encoding, field ops, and SQLite commits.
-
-### Changed
-
-- **README restructured** around the reader journey.
-- **MCP startup** simplified — ONNX attach moved into deferred loader.
-- **Primer Tier 3** quality improvements: noise filtering, README promotion, echo beats README.
-
----
-
-## [0.9.0] — 2026-04-12 — Public PyPI-ready release
-
-Initial PyPI-targeted release. Documents, benchmarks, Obsidian plugin, Claude Code skill, knowledge physics, and the cartridge-algebra composition model. See the tag commit for the full state snapshot.
-
----
-
-## Prior history
-
-Pre-0.9.0 commits live in `git log` — phase-numbered branches covered the encoder training pipeline, RAG quality evaluation, PQ batch superpose, LLM judge harness, and the nature-inspired correlated-activation experiments. That era's milestones are captured in `docs/direction/PROJECT_HISTORY.md`.
+See git log on the `legacy/v0.11.0` tag.

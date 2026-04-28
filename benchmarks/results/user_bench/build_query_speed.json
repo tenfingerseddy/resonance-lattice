@@ -1,0 +1,58 @@
+{
+  "config": {
+    "platform": "Windows",
+    "python": "3.12.10",
+    "n_queries_per_approach": 50,
+    "seed": 0,
+    "sizes": [
+      1000
+    ]
+  },
+  "trials": [
+    {
+      "approach": "rlat",
+      "n_passages": 1000,
+      "build_seconds": 175.79443350003567,
+      "warm_query_p50_ms": 17.151600040961057,
+      "warm_query_p95_ms": 24.435855023330074,
+      "cold_query_ms": 0.0,
+      "peak_rss_mb": 1710.01953125,
+      "on_disk_mb": 2.7230987548828125,
+      "error": null,
+      "notes": [
+        "runtime=openvino",
+        "encoder_revision=e7f32e3c00f9",
+        "encode_s=175.79 ann_build_s=0.000 use_ann=False"
+      ]
+    },
+    {
+      "approach": "sentence-transformers+faiss",
+      "n_passages": 1000,
+      "build_seconds": 67.84579130006023,
+      "warm_query_p50_ms": 30.42179998010397,
+      "warm_query_p95_ms": 39.37275497009978,
+      "cold_query_ms": 0.0,
+      "peak_rss_mb": 1710.02734375,
+      "on_disk_mb": 5.652654647827148,
+      "error": null,
+      "notes": [
+        "model=gte-modernbert-base",
+        "encode_s=67.84 faiss_build_s=0.001"
+      ]
+    },
+    {
+      "approach": "chromadb",
+      "n_passages": 1000,
+      "build_seconds": 21.510941600077786,
+      "warm_query_p50_ms": 145.25755000067875,
+      "warm_query_p95_ms": 152.68233998212963,
+      "cold_query_ms": 0.0,
+      "peak_rss_mb": 1828.64453125,
+      "on_disk_mb": 8.58633041381836,
+      "error": null,
+      "notes": [
+        "default-embedder=all-MiniLM-L6-v2 (Chroma builtin)"
+      ]
+    }
+  ]
+}

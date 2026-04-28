@@ -1,357 +1,175 @@
-# SPDX-License-Identifier: BUSL-1.1
-"""Dense interference field implementation.
+"""Dense cosine retrieval — base or optimised band.
 
-The dense field stores the full B x D x D tensor. Each band's field is a D x D
-matrix formed by the superposition (sum of outer products) of all encoded sources.
+Single retrieval strategy applied uniformly. The retrieval pipeline branches
+on band presence at knowledge-model load time, not on a flag. Cross-knowledge-
+model ops always use the base band (see Phase 3 `cli/compare.py`).
 
-This is the simplest and most mathematically transparent implementation. It is
-appropriate for development, testing, and corpora up to ~82K sources (with sparse
-phase vectors at s=0.05, D=2048).
-
-Memory: B * D^2 * precision_bytes. At B=5, D=2048, f32: ~80 MB.
-Retrieval: O(B * D^2) per query — a matrix-vector multiply per band.
+Phase 1 deliverable. Base plan §3.1, §3.3, §3.4.
 """
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy.typing import NDArray
+
+from . import _runtime_common as common
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
-class ResonanceResult(NamedTuple):
-    """Result of a resonance projection."""
-    resonance_vectors: NDArray[np.float32]  # shape: (B, D) — per-band resonance
-    fused: NDArray[np.float32]              # shape: (D,) — weighted sum across bands
-    band_energies: NDArray[np.float32]      # shape: (B,) — energy per band
+def search(
+    query_embedding: np.ndarray,
+    band_embeddings: np.ndarray,
+    registry: "Sequence | None" = None,
+    projection_matrix: np.ndarray | None = None,
+    top_k: int = 10,
+) -> list[tuple[int, float]]:
+    """Top-k cosine retrieval against a single band.
 
+    query_embedding: (D,) L2-normalised float32 from `Encoder.encode([query])[0]`.
+    band_embeddings: (N, d_band) L2-normalised float32. d_band is 768 for base,
+        512 for the MRL optimised (after W projection).
+    registry: sequence of objects exposing `.source_file: str` and
+        `.char_offset: int` for query-time dedup. Passing None skips dedup.
+    projection_matrix: (d_band, D) MRL W matrix. Pass when `band_embeddings`
+        is the optimised band; pass None for the base band.
+    top_k: number of results returned after dedup.
 
-class DenseField:
-    """Dense interference field: B x D x D tensor.
-
-    Implements the core Hopfield-style associative memory where each source
-    contributes a rank-1 outer product weighted by salience.
-
-    F_b += alpha_i * (phi_i_b (x) phi_i_b)
-
-    Retrieval is a matrix-vector multiply:
-    r_b = F_b @ q_b
+    Returns: list of (passage_idx, score) sorted by score descending,
+    deduplicated by (source_file, char_offset) when `registry` is provided.
+    Cosine == dot product when both vectors are L2-normalised.
     """
+    if top_k <= 0:
+        return []
 
-    def __init__(self, bands: int, dim: int, dtype: np.dtype = np.float32) -> None:
-        """Initialise a zero field.
+    q = query_embedding
+    if projection_matrix is not None:
+        q = q @ projection_matrix.T
+        common.l2_normalize(q)
 
-        Args:
-            bands: Number of frequency bands (B).
-            dim: Dimensionality per band (D).
-            dtype: NumPy dtype for the field tensor.
-        """
-        self.bands = bands
-        self.dim = dim
-        self.dtype = dtype
-        self.F: NDArray = np.zeros((bands, dim, dim), dtype=dtype)
-        self._source_count = 0
-        self._sparsity_sum: float = 0.0  # Accumulated sparsity for averaging
+    scores = band_embeddings @ q
+    n = len(scores)
 
-    @property
-    def source_count(self) -> int:
-        """Number of sources superposed into the field."""
-        return self._source_count
+    if registry is None:
+        # No dedup; one partition + sort produces exactly top_k hits.
+        budget = min(top_k, n)
+        idx_sorted = topk_indices(scores, budget)
+        return [(int(i), float(s)) for i, s in zip(idx_sorted, scores[idx_sorted])]
 
-    @property
-    def size_bytes(self) -> int:
-        """Size of the field tensor in bytes."""
-        return self.F.nbytes
+    # With dedup, a fixed candidate_k can underflow on duplicate-heavy
+    # registries — keep doubling the budget until we have enough distinct
+    # hits or we've scanned the whole band.
+    budget = min(top_k * common.CANDIDATE_MULTIPLIER, n)
+    while True:
+        idx_sorted = topk_indices(scores, budget)
+        hits = [(int(i), float(s)) for i, s in zip(idx_sorted, scores[idx_sorted])]
+        hits = dedup_by_source(hits, registry)
+        if len(hits) >= top_k or budget >= n:
+            return hits[:top_k]
+        budget = min(budget * 2, n)
 
-    @property
-    def size_mb(self) -> float:
-        """Size of the field tensor in megabytes."""
-        return self.size_bytes / (1024 * 1024)
 
-    def superpose(
-        self,
-        phase_vectors: NDArray[np.float32],
-        salience: float = 1.0,
-    ) -> None:
-        """Add a source to the field via rank-1 outer product update.
+def topk_indices(scores: np.ndarray, k: int) -> np.ndarray:
+    """Return indices of the top-k scores in descending order. argpartition
+    is O(N); we sort only the partitioned slice. Public so RQL ops
+    (`navigate.neighbors` etc.) reuse the same idiom rather than reimplementing
+    argpartition + argsort everywhere."""
+    n = len(scores)
+    if k >= n:
+        return np.argsort(-scores)
+    partitioned = np.argpartition(-scores, k - 1)[:k]
+    return partitioned[np.argsort(-scores[partitioned])]
 
-        F_b += alpha * (phi_b (x) phi_b) for each band b.
 
-        Args:
-            phase_vectors: Shape (B, D) — the source's phase spectrum.
-            salience: Scalar weight alpha_i (importance * recency * authority * novelty).
-        """
-        self._validate_phase(phase_vectors)
-        for b in range(self.bands):
-            phi = phase_vectors[b]
-            # Rank-1 update: outer product of phi with itself, scaled by salience
-            self.F[b] += salience * np.outer(phi, phi)
-        # Track average sparsity (fraction of non-zero components)
-        avg_s = np.mean([
-            np.count_nonzero(np.abs(phase_vectors[b]) > 1e-6) / self.dim
-            for b in range(self.bands)
-        ])
-        self._sparsity_sum += avg_s
-        self._source_count += 1
+# Soft cap on the (query × target × 4 byte) similarity matrix produced by
+# `max_cosines_against`. 512 MB at the default lets a 512-row query tile
+# scan up to ~256K targets before chunking. Beyond that, target rows are
+# streamed in chunks so peak RSS stays bounded.
+COSINE_CHUNK_BYTES = 512 * 1024 * 1024
 
-    def superpose_batch(
-        self,
-        phase_batch: NDArray[np.float32],
-        saliences: NDArray[np.float32] | None = None,
-    ) -> None:
-        """Add multiple sources to the field in a single BLAS call.
 
-        Uses the identity: sum_i(alpha_i * phi_i @ phi_i^T) = X^T @ diag(alpha) @ X
-        For uniform salience: F_b += X_b^T @ X_b (single matmul per band).
+def sampled_mean_max_cosine(
+    src: np.ndarray, dst: np.ndarray, *, sample_size: int, seed: int = 0,
+) -> float:
+    """Mean max-cosine of a deterministic `sample_size` sample from `src`
+    against all of `dst`. Used by `cli/compare._mutual_coverage` and
+    `rql/compare.compare` — single home for "sample-then-mean-max."
 
-        This is ~500x faster than sequential superpose for large batches.
+    Sampling is deterministic via `seed=` (np.random.default_rng); identical
+    inputs produce identical numbers across runs. Empty src or dst → 0.0
+    so callers don't need to special-case before calling.
+    """
+    n_src = src.shape[0]
+    n_dst = dst.shape[0]
+    if n_src == 0 or n_dst == 0:
+        return 0.0
+    if n_src <= sample_size:
+        sample = src
+    else:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(n_src, sample_size, replace=False)
+        sample = src[idx]
+    return float(max_cosines_against(sample, dst).mean())
 
-        Args:
-            phase_batch: Shape (N, B, D) — batch of phase spectra.
-            saliences: Shape (N,) — per-source salience weights. None = all 1.0.
-        """
-        N = phase_batch.shape[0]
-        if saliences is None:
-            for b in range(self.bands):
-                X = phase_batch[:, b, :]  # (N, D)
-                self.F[b] += X.T @ X  # (D, D) — single BLAS call
-        else:
-            for b in range(self.bands):
-                X = phase_batch[:, b, :]  # (N, D)
-                # Scale rows by sqrt(salience) so X^T @ X = sum(alpha_i * outer)
-                sqrt_s = np.sqrt(saliences)[:, np.newaxis]  # (N, 1)
-                Xs = X * sqrt_s
-                self.F[b] += Xs.T @ Xs
 
-        # Track stats
-        avg_s = np.mean([
-            np.mean(np.count_nonzero(np.abs(phase_batch[:, b, :]) > 1e-6, axis=1)) / self.dim
-            for b in range(self.bands)
-        ])
-        self._sparsity_sum += avg_s * N
-        self._source_count += N
+def max_cosines_against(
+    query_band: np.ndarray,
+    target_band: np.ndarray,
+    *,
+    chunk_bytes: int = COSINE_CHUNK_BYTES,
+) -> np.ndarray:
+    """For each row in `query_band`, return its max cosine vs `target_band`.
 
-    def remove(
-        self,
-        phase_vectors: NDArray[np.float32],
-        salience: float = 1.0,
-    ) -> None:
-        """Remove a source from the field via rank-1 subtraction.
+    Output: `(N_query,)` float32. Both inputs assumed L2-normalised — cosine
+    == dot product. Used by `cli/compare._mutual_coverage` (with sampling)
+    and `rql/compare.unique` / `rql/compare.intersect_max` (without).
 
-        F_b -= alpha * (phi_b (x) phi_b) for each band b.
+    Memory-bounded: `query @ target.T` would materialise a
+    `(N_query, N_target)` matrix; for huge `target` this gets chunked along
+    axis 0 with a running per-row max accumulated incrementally. Peak RSS
+    stays under `chunk_bytes` regardless of corpus size.
 
-        This is algebraically exact if the same phase_vectors and salience
-        that were used for superpose are provided.
+    Empty target → returns a `(N_query,)` array of `-inf` so callers know
+    "no neighbour at any threshold" rather than getting a silent zero.
+    """
+    n_query = query_band.shape[0]
+    n_target = target_band.shape[0]
+    if n_query == 0:
+        return np.zeros(0, dtype=np.float32)
+    if n_target == 0:
+        return np.full(n_query, -np.inf, dtype=np.float32)
+    bytes_per_target_row = n_query * 4
+    chunk_rows = max(1, chunk_bytes // bytes_per_target_row)
+    if chunk_rows >= n_target:
+        sims = query_band @ target_band.T
+        return sims.max(axis=1).astype(np.float32, copy=False)
+    running_max = np.full(n_query, -np.inf, dtype=np.float32)
+    for start in range(0, n_target, chunk_rows):
+        chunk = target_band[start:start + chunk_rows]
+        chunk_max = (query_band @ chunk.T).max(axis=1)
+        np.maximum(running_max, chunk_max, out=running_max)
+    return running_max
 
-        Args:
-            phase_vectors: Shape (B, D) — the source's phase spectrum (same as superpose).
-            salience: Same scalar weight used during superpose.
-        """
-        self._validate_phase(phase_vectors)
-        for b in range(self.bands):
-            phi = phase_vectors[b]
-            self.F[b] -= salience * np.outer(phi, phi)
-        self._source_count -= 1
 
-    def resonate(
-        self,
-        query_phase: NDArray[np.float32],
-        band_weights: NDArray[np.float32] | None = None,
-    ) -> ResonanceResult:
-        """Project a query into the field to find resonant sources.
+def dedup_by_source(
+    hits: list[tuple[int, float]],
+    registry: "Sequence",
+) -> list[tuple[int, float]]:
+    """Drop hits sharing `(source_file, char_offset)`. First-seen wins.
 
-        For each band b:
-            r_b = F_b @ q_b
-
-        Then fuse across bands:
-            R = sum_b(w_b * r_b)
-
-        Args:
-            query_phase: Shape (B, D) — the query's phase spectrum.
-            band_weights: Shape (B,) — weights for multi-band fusion.
-                If None, uniform weights (1/B) are used.
-
-        Returns:
-            ResonanceResult with per-band resonance vectors, fused vector,
-            and per-band energy levels.
-        """
-        self._validate_phase(query_phase)
-
-        if band_weights is None:
-            band_weights = np.ones(self.bands, dtype=self.dtype) / self.bands
-        else:
-            band_weights = np.asarray(band_weights, dtype=self.dtype)
-            if band_weights.shape != (self.bands,):
-                raise ValueError(
-                    f"band_weights shape {band_weights.shape} != ({self.bands},)"
-                )
-
-        # Per-band resonance: r_b = F_b @ q_b
-        resonance_vectors = np.zeros((self.bands, self.dim), dtype=self.dtype)
-        band_energies = np.zeros(self.bands, dtype=self.dtype)
-
-        for b in range(self.bands):
-            r_b = self.F[b] @ query_phase[b]
-            resonance_vectors[b] = r_b
-            band_energies[b] = np.linalg.norm(r_b)
-
-        # Multi-band fusion: R = sum_b(w_b * r_b)
-        fused = np.zeros(self.dim, dtype=self.dtype)
-        for b in range(self.bands):
-            fused += band_weights[b] * resonance_vectors[b]
-
-        return ResonanceResult(
-            resonance_vectors=resonance_vectors,
-            fused=fused,
-            band_energies=band_energies,
-        )
-
-    def compute_snr(
-        self,
-        num_sources: int | None = None,
-        sparsity: float | None = None,
-    ) -> float:
-        """Estimate the signal-to-noise ratio.
-
-        For sparse vectors: SNR = D / (s^2 * (N - 1))
-        For dense vectors:  SNR = D / (N - 1)
-
-        If sparsity is not provided, estimates it empirically from
-        the field tensor's effective rank.
-
-        Args:
-            num_sources: Override source count. If None, uses self.source_count.
-            sparsity: Average fraction of non-zero components per phase vector.
-                If None, estimates from field tensor structure.
-
-        Returns:
-            Estimated SNR. Values > 10 indicate reliable retrieval.
-        """
-        n = num_sources if num_sources is not None else self._source_count
-        if n <= 1:
-            return float("inf")
-
-        if sparsity is None:
-            # Use tracked average sparsity from superpose calls
-            if self._source_count > 0 and self._sparsity_sum > 0:
-                sparsity = self._sparsity_sum / self._source_count
-                sparsity = max(0.01, min(1.0, sparsity))
-            else:
-                sparsity = 1.0  # Assume dense if no tracking data
-
-        return self.dim / (sparsity ** 2 * (n - 1))
-
-    def energy(self) -> NDArray[np.float32]:
-        """Compute the Frobenius norm (energy) of each band's field matrix.
-
-        Returns:
-            Shape (B,) — energy per band.
-        """
-        return np.array(
-            [np.linalg.norm(self.F[b], "fro") for b in range(self.bands)],
-            dtype=self.dtype,
-        )
-
-    def resonate_eml(
-        self,
-        query_phase: NDArray[np.float32],
-        band_weights: NDArray[np.float32] | None = None,
-        alpha: float = 1.0,
-        noise_floor: NDArray[np.float32] | float | None = None,
-        fusion: str = "linear",
-        weights_exp: NDArray[np.float32] | None = None,
-        weights_log: NDArray[np.float32] | None = None,
-    ) -> ResonanceResult:
-        """EML nonlinear resonance: exp amplifies matches, ln calibrates noise.
-
-        Computes per-band resonance r_b = F_b @ q_b (identical to resonate),
-        then applies EML scoring and optional EML band fusion.
-
-        EML scoring per band:
-            energy_b = exp(α · ||r_b||) - ln(σ_b)
-
-        EML band fusion (when fusion="eml"):
-            R = exp(Σ_b α_b · r_b) - ln(max(Σ_b β_b · |r_b|, ε))
-
-        Args:
-            query_phase: Shape (B, D) — the query's phase spectrum.
-            band_weights: Shape (B,) — weights for linear fusion (used when fusion="linear").
-            alpha: Exponential scaling for EML scoring. Higher = sharper discrimination.
-            noise_floor: Per-band noise floor σ. Shape (B,) or scalar.
-                If None, uses per-band mean energy as estimate.
-            fusion: "linear" (default) or "eml" for nonlinear band fusion.
-            weights_exp: Shape (B,) — exp channel weights for EML fusion.
-            weights_log: Shape (B,) — log channel weights for EML fusion.
-
-        Returns:
-            ResonanceResult with EML-scored band energies and fused vector.
-        """
-        self._validate_phase(query_phase)
-
-        # Per-band resonance (same as standard resonate)
-        resonance_vectors = np.zeros((self.bands, self.dim), dtype=self.dtype)
-        raw_energies = np.zeros(self.bands, dtype=self.dtype)
-
-        for b in range(self.bands):
-            r_b = self.F[b] @ query_phase[b]
-            resonance_vectors[b] = r_b
-            raw_energies[b] = np.linalg.norm(r_b)
-
-        # Estimate noise floor if not provided
-        if noise_floor is None:
-            # Use mean energy across bands as noise floor estimate
-            mean_e = max(float(np.mean(raw_energies)), 1e-12)
-            sigma = np.full(self.bands, mean_e, dtype=self.dtype)
-        elif isinstance(noise_floor, (int, float)):
-            sigma = np.full(self.bands, max(float(noise_floor), 1e-12), dtype=self.dtype)
-        else:
-            sigma = np.maximum(noise_floor, 1e-12)
-
-        # EML scoring: energy_b = exp(α · raw_energy_b) - ln(σ_b)
-        band_energies = np.exp(alpha * raw_energies) - np.log(sigma)
-
-        # Band fusion
-        if fusion == "eml" and weights_exp is not None and weights_log is not None:
-            # EML fusion: exp(Σ α_b · r_b) - ln(max(Σ β_b · |r_b|, ε))
-            exp_input = np.einsum("bd,b->d", resonance_vectors, weights_exp)
-            log_input = np.einsum("bd,b->d", np.abs(resonance_vectors), weights_log)
-            log_input = np.maximum(log_input, 1e-12)
-            fused = (np.exp(exp_input) - np.log(log_input)).astype(self.dtype)
-        else:
-            # Standard linear fusion
-            if band_weights is None:
-                band_weights = np.ones(self.bands, dtype=self.dtype) / self.bands
-            else:
-                band_weights = np.asarray(band_weights, dtype=self.dtype)
-            fused = np.zeros(self.dim, dtype=self.dtype)
-            for b in range(self.bands):
-                fused += band_weights[b] * resonance_vectors[b]
-
-        return ResonanceResult(
-            resonance_vectors=resonance_vectors,
-            fused=fused,
-            band_energies=band_energies.astype(self.dtype),
-        )
-
-    def reset(self) -> None:
-        """Reset the field to zero."""
-        self.F.fill(0)
-        self._source_count = 0
-        self._sparsity_sum = 0.0
-
-    def _validate_phase(self, phase_vectors: NDArray) -> None:
-        """Validate phase vector shape and values."""
-        expected = (self.bands, self.dim)
-        if phase_vectors.shape != expected:
-            raise ValueError(
-                f"phase_vectors shape {phase_vectors.shape} != expected {expected}"
-            )
-        if not np.all(np.isfinite(phase_vectors)):
-            bad_bands = [
-                b for b in range(self.bands)
-                if not np.all(np.isfinite(phase_vectors[b]))
-            ]
-            raise ValueError(
-                f"phase_vectors contain NaN/Inf in band(s) {bad_bands}"
-            )
+    Two passages can be near-duplicates when one is a substring of another or
+    when overlapping windows produce nearly-identical embeddings; this prunes
+    them so the top-k slice carries `top_k` distinct sources.
+    """
+    seen: set[tuple[str, int]] = set()
+    out: list[tuple[int, float]] = []
+    for idx, score in hits:
+        coord = registry[idx]
+        key = (coord.source_file, coord.char_offset)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((idx, score))
+    return out

@@ -1,85 +1,163 @@
 {
   "skill_name": "rlat",
-  "description": "Trigger/behavior evals for the rlat skill. Mix of should-trigger conceptual + build/inspect queries and should-NOT-trigger exact-symbol / local-edit queries. Runnable with any skill-eval harness that understands the {prompt, expected_behavior} shape.",
+  "description": "Trigger and dispatch evals for the rlat skill. Tests (1) does the rlat skill fire on rlat-CLI workflow signals, (2) does it correctly identify which sub-workflow applies (init / refresh / search / skill-context / memory / compare / convert / optimise), (3) does it correctly DEFER to the deep-research skill on cross-file synthesis questions, (4) does it stay silent on tasks better served by Read/Edit/Grep or by other vector-DB tools. Runnable with any skill-eval harness that understands the {prompt, expected_behavior} shape.",
   "evals": [
     {
       "id": 1,
-      "category": "should-trigger",
-      "prompt": "How does the three-layer semantic router actually work in this repo? I want to understand where the field vs. registry vs. store boundaries sit.",
+      "category": "should-trigger:init",
+      "prompt": "I just cloned this repo. Set up rlat for it.",
       "expected_behavior": [
-        "Recognizes this as a conceptual, multi-file question about architecture.",
-        "Prefers `rlat search project.rlat` (or `rlat ask`) over raw grep as the orientation step.",
-        "Uses `--format json` when consuming results as research, not terminal display.",
-        "Summarizes findings with source citations before acting further."
+        "Identifies this as the Init workflow.",
+        "Runs `rlat init-project` (or `rlat install-encoder` first if encoder isn't installed).",
+        "Verifies the `.rlat` and `.claude/resonance-context.md` artefacts exist after the run.",
+        "Surfaces next-step paths: `rlat search` for one-shot, `deep-research` skill for multi-hop."
       ]
     },
     {
       "id": 2,
-      "category": "should-trigger",
-      "prompt": "Why did we flip the default store mode from `embedded` to `local`? I want the rationale, not the flag.",
+      "category": "should-trigger:refresh",
+      "prompt": "I've changed a bunch of files in src/. The rlat knowledge model is probably stale. Fix it.",
       "expected_behavior": [
-        "Identifies this as a rationale / history question — multi-hop, needs cross-file synthesis.",
-        "Uses `rlat search` (or `rlat resonate` with `--mode knowledge`) against project.rlat and/or memory knowledge models.",
-        "Cites specific files (e.g. `docs/STORAGE_MODES.md`, memory/dogfood entries) in the answer.",
-        "Does NOT rely on grep alone — grep won't find rationale."
+        "Identifies this as the Refresh workflow.",
+        "Runs `rlat refresh <km>.rlat` (NOT `rlat sync` — that's remote-mode only).",
+        "After refresh, runs `rlat profile <km>.rlat` to verify drift is 0.",
+        "If `.claude/resonance-context.md` was generated from this KM, regenerates it."
       ]
     },
     {
       "id": 3,
-      "category": "should-trigger",
-      "prompt": "Build a knowledge model from ./docs and ./src, output to project.rlat, and wire up an MCP server Claude Code can use.",
+      "category": "should-trigger:search",
+      "prompt": "What does the encoder pooling strategy do in this codebase?",
       "expected_behavior": [
-        "Runs `rlat build ./docs ./src -o project.rlat` (default `local` store, no `--store-mode embedded`).",
-        "Runs `rlat mcp project.rlat` or offers the MCP config snippet for `.claude/mcp.json`.",
-        "Does not suggest the deprecated `embedded` store mode."
+        "Recognizes a single-hop fact question against the indexed corpus.",
+        "Runs `rlat search <km>.rlat \"encoder pooling strategy\" --top-k 5 --format context --mode augment`.",
+        "Cites the specific source files (e.g. `src/resonance_lattice/field/encoder.py`) inline.",
+        "Does NOT run grep first — semantic search is the right starting point for conceptual questions."
       ]
     },
     {
       "id": 4,
-      "category": "should-trigger",
-      "prompt": "The `project.rlat` on this branch drifted from the source files. What's the right way to refresh it without rebuilding from scratch?",
+      "category": "should-trigger:search-constrain",
+      "prompt": "I need to know the exact retention policy for compliance reporting. No hallucination — the answer must come from the corpus or be a refusal.",
       "expected_behavior": [
-        "Identifies this as a local-mode freshness question.",
-        "Suggests `rlat refresh project.rlat --source-root .` OR `rlat sync project.rlat ./docs ./src`.",
-        "Does NOT suggest `rlat freshness` / `rlat sync` on their own — those are remote-mode commands."
+        "Recognizes the compliance-grade safety requirement.",
+        "Runs `rlat search <km>.rlat \"<question>\" --format context --mode constrain --strict-names`.",
+        "Explains `constrain` mode tells the LLM to refuse on thin evidence (2.0% bench-measured hallucination).",
+        "Does NOT default to `augment` for compliance-stakes queries."
       ]
     },
     {
       "id": 5,
-      "category": "should-trigger",
-      "prompt": "Compare what our new internal knowledge model knows that the public fabric-docs knowledge model doesn't cover.",
+      "category": "should-trigger:skill-context",
+      "prompt": "I'm writing an Anthropic skill that needs to inject Fabric documentation context into the prompt. How do I wire that up?",
       "expected_behavior": [
-        "Recognizes the asymmetric comparison intent.",
-        "Suggests `rlat search project.rlat \"<query>\" --contrast fabric-docs.rlat` OR `rlat compare project.rlat fabric-docs.rlat`.",
-        "Reports asymmetric energy / overlap bands, not just a file diff."
+        "Identifies this as the Skill-context workflow.",
+        "Generates a `!command` block using `rlat skill-context fabric-docs.rlat --query \"<preset>\" --query \"$user_query\" --top-k 5`.",
+        "Notes that preset queries come first; user-query last (token-budget truncation drops later first).",
+        "Suggests `--strict --strict-names --mode constrain` for compliance-grade skills."
       ]
     },
     {
       "id": 6,
-      "category": "should-trigger",
-      "prompt": "I need to inject grounded context into an LLM prompt so it cites only what's in our docs — no hallucination. How?",
+      "category": "should-trigger:memory",
+      "prompt": "Have we discussed encoder selection rationale in past sessions? What did we decide?",
       "expected_behavior": [
-        "Picks `rlat resonate project.rlat \"<query>\" --mode constrain --format context`.",
-        "Explains `constrain` is the zero-hallucination mode vs `augment` / `knowledge`.",
-        "Does NOT default to `augment` for this stakes level."
+        "Identifies this as the Memory recall workflow.",
+        "Runs `rlat memory --memory-root \".claude/memory\" recall \"encoder selection rationale\"`.",
+        "Surfaces ranked memory entries fused across working/episodic/semantic tiers.",
+        "Cites entry IDs in the answer."
       ]
     },
     {
       "id": 7,
-      "category": "should-NOT-trigger",
-      "prompt": "Rename the `EncoderConfig` class to `EncoderSettings` across the repo and update the imports.",
+      "category": "should-trigger:compare",
+      "prompt": "Compare project.rlat against the fabric-docs.rlat knowledge model — what does our project know that the public Fabric corpus doesn't?",
       "expected_behavior": [
-        "Recognizes exact-symbol rename — uses Grep for `EncoderConfig` and Edit, not rlat search.",
-        "Does NOT run `rlat search` first — semantic search adds no value for deterministic symbol rewrites."
+        "Identifies this as the Compare workflow.",
+        "Runs `rlat compare project.rlat fabric-docs.rlat` (always uses base band).",
+        "Reports centroid cosine + asymmetric mutual coverage.",
+        "For deeper analysis, suggests follow-up RQL ops (corpus_diff, evidence)."
       ]
     },
     {
       "id": 8,
-      "category": "should-NOT-trigger",
-      "prompt": "Add a `print(f\"debug: {query}\")` right before the `encoder.encode(query)` call in src/resonance_lattice/reader/api.py:135.",
+      "category": "should-trigger:convert",
+      "prompt": "I want to ship this knowledge model to a colleague who doesn't have access to my source files. Make it self-contained.",
+      "expected_behavior": [
+        "Identifies this as the Convert workflow (target = bundled).",
+        "Runs `rlat convert <km>.rlat --to bundled`.",
+        "Notes that conversion validates content_hash against live bytes; aborts on drift.",
+        "Suggests `rlat refresh` first if the validation fails."
+      ]
+    },
+    {
+      "id": 9,
+      "category": "should-defer:deep-research",
+      "prompt": "Why did we pick gte-modernbert-base as the default encoder over BGE-large or E5? I want the full rationale across the codebase.",
+      "expected_behavior": [
+        "Recognizes this as a multi-hop synthesis question requiring evidence across multiple files.",
+        "DEFERS to the `deep-research` skill rather than running `rlat search` once.",
+        "Does NOT try to handle the synthesis with a single-shot retrieval."
+      ]
+    },
+    {
+      "id": 10,
+      "category": "should-defer:deep-research",
+      "prompt": "Summarise the trade-offs we've considered for store mode design across all the design docs.",
+      "expected_behavior": [
+        "Recognizes this as a cross-file synthesis question — \"summarise … across\".",
+        "DEFERS to the `deep-research` skill.",
+        "Does NOT default to single-shot `rlat search`."
+      ]
+    },
+    {
+      "id": 11,
+      "category": "should-trigger:optimise",
+      "prompt": "Can we lift retrieval recall on our private Fabric knowledge model? It's natural-language Q&A.",
+      "expected_behavior": [
+        "Identifies this as the Optimise workflow.",
+        "Surfaces the cost upfront ($2-8 + Kaggle T4 time) and the regression risk (2 of 3 publicly-tested corpora regressed).",
+        "Runs `rlat optimise <km>.rlat --estimate` first for a per-corpus cost preview.",
+        "If the user proceeds, runs `rlat optimise <km>.rlat --corpus-description \"<one-line>\"` with a meaningful description.",
+        "Notes the API key requirement and points at docs/user/API_KEYS.md if not set."
+      ]
+    },
+    {
+      "id": 12,
+      "category": "should-NOT-trigger:exact-symbol-rename",
+      "prompt": "Rename the `EncoderConfig` class to `EncoderSettings` across the repo and update the imports.",
+      "expected_behavior": [
+        "Recognizes this as an exact-symbol rename — uses `Grep \"EncoderConfig\"` and `Edit`, not `rlat search`.",
+        "Does NOT invoke the rlat skill — semantic search adds nothing for deterministic symbol rewrites."
+      ]
+    },
+    {
+      "id": 13,
+      "category": "should-NOT-trigger:specific-file-edit",
+      "prompt": "Add a `print(f\"debug: {query}\")` right before the `encoder.encode(query)` call in src/resonance_lattice/field/encoder.py:135.",
       "expected_behavior": [
         "Uses Read + Edit on the specific file.",
         "Does NOT invoke rlat — the user already supplied the exact location."
+      ]
+    },
+    {
+      "id": 14,
+      "category": "should-NOT-trigger:other-vector-db",
+      "prompt": "How do I set up Pinecone for my embedding store? I want to use their hosted index.",
+      "expected_behavior": [
+        "Recognizes this is about a different product entirely (Pinecone), not rlat.",
+        "Does NOT invoke the rlat skill.",
+        "Answers the Pinecone question directly or directs the user to Pinecone docs."
+      ]
+    },
+    {
+      "id": 15,
+      "category": "should-NOT-trigger:training-knowledge",
+      "prompt": "What's the capital of France?",
+      "expected_behavior": [
+        "Recognizes this is answerable from training alone, no rlat involved.",
+        "Does NOT invoke the rlat skill.",
+        "Answers `Paris` directly."
       ]
     }
   ]

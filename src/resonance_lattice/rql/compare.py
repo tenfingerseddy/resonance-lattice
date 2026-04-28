@@ -1,142 +1,225 @@
-# SPDX-License-Identifier: BUSL-1.1
-"""RQL Domain H: Comparison Operations.
+"""Cross-knowledge-model comparison ops.
 
-Distances, similarities, and alignments between fields.
+`compare`   — overall similarity metrics (centroid + asymmetric coverage).
+`unique`    — passages in A with no near-match in B.
+`intersect` — passage pairs from A and B with cosine ≥ threshold.
+
+ALL ops here use the base band (cross-model rule per CLAUDE.md). Optimised
+bands are corpus-specific projections; their dimensions and orientations
+are not interoperable across knowledge models. `select_band(prefer="base")`
+enforces this — every op raises a clear error if either KM is missing the
+base band, rather than silently producing nonsense numbers.
+
+Phase 6 deliverable.
 """
 
 from __future__ import annotations
 
 import numpy as np
-from numpy.typing import NDArray
 
-from resonance_lattice.field.dense import DenseField
-from resonance_lattice.rql.cache import SpectralCache
-from resonance_lattice.rql.types import Scalar
+from ..field.algebra import centroid
+from ..field.dense import (
+    COSINE_CHUNK_BYTES,
+    max_cosines_against,
+    sampled_mean_max_cosine,
+)
+from ..store.archive import ArchiveContents
+from .types import Citation, CompareResult, PassagePair
 
 
-class CompareOps:
+def _require_base_pair(
+    contents_a: ArchiveContents, contents_b: ArchiveContents,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Resolve both knowledge models' base bands or raise with a clear message.
 
-    @staticmethod
-    def frobenius_distance(a: DenseField, b: DenseField) -> Scalar:
-        """Frobenius distance: ||F_a - F_b||_F. Cost: O(BD²)."""
-        d = float(np.linalg.norm(a.F - b.F))
-        return Scalar(d, name="frobenius_distance")
+    Cross-model ops have one entry condition: both KMs must carry a base
+    band of matching dim. Optimised bands are explicitly excluded — they
+    aren't comparable across KMs.
 
-    @staticmethod
-    def spectral_distance(a: DenseField, b: DenseField, band: int = 0, cache_a: SpectralCache | None = None, cache_b: SpectralCache | None = None) -> Scalar:
-        """Spectral distance: ||λ_a - λ_b||₂. Cost: O(BD³)."""
-        lam_a = cache_a.get(band).eigenvalues if cache_a else np.sort(np.linalg.eigvalsh(a.F[band]))[::-1]
-        lam_b = cache_b.get(band).eigenvalues if cache_b else np.sort(np.linalg.eigvalsh(b.F[band]))[::-1]
-        return Scalar(float(np.linalg.norm(lam_a - lam_b)), name="spectral_distance", band=band)
+    This is the *dim-only* guard — cosine ordering is still meaningful
+    across distinct backbone revisions even though magnitudes differ.
+    Use `_require_compatible_pair` for ops that need exact-revision match
+    (corpus_diff, merge — where a mismatched cosine threshold silently
+    invalidates the result classification).
+    """
+    handle_a = contents_a.select_band(prefer="base")
+    handle_b = contents_b.select_band(prefer="base")
+    if handle_a.band.shape[1] != handle_b.band.shape[1]:
+        raise ValueError(
+            f"base-band dim mismatch ({handle_a.band.shape[1]} vs "
+            f"{handle_b.band.shape[1]}) — incompatible knowledge models"
+        )
+    return handle_a.band, handle_b.band
 
-    @staticmethod
-    def cosine_similarity(a: DenseField, b: DenseField) -> Scalar:
-        """Cosine similarity: ⟨F_a, F_b⟩_F / (||F_a|| ||F_b||). Cost: O(BD²)."""
-        inner = float(np.sum(a.F * b.F))
-        norm_a = float(np.linalg.norm(a.F))
-        norm_b = float(np.linalg.norm(b.F))
-        return Scalar(inner / (norm_a * norm_b + 1e-12), name="cosine_similarity")
 
-    @staticmethod
-    def relative_change(new: DenseField, old: DenseField) -> Scalar:
-        """Relative change: ||F_new - F_old||_F / ||F_old||_F. Cost: O(BD²)."""
-        diff_norm = float(np.linalg.norm(new.F - old.F))
-        old_norm = float(np.linalg.norm(old.F))
-        return Scalar(diff_norm / (old_norm + 1e-12), name="relative_change")
+def _require_compatible_pair(
+    contents_a: ArchiveContents, contents_b: ArchiveContents,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Strict variant of `_require_base_pair`: dim AND backbone revision must
+    match. Raises on either mismatch.
 
-    @staticmethod
-    def band_similarity_matrix(a: DenseField, b: DenseField) -> NDArray[np.float32]:
-        """Per-band cosine similarity matrix: S[i,j] = cos(F_a_i, F_b_j). Cost: O(B²D²)."""
-        Ba, Bb = a.bands, b.bands
-        S = np.zeros((Ba, Bb), dtype=np.float32)
-        for i in range(Ba):
-            ni = np.linalg.norm(a.F[i], "fro") + 1e-12
-            for j in range(Bb):
-                nj = np.linalg.norm(b.F[j], "fro") + 1e-12
-                S[i, j] = float(np.sum(a.F[i] * b.F[j])) / (ni * nj)
-        return S
+    Used by ops where threshold-based classification is meaningless if the
+    two corpora's embeddings live in different distributions (corpus_diff,
+    merge). For thematic-comparison ops where ordering still holds across
+    revisions (compare, intersect, unique), use `_require_base_pair` and
+    let the caller surface the revision delta as a UserWarning or report
+    field instead.
+    """
+    band_a, band_b = _require_base_pair(contents_a, contents_b)
+    rev_a = contents_a.metadata.backbone.revision
+    rev_b = contents_b.metadata.backbone.revision
+    if rev_a != rev_b:
+        raise ValueError(
+            f"backbone revisions differ ({rev_a!r} vs {rev_b!r}); "
+            f"this op requires identical revisions because mixing distinct "
+            f"embedding distributions makes the cosine threshold meaningless"
+        )
+    return band_a, band_b
 
-    @staticmethod
-    def energy_ratio(a: DenseField, b: DenseField) -> Scalar:
-        """Energy ratio: Σ||F_a|| / Σ||F_b||. Cost: O(BD)."""
-        ea = float(np.sum(a.energy()))
-        eb = float(np.sum(b.energy()))
-        return Scalar(ea / (eb + 1e-12), name="energy_ratio")
 
-    @staticmethod
-    def max_eigenvalue_ratio(a: DenseField, b: DenseField, band: int = 0) -> Scalar:
-        """Max eigenvalue ratio: λ_max(A) / λ_max(B). Cost: O(BD³)."""
-        la = float(np.max(np.abs(np.linalg.eigvalsh(a.F[band]))))
-        lb = float(np.max(np.abs(np.linalg.eigvalsh(b.F[band]))))
-        return Scalar(la / (lb + 1e-12), name="max_eigenvalue_ratio", band=band)
+def compare(
+    contents_a: ArchiveContents,
+    contents_b: ArchiveContents,
+    *,
+    sample_size: int = 512,
+    seed: int = 0,
+) -> CompareResult:
+    """Cross-KM thematic alignment + asymmetric coverage on the base band.
 
-    @staticmethod
-    def wasserstein_spectral(a: DenseField, b: DenseField, band: int = 0) -> Scalar:
-        """Wasserstein-1 distance on eigenvalue distributions (sorted, 1D OT). Cost: O(D³)."""
-        lam_a = np.sort(np.linalg.eigvalsh(a.F[band]))
-        lam_b = np.sort(np.linalg.eigvalsh(b.F[band]))
-        return Scalar(float(np.sum(np.abs(lam_a - lam_b))), name="wasserstein_spectral", band=band)
+    `centroid_cosine` is the cosine between the two L2-normalised mean
+    vectors — a single thematic-alignment number. Coverage is the mean
+    max-cosine of a `sample_size` sample from one corpus against the
+    other (asymmetric).
 
-    @staticmethod
-    def trace_distance(a: DenseField, b: DenseField, band: int = 0) -> Scalar:
-        """Trace distance: ||ρ_a - ρ_b||₁ / 2 (nuclear norm). Cost: O(D³)."""
-        def _density(F):
-            tr = np.trace(F) + 1e-12
-            return F / tr
-        diff = _density(a.F[band]) - _density(b.F[band])
-        S = np.linalg.svd(diff, compute_uv=False)
-        return Scalar(float(np.sum(S)) / 2, name="trace_distance", band=band)
+    `overlap_score` is the symmetric average of the two coverages. Use
+    `compare(...).overlap_score` instead of computing a separate `overlap`
+    op — `overlap` was folded into this dataclass during Phase 6 design.
 
-    @staticmethod
-    def rank_correlation(a: DenseField, b: DenseField, band: int = 0) -> Scalar:
-        """Spearman rank correlation of eigenvalue orderings. Cost: O(D³)."""
-        lam_a = np.linalg.eigvalsh(a.F[band])
-        lam_b = np.linalg.eigvalsh(b.F[band])
-        rank_a = np.argsort(np.argsort(lam_a))
-        rank_b = np.argsort(np.argsort(lam_b))
-        n = len(rank_a)
-        d_sq = np.sum((rank_a - rank_b) ** 2)
-        rho = 1 - 6 * d_sq / (n * (n ** 2 - 1) + 1e-12)
-        return Scalar(float(rho), name="rank_correlation", band=band)
+    Sampling is deterministic via `seed=` — identical inputs produce
+    identical numbers across runs.
+    """
+    band_a, band_b = _require_base_pair(contents_a, contents_b)
+    n_a, n_b = band_a.shape[0], band_b.shape[0]
 
-    @staticmethod
-    def intersection_over_union(a: DenseField, b: DenseField, band: int = 0, k: int = 20) -> Scalar:
-        """IoU of top-k eigenvalue indices. Cost: O(D³)."""
-        lam_a = np.linalg.eigvalsh(a.F[band])
-        lam_b = np.linalg.eigvalsh(b.F[band])
-        top_a = set(np.argsort(np.abs(lam_a))[-k:])
-        top_b = set(np.argsort(np.abs(lam_b))[-k:])
-        intersection = len(top_a & top_b)
-        union = len(top_a | top_b)
-        return Scalar(intersection / (union + 1e-12), name="iou_top_k", band=band)
+    centroid_cosine = float(centroid(band_a) @ centroid(band_b))
 
-    @staticmethod
-    def hellinger_distance(a: DenseField, b: DenseField, band: int = 0, epsilon: float = 1e-8) -> Scalar:
-        """Hellinger distance: √(1 - F(ρ_a, ρ_b)) where F is fidelity. Cost: O(D³)."""
-        from resonance_lattice.rql.info import InfoOps
-        fid = InfoOps.fidelity(a, b, band, epsilon).value
-        return Scalar(float(np.sqrt(max(0, 1 - fid))), name="hellinger_distance", band=band)
+    # Spawn two independent seed streams from `seed` so the B-into-A sample
+    # is genuinely independent of the A-into-B sample. SeedSequence.spawn
+    # is the idiomatic numpy way to derive sub-seeds — `seed + 1` would
+    # work but is less honest about the sub-stream contract.
+    seq_a, seq_b = np.random.SeedSequence(seed).spawn(2)
+    cov_a_b = sampled_mean_max_cosine(
+        band_a, band_b, sample_size=sample_size,
+        seed=int(seq_a.generate_state(1)[0]),
+    )
+    cov_b_a = sampled_mean_max_cosine(
+        band_b, band_a, sample_size=sample_size,
+        seed=int(seq_b.generate_state(1)[0]),
+    )
 
-    @staticmethod
-    def symmetrized_kl(a: DenseField, b: DenseField, band: int = 0) -> Scalar:
-        """Symmetrised KL: (KL(a||b) + KL(b||a)) / 2. Cost: O(D³)."""
-        from resonance_lattice.rql.info import InfoOps
-        kl_ab = InfoOps.kl_divergence(a, b, band).value
-        kl_ba = InfoOps.kl_divergence(b, a, band).value
-        return Scalar((kl_ab + kl_ba) / 2, name="symmetrized_kl", band=band)
+    rev_a = contents_a.metadata.backbone.revision
+    rev_b = contents_b.metadata.backbone.revision
+    return CompareResult(
+        a_passage_count=n_a,
+        b_passage_count=n_b,
+        a_backbone_revision=rev_a,
+        b_backbone_revision=rev_b,
+        revision_match=rev_a == rev_b,
+        centroid_cosine=centroid_cosine,
+        coverage_a_in_b=cov_a_b,
+        coverage_b_in_a=cov_b_a,
+        overlap_score=(cov_a_b + cov_b_a) / 2.0,
+        sample_size=min(sample_size, n_a, n_b),
+    )
 
-    @staticmethod
-    def edit_distance(a: DenseField, b: DenseField, band: int = 0) -> Scalar:
-        """Approximate edit distance: minimum rank-1 updates to transform A to B. Cost: O(D³).
 
-        Estimated as the nuclear norm of the difference (sum of singular values of A-B).
-        """
-        diff = a.F[band] - b.F[band]
-        S = np.linalg.svd(diff, compute_uv=False)
-        return Scalar(float(np.sum(S)), name="edit_distance", band=band)
+def unique(
+    contents_a: ArchiveContents,
+    contents_b: ArchiveContents,
+    *,
+    threshold: float = 0.7,
+) -> list[Citation]:
+    """Citations of passages in A whose top-1 match in B has cosine < threshold.
 
-    @staticmethod
-    def drift_velocity(new: DenseField, old: DenseField, dt: float = 1.0) -> Scalar:
-        """Drift velocity: ||F_new - F_old||_F / dt. Cost: O(BD²)."""
-        d = float(np.linalg.norm(new.F - old.F))
-        return Scalar(d / dt, name="drift_velocity")
+    Returns A's "distinctive content" — what A has that B doesn't cover.
+    O(N_A × N_B) compute via `max_cosines_against` (chunked memory). Always
+    base band per cross-model rule.
+
+    `threshold=0.7` is a reasonable "approximate semantic match" floor
+    for gte-mb-base — paraphrases typically clear 0.7, lexically-different
+    same-topic passages typically don't. Tighten to 0.85+ for
+    "near-paraphrase only."
+    """
+    band_a, band_b = _require_base_pair(contents_a, contents_b)
+    if band_a.shape[0] == 0:
+        return []
+    if band_b.shape[0] == 0:
+        # B is empty — every A passage is "unique" by definition.
+        return [Citation.from_coord(c) for c in contents_a.registry]
+    max_cos = max_cosines_against(band_a, band_b)
+    keep = np.flatnonzero(max_cos < threshold)
+    return [Citation.from_coord(contents_a.registry[int(i)]) for i in keep]
+
+
+def intersect(
+    contents_a: ArchiveContents,
+    contents_b: ArchiveContents,
+    *,
+    threshold: float = 0.7,
+    max_pairs: int = 10_000,
+) -> list[PassagePair]:
+    """Passage pairs `(A, B)` with base-band cosine ≥ `threshold`.
+
+    Returns up to `max_pairs` pairs sorted by descending cosine. The
+    `max_pairs` cap exists because for two corpora of N=10K passages each
+    at threshold=0.7, the result set can be millions of pairs — caller
+    almost always wants the strongest matches, not the full O(N²) cross
+    product.
+
+    `threshold=0.7` matches `unique`'s default. `max_pairs=10_000` is a
+    practical UI limit; raise it for batch / scripting workloads.
+
+    Memory: chunks `band_b` along axis 0 so `max_pairs` are accumulated
+    incrementally rather than materialising the full `(N_A, N_B)` matrix.
+    """
+    band_a, band_b = _require_base_pair(contents_a, contents_b)
+    n_a, n_b = band_a.shape[0], band_b.shape[0]
+    if n_a == 0 or n_b == 0:
+        return []
+
+    # We need the (i, j, sim) triples above threshold, not just the per-row
+    # max — so we can't reuse `max_cosines_against`. We walk band_b in
+    # chunks to keep peak memory bounded by ~`COSINE_CHUNK_BYTES` worth of
+    # the (N_a, chunk_b) sims tile.
+    bytes_per_target_row = n_a * 4
+    chunk_rows = max(1, COSINE_CHUNK_BYTES // bytes_per_target_row)
+
+    triples: list[tuple[float, int, int]] = []
+    for start in range(0, n_b, chunk_rows):
+        chunk = band_b[start:start + chunk_rows]
+        sims = band_a @ chunk.T
+        # np.where on (N_a, chunk_size) → row/col indices in this tile.
+        rows, cols = np.where(sims >= threshold)
+        for r, c in zip(rows, cols):
+            triples.append((float(sims[r, c]), int(r), int(start + c)))
+        # Truncate the running list once it's overflowing by an order of
+        # magnitude. Two thresholds: 10× the cap triggers truncation
+        # (absorbs many later-chunk reorderings before paying the sort
+        # cost); 2× survivors keeps a safety margin so the next chunk's
+        # contributions can re-order the cut without losing any of the
+        # final top-k.
+        if len(triples) > 10 * max_pairs:
+            triples.sort(key=lambda t: -t[0])
+            triples = triples[: max_pairs * 2]
+
+    triples.sort(key=lambda t: -t[0])
+    triples = triples[:max_pairs]
+
+    return [
+        PassagePair(
+            citation_a=Citation.from_coord(contents_a.registry[i]),
+            citation_b=Citation.from_coord(contents_b.registry[j]),
+            cosine=cos,
+        )
+        for cos, i, j in triples
+    ]

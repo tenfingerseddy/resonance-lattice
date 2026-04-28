@@ -1,25 +1,26 @@
 # Code of Conduct
 
-Resonance Lattice follows the [Contributor Covenant 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).
+This project adopts the [Contributor Covenant](https://www.contributor-covenant.org/), version 2.1.
 
-The short version: be respectful, be professional, assume good faith, and focus on the technical work. Disagreement is fine; personal attacks are not.
+The full text is available at:
+<https://www.contributor-covenant.org/version/2/1/code_of_conduct/>
+
+## Reporting
+
+Conduct concerns are reported via the same private channel as security
+advisories — see [SECURITY.md](SECURITY.md). Reports are reviewed by a
+maintainer and handled confidentially.
 
 ## Scope
 
-This applies to all project spaces — GitHub issues and PRs, code comments, release notes, and any other forum where people interact around the project.
+This Code applies in all project spaces — the GitHub repository (issues,
+pull requests, discussions), any community channels linked from the
+project, and public events where someone represents the project — and
+when an individual is officially representing the project in public.
 
 ## Enforcement
 
-Report concerns privately to the maintainer:
-
-- Email: kanesnyder1@gmail.com, subject line prefix `[rlat-conduct]`.
-
-Reports are handled confidentially. The maintainer will acknowledge within 5 business days and follow up with the outcome once investigation is complete.
-
-Possible outcomes range from a private note to a permanent ban from project spaces, proportionate to the severity and pattern of the behaviour.
-
-## Attribution
-
-This Code of Conduct is adapted from the Contributor Covenant, version 2.1, available at <https://www.contributor-covenant.org/version/2/1/code_of_conduct.html>.
-
-Contributor Covenant is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Maintainers will respond to reported behaviour, take appropriate action,
+and may apply consequences from informal feedback up to a permanent ban
+from project spaces, in accordance with the Contributor Covenant 2.1
+enforcement guidelines linked above.

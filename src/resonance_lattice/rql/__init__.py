@@ -1,100 +1,89 @@
-# SPDX-License-Identifier: BUSL-1.1
-"""RQL — Resonance Query Language.
+"""RQL — Resonance Query Language (curated v2.0 surface).
 
-A comprehensive mathematical operations library for knowledge fields,
-organised into 10 domains with 271 total operations.
+The product surface for power users + integrators who want more than `rlat
+search`. RQL is the Python API; CLI subcommands wrap a subset of it.
 
-Domains:
-    spectral  — Eigenvalue/eigenvector operations (functional calculus, filtering, metrics)
-    algebra   — Field arithmetic, decompositions, matrix functions, norms
-    info      — Information theory (entropy, divergence, capacity, purity)
-    compare   — Distances, similarities, alignment between fields
-    query     — Resonance and query operations
-    dynamics  — Time evolution, flows, diffusion, decay
-    stats     — Density matrices, moments, ensembles, covariance
-    signal    — Filtering, denoising, compression
-    (geo, compose — Wave 2/3)
+The 14 ops are organised into 5 groups:
 
-Infrastructure:
-    Field     — Fluent wrapper with arithmetic and pipe composition
-    SpectralCache — Avoids redundant eigendecompositions
-    types     — Scalar, Spectrum, EigenDecomp typed results
+  Foundation (4):     locate, profile, neighbors, near_duplicates
+  Comparison (3):     compare, unique, intersect
+  Composition (2):    compose, merge
+  Evidence + drift (3): evidence, drift, corpus_diff
+  Experimental (2):   contradictions, audit
+
+Cross-knowledge-model ops (compare, unique, intersect, compose, merge,
+corpus_diff) ALWAYS use the base band — the cross-model rule that makes
+these ops work at all relies on every knowledge model carrying a
+comparable base band. `corpus_diff` and `merge` additionally require the
+backbone revisions to match exactly (a threshold-based classification
+becomes meaningless across distinct embedding distributions); `compare`
+warns on revision mismatch but proceeds because cosine ordering still
+holds.
+
+Every op returns a typed result (Citation, Hit, Profile, etc.); never a raw
+ndarray or untyped tuple. See `types.py` for the full type set.
+
+Phase 6 deliverable. Per-op rationale: docs/internal/RQL.md.
 """
 
-from resonance_lattice.rql.algebra_ops import AlgebraOps
-from resonance_lattice.rql.cache import SpectralCache
-from resonance_lattice.rql.compare import CompareOps
-from resonance_lattice.rql.compose import ComposeOps
-from resonance_lattice.rql.dsl import (
-    Field,
-    autotune,
-    boost,
-    cascade,
-    crossband,
-    expand,
-    get_encoder,
-    metabolise,
-    set_encoder,
-    spectral_filter,
-    suppress,
+from .compare import compare, intersect, unique
+from .compose import ComposedKnowledgeModel, compose, merge
+from .experimental import audit, contradictions
+from .inspect import locate, near_duplicates, profile
+from .navigate import corpus_diff, drift, evidence, neighbors
+from .types import (
+    AuditReport,
+    Citation,
+    CitationHit,
+    CompareResult,
+    ComposedHit,
+    ConfidenceMetrics,
+    ContradictionPair,
+    CorpusDiff,
+    DriftRecord,
+    DriftReport,
+    DuplicateCluster,
+    EvidenceReport,
+    NeighborHit,
+    PassagePair,
+    Profile,
 )
-from resonance_lattice.rql.dynamics_ops import DynamicsOps
-from resonance_lattice.rql.eml import EmlOps
-from resonance_lattice.rql.geometric import GeoOps
-from resonance_lattice.rql.info import InfoOps
-from resonance_lattice.rql.query_ops import QueryOps
-from resonance_lattice.rql.result_manifold import (
-    ResultAssessment,
-    assess_results,
-    concentration,
-    coverage,
-    diversity,
-    eigenbasis_scores,
-    eml_result_contrast,
-    eml_result_filter,
-    eml_result_sharpen,
-    iterative_deepen,
-    refine_query,
-    result_field,
-    signal_strength,
-)
-from resonance_lattice.rql.signal_ops import SignalOps
-from resonance_lattice.rql.spectral import SpectralOps
-from resonance_lattice.rql.stats import StatsOps
-from resonance_lattice.rql.types import EigenDecomp, Scalar, Spectrum
-
-# Domain aliases for clean namespace
-spectral = SpectralOps
-algebra = AlgebraOps
-info = InfoOps
-compare = CompareOps
-query = QueryOps
-dynamics = DynamicsOps
-stats = StatsOps
-signal = SignalOps
-geo = GeoOps
-compose = ComposeOps
-eml_ops = EmlOps
 
 __all__ = [
-    # DSL
-    "Field", "boost", "suppress", "cascade", "metabolise",
-    "autotune", "expand", "spectral_filter", "crossband",
-    "set_encoder", "get_encoder",
-    # Types
-    "Scalar", "Spectrum", "EigenDecomp", "SpectralCache",
-    # Domains
-    "SpectralOps", "AlgebraOps", "InfoOps", "CompareOps",
-    "QueryOps", "DynamicsOps", "StatsOps", "SignalOps",
-    "EmlOps",
-    # Aliases
-    "spectral", "algebra", "info", "compare",
-    "query", "dynamics", "stats", "signal",
-    "eml_ops",
-    # Result Manifold
-    "result_field", "ResultAssessment", "assess_results",
-    "diversity", "coverage", "concentration", "signal_strength",
-    "eigenbasis_scores",
-    "eml_result_contrast", "eml_result_sharpen", "eml_result_filter",
-    "refine_query", "iterative_deepen",
+    # Foundation ops (commit 1)
+    "locate",
+    "near_duplicates",
+    "neighbors",
+    "profile",
+    # Comparison ops (commit 2) — cross-KM, base-band only
+    "compare",
+    "intersect",
+    "unique",
+    # Composition ops (commit 3) — multi-KM federated + merge
+    "compose",
+    "merge",
+    "ComposedKnowledgeModel",
+    # Evidence + drift (commit 4) — flagship + change tracking
+    "evidence",
+    "drift",
+    "corpus_diff",
+    # Experimental ops (commit 5) — heuristic surfaces, may produce noise
+    "contradictions",
+    "audit",
+    # Typed results
+    "AuditReport",
+    "Citation",
+    "CitationHit",
+    "CompareResult",
+    "ComposedHit",
+    "ConfidenceMetrics",
+    "ContradictionPair",
+    "CorpusDiff",
+    "DriftRecord",
+    "DriftReport",
+    "DuplicateCluster",
+    "EvidenceReport",
+    "NeighborHit",
+    "PassagePair",
+    "Profile",
 ]

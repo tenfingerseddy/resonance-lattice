@@ -1,147 +1,193 @@
 ---
 name: deep-research
 description: >-
-  Iterative multi-hop research pattern for hard questions that span many
-  files or require reasoning across evidence (rationale, trade-offs,
-  contradictions, cross-workstream synthesis, historical "why" questions,
-  long-horizon investigation). Runs a plan → search → refine → search →
-  synthesize loop against the `rlat` skill's tools (semantic search +
-  knowledge-model composition) and grep, with an explicit hop budget so it
-  terminates. Use when a single `rlat search` / `grep` call clearly won't
-  surface the answer — typical signals are "summarize across", "what have
-  we decided about", "where have we contradicted ourselves on", "explain
-  the full rationale", "compare approaches over time", or any question
-  whose answer requires synthesising evidence from ≥3 sources. Skip for
-  exact-symbol lookups, simple file reads, or one-shot factual queries —
-  those are cheaper with a single `rlat search` or grep + Read.
+  Interactive multi-hop research over an rlat knowledge model, run by Claude
+  in this conversation against `rlat search`. Plan → retrieve → refine →
+  retrieve → synthesize loop, driven by the assistant turn-by-turn so the
+  user can redirect at any hop. Bench-validated: 92.2% answerable accuracy
+  at 0% hallucination on the Microsoft Fabric documentation (63 questions,
+  Sonnet 4.6, relaxed rubric) — same loop the `rlat deep-search` CLI
+  implements, exposed here as a free Claude Code workflow that uses the
+  user's existing subscription instead of the Anthropic API. Trigger for
+  cross-codebase synthesis questions whose answer requires evidence from
+  multiple files: rationale ("why was X chosen over Y"), trade-offs,
+  contradictions across sources, historical "why" questions, long-horizon
+  investigation, "summarise the X across the codebase", "what's the full
+  story of Y". Trigger for memory-recall research across past sessions
+  (drive the same loop on a memory knowledge model). Trigger when a single
+  `rlat search` returned thin or partial coverage and the user asked a
+  follow-up. Single-shot factual lookups and exact-symbol grep are handled
+  by the `rlat` skill instead.
 ---
 
-# Deep Research
+# Deep Research (in-session, no API key)
 
-Iterative, budgeted research loop for questions that don't yield to one-shot retrieval. Trades LLM turns for answer quality — **opt-in when the question is hard, not by default**.
+This skill runs the same multi-hop research loop the `rlat deep-search` CLI
+implements, but driven by **Claude natively in this session** rather than
+calling Anthropic's API as a separate tool. The user pays for nothing on top
+of their existing Claude subscription — every "LLM hop" in the loop is just
+this conversation.
 
-Inspired by the recursive language models pattern (MIT CSAIL, 2025): the reader programmatically refines its own queries until it has enough evidence to answer, rather than synthesising from a single fixed retrieval.
-
----
+For users who want a programmatic / batch / agent surface and have an
+Anthropic API key, the equivalent CLI verb is `rlat deep-search km.rlat
+"<question>"` (see [docs/user/CLI.md](../../../docs/user/CLI.md#rlat-deep-search)).
+The skill below and the CLI verb run the same loop with the same prompt
+shape and the same termination semantics; the bench-validated numbers
+apply to both surfaces.
 
 ## When to trigger
 
-Trigger signals (any of):
+Trigger for any of:
 
-- Question asks for synthesis across ≥3 sources: *"summarize the tradeoffs across…"*, *"where have we contradicted ourselves on…"*, *"what's the full history of…"*
-- Question asks for rationale, not fact: *"why did we pick X over Y?"*, *"explain the design constraints behind Z"*
-- First `rlat search` returned coverage `partial` / `edge` / `gap`, or the user rejected the one-shot answer as incomplete
+- Question requires synthesising evidence from ≥3 sources: *"summarize the
+  trade-offs across…"*, *"what's the full history of…"*, *"where have we
+  contradicted ourselves on…"*
+- Question asks for **rationale, not fact**: *"why did we pick X over Y?"*,
+  *"explain the design constraints behind Z"*
+- First `rlat search` returned partial or low-confidence results, or the
+  user rejected the one-shot answer as incomplete
 - Question explicitly spans workstreams, domains, or time ranges
-- User says "dig into", "really understand", "go deep on", "investigate"
+- User says "dig into", "really understand", "research", "go deep on",
+  "investigate", "what's the story behind"
 
 **Don't trigger** for:
 
 - Exact-symbol lookups (`EncoderConfig`, `DEFAULT_MAX_TOKENS`) → grep + Read
-- "How do I run X?" / "What's the command for Y?" → one-shot `rlat search` or CLI help
-- User already gave a file path and line number
-- Trivially short answers ("what version is this?")
+- One-shot lookups ("how do I run X?", "what's the command for Y?") → a
+  single `rlat search` is cheaper and as accurate
+- Trivially short answers
+- Questions where the user already gave you a file path
 
----
+## The loop
 
-## Workflow
+A four-hop budget. Each hop is one of: plan, search, decide, synth.
 
-Copy this checklist and tick items as you go. The budget is non-negotiable — stop when you hit it even if the answer feels incomplete, and tell the user what's missing.
+### Hop 1 — Plan
 
-```
-Deep Research Progress:
-- [ ] Step 1: Plan — draft 3-5 sub-queries covering the question's facets
-- [ ] Step 2: First probe — run the broadest query, read coverage assessment
-- [ ] Step 3: Refine — for each gap/thin area, run a targeted follow-up
-- [ ] Step 4: Cross-check — where sources disagree, run a contradictions pass
-- [ ] Step 5: Drill down — grep for exact symbols surfaced by search
-- [ ] Step 6: Synthesize — answer with citations, flag what's still uncertain
-
-Budget: max 8 `rlat search` calls + 4 grep calls + 4 Read calls. Stop at limit.
-```
-
-### Step 1 — Plan
-
-Before running any tool, write out (to the user, one line each) the 3-5 sub-queries you intend to run. This makes the plan visible and lets the user redirect before you burn turns. Each sub-query should target *one facet* — decomposition is the point, not a bag-of-words reformulation of the original question.
-
-Example. User asks: *"Why did we flip the default store mode from embedded to local, and what did we learn from the pivot?"* Sub-queries:
-
-1. "store mode default history embedded local"
-2. "three-layer semantic router pivot rationale"
-3. "lossless store architecture decision"
-4. "bundled vs embedded trade-offs"
-5. "deprecation timeline embedded mode"
-
-### Step 2 — First probe
-
-Run the broadest sub-query first with `--format json --top-k 10`. Read:
-
-- **Coverage label** (`strong` / `partial` / `edge` / `gap`) — tells you if the knowledge model can answer at all.
-- **Top source files** — these are your reading targets.
-- **Band focus** — topic-dominant → keep widening; entity-dominant → switch to grep.
-- **expansion_hint** — if the coverage is thin, this is where to look next.
-
-### Step 3 — Refine
-
-For each gap or thin area, run one targeted follow-up. **Refinement is only refinement if the next query depends on the previous result** — if you could have written all the queries up front, you're just fanning out, not recursing. Good refinements:
-
-- "Source file X surfaced but it mentioned concept Y I don't understand" → search for Y.
-- "Two files gave conflicting answers" → `rlat search --with-contradictions` scoped to both.
-- "Coverage is `edge` but expansion_hint points at topic Z" → search for Z in a neighbouring knowledge model via `--with`.
-
-### Step 4 — Cross-check
-
-If any two sources disagree, or if the question is about rationale / decisions (high stakes for getting wrong):
+You are a research planner for fact extraction from a documentation corpus.
+Given the user's question, output a SHORT initial search query (6-15 words)
+that's likely to surface a relevant passage. Output ONLY the query — no
+preamble, no explanation. Then run that query as `rlat search` (single-shot,
+top-k 5).
 
 ```bash
-rlat search project.rlat "<topic>" --with-contradictions
-# or
-rlat contradictions project.rlat "<topic>"
+rlat search km.rlat "<your planned query>" --top-k 5 --format context --mode augment
 ```
 
-Flag every contradiction in the synthesis — don't silently pick a side.
+### Hop 2-4 — Refine
 
-### Step 5 — Drill down
+After each `rlat search`, you've collected one more block of evidence. Read
+the original question + everything retrieved so far. Decide your next
+action — output exactly one of these JSON objects on a single line, nothing
+else:
 
-Once search has surfaced specific source files / symbols, switch to grep + Read for exact content. Pattern:
-
-```bash
-grep -rn "<exact_symbol_from_search_results>" src/
-# then Read the specific lines
+```json
+{"action": "answer", "answer": "<final answer with citations>"}
+{"action": "search", "query": "<next short query>"}
+{"action": "give_up"}
 ```
 
-This is where semantic search hands off to exact search — don't re-run `rlat search` for symbols you already know.
+- Pick `answer` once you have enough evidence to answer with confidence —
+  cite source files inline (`docs/foo.md`, `src/bar.py`). **Stop searching
+  the moment you have a clear answer; don't burn hops on confirmation.**
+- Pick `search` if you need more evidence and you have a specific next
+  query in mind. The query should target a *facet* of the question that
+  the previous hops haven't covered — refinement, not bag-of-words
+  reformulation.
+- Pick `give_up` if the corpus clearly doesn't have the answer. Output a
+  brief refusal message that says "the corpus covers X but not Y; the
+  question may be about a different entity." This is the correct response
+  for distractor questions about things that don't exist in the corpus.
 
-### Step 6 — Synthesize
+If hops 2, 3, and 4 all returned `search`, hop 5 is the synth hop —
+write the answer from the union of evidence collected. If even the synth
+hop's evidence doesn't cover the question, refuse explicitly.
 
-Write the answer with inline citations (`file:line` or `[source_id]`). Explicitly flag:
+### Name verification (always last)
 
-- What's well-supported (≥2 sources agree)
-- What's single-sourced (say so)
-- What's contradicted (show both sides)
-- What the knowledge model didn't cover (admit the gap — don't extrapolate)
+Before delivering the synthesised answer, run a final check:
 
----
+> **Did any distinctive proper noun, acronym, or alphanumeric ID from the
+> question appear verbatim in any retrieved passage?**
 
-## Budget & stopping conditions
+If a token from the question (e.g. `MVE`, `F4096`, a quoted multi-word
+product name) is missing from every passage, that's the **name-aliasing
+trap**: the encoder may have surfaced an adjacent entity (`MLV`, `F32`)
+and your answer is at risk of being about a different thing. In that
+case, prepend a refusal directive to your answer:
 
-Default budget: **8 search calls + 4 grep + 4 Read**. Stop at the limit even if the answer is incomplete — it's better to hand back a partial synthesis with honest gaps than to spiral.
+> ⚠ **Name verification failed.** The question references `<token>`, but
+> no retrieved passage contains this exact name. The corpus may describe
+> an adjacent or differently-named entity. Either refuse explicitly or
+> ask the user to confirm the name is correct.
 
-Hard stops (bail immediately):
+The CLI verb (`rlat deep-search --strict-names`) does this check
+mechanically; the skill version asks you to do it once before answering.
 
-- Coverage is `gap` on the first 2 probes → tell the user the knowledge model doesn't cover this, suggest `rlat init-project` or switching to grep-only.
-- The answer becomes obvious after 2–3 hops → synthesize and stop; don't pad.
-- The loop starts returning the same top results → the knowledge model has given you everything it has.
+## Output shape
 
----
+Match the shape `rlat deep-search` returns so the user gets a consistent
+artefact regardless of whether they used the skill or the CLI:
 
-## Cost reality check
+```
+<the synthesised answer with inline file:line citations>
 
-Each hop is an LLM call (or MCP tool roundtrip) plus a CPU-bound `rlat search` (~80ms warm). A full 8-hop loop costs ~5-10× a one-shot answer in tokens and latency. Worth it for multi-hop questions, wasteful for simple ones. If the user asked casually ("hey, quick question…"), skip this skill and answer one-shot.
+[deep-research]
+  hop 1 plan          '<initial query>'
+  hop 2 search        '<query>' → N passages
+  hop 3 decide_search '<refined query>'  (or decide_answer / decide_give_up)
+  hop 4 search        '<query>' → N passages
+  hop N answer (loop terminated)  (or synth_after_max_hops)
 
----
+evidence union: <count> distinct passages across <count> source files
+```
+
+## Bench numbers
+
+The same loop, run via the `rlat deep-search` CLI verb against the
+Anthropic API, on the Microsoft Fabric documentation (63 questions,
+Sonnet 4.6, relaxed rubric):
+
+| Approach | Accuracy | Hallucination | Distractor refusal |
+|---|---:|---:|---:|
+| **Deep-research loop** (this skill, or `rlat deep-search`) | **92.2%** | **0.0%** (`--mode knowledge` variant) | 83.3% |
+| Single-shot `rlat search` | 76.5% | 3.9% | 75.0% |
+| LLM-only (no retrieval) | 56.9% | 19.6% | 50.0% |
+
+These were measured on the API surface; the skill drives the same loop
+through the user's Claude session, with the same retrieval primitive, the
+same prompts, and the same hop semantics. Numbers should transfer with
+small variance from differences in Sonnet version (Claude Code ships
+Sonnet 4.5 or 4.6 depending on the user's setup) and tool-use mechanics.
+Full methodology and the 11-lane matrix:
+[docs/user/BENCHMARKS.md](../../../docs/user/BENCHMARKS.md).
+
+## Stopping conditions
+
+- Pick `answer` the moment you have evidence to answer. Padding with extra
+  hops costs the user latency for no gain.
+- Pick `give_up` if the corpus is genuinely thin — better to refuse
+  explicitly than to invent.
+- Hard stop at hop 5 (synth-after-max-hops). If the evidence still doesn't
+  cover the question, your synthesised answer should say so explicitly.
+- If retrieval keeps returning the same top results across hops, the
+  knowledge model has given you everything it has — synthesise and stop.
+
+## Cost reality
+
+Each hop is one assistant turn in this session, plus one `rlat search`
+subprocess (~80 ms warm). A full 4-hop loop is 4 turns. The user pays
+for nothing extra — this is just the assistant doing its job inside the
+existing conversation. Compare to the API-key surface
+(`rlat deep-search`) at ~$0.009-0.025 per question depending on hop
+count.
 
 ## Handoff
 
-- Foundational tool use (search flags, build, MCP setup, output formats) → [rlat skill](../rlat/SKILL.md) and [rlat playbook](../rlat/references/PLAYBOOK.md).
-- Question about rlat itself → read rlat SKILL.md first, then this skill only if the rlat question is multi-hop.
-- Memory / history recall across sessions → use `rlat memory recall` on the memory knowledge model; the same research loop applies.
+- Need to run this from a non-Claude-Code agent / CI / batch script?
+  Use the CLI verb (requires Anthropic API key — see
+  [docs/user/API_KEYS.md](../../../docs/user/API_KEYS.md)).
+- Foundational `rlat` tool use (search flags, build, output formats) →
+  [rlat skill](../rlat/SKILL.md).
+- Memory recall across sessions → `rlat memory recall` on the memory
+  knowledge model; the same loop applies.

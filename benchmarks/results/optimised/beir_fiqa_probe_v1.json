@@ -1,0 +1,60 @@
+{
+  "config": {
+    "encoder_model": "Alibaba-NLP/gte-modernbert-base",
+    "encoder_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+    "runtime": "torch",
+    "top_k": 10,
+    "synth_mode": "per-query+stratify-cap-3-per-doc",
+    "phase": "all"
+  },
+  "aggregate": {
+    "base_ndcg_at_10_mean": 0.52388,
+    "optimised_ndcg_at_10_mean": 0.48222,
+    "delta_ndcg_mean": -0.04166000000000003,
+    "total_cost_usd": 2.466411,
+    "corpora_count": 1,
+    "failed": []
+  },
+  "trials": [
+    {
+      "corpus": "fiqa",
+      "n_passages": 57638,
+      "n_queries": 648,
+      "n_qrels": 648,
+      "base_ndcg_at_10": 0.52388,
+      "base_recall_at_10": 0.61138,
+      "optimised_ndcg_at_10": 0.48222,
+      "optimised_recall_at_10": 0.5463,
+      "optimised_best_dim": 512,
+      "optimised_per_dim": {
+        "64": {
+          "ndcg": 0.30893,
+          "recall": 0.35369
+        },
+        "128": {
+          "ndcg": 0.40302,
+          "recall": 0.46767
+        },
+        "256": {
+          "ndcg": 0.45353,
+          "recall": 0.52731
+        },
+        "512": {
+          "ndcg": 0.48222,
+          "recall": 0.5463
+        }
+      },
+      "delta_ndcg": -0.04166000000000003,
+      "delta_recall": -0.06508000000000003,
+      "n_synth_queries": 1342,
+      "n_llm_calls": 1344,
+      "cost_usd": 2.466411,
+      "train_steps": 250,
+      "train_final_loss": 0.0008644141489639878,
+      "train_dev_r1": 0.6716417670249939,
+      "train_early_killed": false,
+      "train_seconds": 2.978483157000028,
+      "encode_seconds": 1213.636402191
+    }
+  ]
+}

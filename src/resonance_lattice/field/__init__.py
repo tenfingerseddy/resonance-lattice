@@ -1,30 +1,56 @@
-# SPDX-License-Identifier: BUSL-1.1
-"""Field tensor implementations for the Resonance Lattice.
+"""Field — the router layer.
 
-Five backends with different capacity/performance trade-offs:
-  - DenseField:            B×D×D tensor, ~82K sources, O(B·D²) retrieval, ~40 MB (f16)
-  - AsymmetricDenseField:  B×(D_key×D_value), key/value separation, O(B·Dk·Dv) retrieval
-  - FactoredField:         U·Σ·V^T per band, ~100K sources, O(B·D·K) retrieval, ~20 MB (f16)
-  - PQField:               M subspaces × K centroids, ~8M sources, O(B·M·K²) retrieval, ~80 MB (f16)
-  - MultiVectorField:      Per-source vector sets, soft-MaxSim retrieval, no info loss
+Single encoder: gte-modernbert-base 768d, CLS pooling, L2-normalised.
+Three inference runtimes (auto-selected): ONNX (non-Intel CPU), OpenVINO
+(Intel CPU), PyTorch (build/optimise only).
+
+Phase 1 deliverable. See base plan §1, §3.
 """
 
-from resonance_lattice.field.asymmetric_dense import (
-    AsymmetricDenseField,
-    AsymmetricResonanceResult,
-)
-from resonance_lattice.field.dense import DenseField, ResonanceResult
-from resonance_lattice.field.factored import FactoredField
-from resonance_lattice.field.multi_vector import MultiVectorField, MultiVectorResonanceResult
-from resonance_lattice.field.pq import PQField
+from __future__ import annotations
 
-__all__ = [
-    "AsymmetricDenseField",
-    "AsymmetricResonanceResult",
-    "DenseField",
-    "FactoredField",
-    "MultiVectorField",
-    "MultiVectorResonanceResult",
-    "PQField",
-    "ResonanceResult",
-]
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from . import ann, dense
+
+if TYPE_CHECKING:
+    # Type-only imports to avoid circular load order: store/bands.py imports
+    # field/_runtime_common.py, which triggers field/__init__.py mid-init of
+    # store/archive.py — a real circular if the BandHandle / PassageCoord
+    # imports are at module scope. Runtime usage in `retrieve()` doesn't
+    # need them imported because they're only referenced via typed args
+    # (duck-typed at runtime).
+    from ..store.archive import BandHandle
+    from ..store.registry import PassageCoord
+
+
+def retrieve(
+    query_emb: np.ndarray,
+    handle: "BandHandle",
+    ann_index: object | None,
+    registry: "list[PassageCoord]",
+    top_k: int,
+) -> list[tuple[int, float]]:
+    """Single retrieval entry point — ANN when an index is bound, exact dense
+    cosine otherwise. Both paths return `[(passage_idx, score), ...]`
+    descending by score, with a `projection_matrix` applied if the band is a
+    optimised (handle.projection != None).
+
+    Lifted from `cli/search.py` + `cli/summary.py`; the if/else dispatch
+    was duplicated across both call sites.
+    """
+    if ann_index is not None:
+        return ann.search(
+            ann_index, query_emb,
+            registry=registry,
+            projection_matrix=handle.projection,
+            top_k=top_k,
+        )
+    return dense.search(
+        query_emb, handle.band,
+        registry=registry,
+        projection_matrix=handle.projection,
+        top_k=top_k,
+    )

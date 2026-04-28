@@ -1,94 +1,75 @@
 # Contributing to Resonance Lattice
 
-Thanks for your interest in contributing. This document covers what you need to know to land a change.
+`rlat` is a knowledge-model retrieval CLI. The project is BSL-1.1
+licensed (source-available, commercial-use restricted during the
+change-licence window — see [LICENSE.md](LICENSE.md) and
+[`docs/user/FAQ.md`](docs/user/FAQ.md) for the licence FAQ).
 
-## Licensing
+This document covers how to set up a dev environment and what the
+review cadence looks like.
 
-Resonance Lattice is licensed under **Business Source License 1.1** (see [LICENSE.md](LICENSE.md)). By contributing, you agree that your contributions are licensed under the same terms.
+## Dev setup
 
-No CLA. Contributions are accepted under the **Developer Certificate of Origin 1.1** — sign off each commit with `git commit -s`. The signoff line is a statement that you have the right to contribute the change. See <https://developercertificate.org/>.
-
-## Before you start
-
-For anything non-trivial, open an issue first. This prevents wasted work if the direction doesn't align with the roadmap. The board at <https://github.com/users/tenfingerseddy/projects/1> is public and shows current priorities.
-
-Small bug fixes and doc improvements don't need prior discussion — send the PR.
-
-## Development setup
+Python 3.12+ required.
 
 ```bash
 git clone https://github.com/tenfingerseddy/resonance-lattice.git
 cd resonance-lattice
-pip install -e ".[dev]"
+python -m venv .venv && source .venv/bin/activate    # Linux / macOS
+# .venv\Scripts\activate                              # Windows
+pip install -e ".[dev,bench]"
+rlat install-encoder
 ```
 
-Python 3.11 or 3.12. The test suite assumes `numpy`, `scipy`, `torch`, and `transformers` are importable; the `dev` extra adds pytest, hypothesis, and ruff.
+The `[dev]` extra pulls `pytest`, `ruff`, and `pyright`. The `[bench]`
+extra pulls the user-bench reproducibility harness. The `[build]` and
+`[optimise]` extras pull `transformers + torch` (only needed for
+`rlat build` / `rlat optimise`, not for read-side workflows).
 
-## Running tests
+Re-run `pip install -e .` after changing CLI argparse wiring or extras
+— editable installs cache console-script entry points.
 
-```bash
-PYTHONPATH=src pytest tests/ -x --tb=short
-```
+## Cadence
 
-Full suite is a few hundred tests; most run in under 30 seconds. For a fast smoke:
+Every commit on `main` follows a four-step gate (per
+[CLAUDE.md](CLAUDE.md)):
 
-```bash
-PYTHONPATH=src pytest tests/test_cli_loader.py tests/test_breakthroughs.py -x
-```
-
-## Coding conventions
-
-- Python-first. NumPy for field operations; PyTorch for the encoder.
-- Field operations must preserve algebraic properties (merge commutativity, forget exactness).
-- Encoder changes must keep build/query parity and be gated by live `search` benchmarks.
-- Every RQL operation returns typed results, not raw `ndarray`.
-- Lint with `ruff check src/ tests/` — the ruleset is in [pyproject.toml](pyproject.toml).
-- Line length 100; the check is advisory, not CI-blocking.
-- **No bare inline `TODO` / `FIXME` / `XXX` / `HACK` comments.** If a follow-up is genuinely needed, file an issue and reference the number: `# TODO(#NNN): short description`. The main branch is kept TODO-free as a hygiene invariant.
-
-## Commit messages
-
-Single subject line ≤ 72 chars, imperative mood. Body wrapped at ~72 chars. The subject should start with a subsystem prefix where it fits (e.g. `encoder:`, `cli:`, `field:`, `docs:`). Link related issues in the body (`Refs #N`, `Closes #N`).
+1. **simplify** — review the change for reuse, quality, and efficiency
+   (the `simplify` skill bundles the three sub-reviews).
+2. **codex-review-cycle** — independent code review by Codex CLI.
+3. **harness** — `python -m tests.harness.runner --changed $(git diff --cached --name-only)`
+   must be green.
+4. **board** — every commit that ships a board-tracked deliverable
+   marks its issue Done on the GitHub Project. If the commit ships
+   nothing tracked, state `Board: no item` in the commit message.
 
 ## Pull requests
 
-- Branch from `main`. Rebase onto `main` before requesting review.
-- Include tests for behaviour changes. Regressions without a failing test are hard to prevent a second time.
-- For performance-sensitive changes, include a benchmark number. Relevant benchmarks live in `benchmarks/`.
-- For retrieval-quality changes, attach a BEIR or LongMemEval delta.
-- CI must be green. If the test suite can't cover your change, explain in the PR body how you verified it.
+- Open a PR against `main`. Small focused PRs review faster than big
+  bundled ones.
+- Include the harness gate output in the PR description.
+- Sign off using the `Co-Authored-By:` trailer if the change was
+  pair-written with an LLM assistant.
+- Doc edits land alongside code edits when the public surface or a
+  measured number changes — `docs/internal/HONEST_CLAIMS.md` and
+  `docs/user/BENCHMARKS.md` should never trail the code that produced
+  the numbers they cite.
 
-## What kind of change is likely to land?
+## Filing issues
 
-**Likely to land quickly:**
+Use the public issues page for bug reports, feature requests, and
+general discussion. For security-related reports see
+[SECURITY.md](SECURITY.md).
 
-- Bug fixes with a failing test
-- Doc improvements
-- Performance improvements with a benchmark number
-- New knowledge model storage backends that follow the existing `SourceStore` interface
+A good bug report includes:
 
-**Likely to need discussion first:**
+- `rlat --version` output.
+- The exact command(s) you ran.
+- The full stack trace or unexpected output.
+- A minimal reproduction (a small sample corpus or a one-line
+  `rlat search` invocation that shows the issue).
 
-- Changes to the public API surface (`src/resonance_lattice/__init__.py::__all__`)
-- New encoder backbones or projection heads
-- New RQL operators
-- Changes to knowledge model file format
-- New top-level CLI subcommands
+## Conduct
 
-**Likely to be deferred:**
-
-- Refactors without a motivating benchmark or bug
-- New research modules without a benchmark gate
-- Changes that remove user-visible features for internal-cleanliness reasons
-
-## Reporting security issues
-
-Please do **not** use public issues for vulnerabilities. See [SECURITY.md](SECURITY.md) for the private disclosure process.
-
-## Code of Conduct
-
-See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Project interactions happen under the Contributor Covenant 2.1.
-
-## Questions
-
-Open a GitHub Discussion, or find an existing issue that fits. The project is small — a single issue is usually enough to move forward.
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
+Report conduct issues via the same channel as security advisories.

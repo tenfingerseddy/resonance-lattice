@@ -17,13 +17,30 @@ src/resonance_lattice/**/*.pyd
 venv/
 env/
 
-# IDE
+# IDE / editor scratch
 .vscode/
 .idea/
 *.swp
 *.swo
+*.bak
 .claude/settings.local.json
 .mcp.json
+
+# Test / lint / type-check caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.tox/
+.coverage
+htmlcov/
+
+# Local scratch archives (large .rlat already covered by *.rlat below).
+_archive/
+
+# Local machine state (accidentally written by infra scripts — not source)
+*known_hosts*
+*.ssh*
 
 # Data (downloaded datasets — large)
 data/
@@ -32,7 +49,9 @@ data/
 # Layered-memory root (user-specific conversation history; regenerable via
 # scripts/ingest_claude_transcripts.py). .rlat is already covered above,
 # but the sidecar .db and _ingested_sessions.json contain raw prompts.
-memory/
+# Anchor to the repo root with `/` so this rule does NOT also ignore
+# `src/resonance_lattice/memory/` (Phase 5 source code).
+/memory/
 .claude/memory-primer.md
 
 # Local caches / scratch outputs (not committed)
@@ -87,6 +106,12 @@ build_e5.log
 experiments/embeddings/
 experiments/checkpoints/backbone_comparison/*.pt
 
+# Local benchmark + optimise scratch logs (regenerable)
+soak_*.log
+project.rlat
+smoke.rlat
+*.optimise_cache/
+
 # Claude Code worktrees (auto-created, can be very large)
 .claude/worktrees/
 
@@ -128,17 +153,85 @@ kaggle/training_data.jsonl
 # Training checkpoints (large binaries, reproduce via Kaggle runs)
 checkpoints/
 
-# Intermediate benchmark results (keep final results in committed JSON)
-benchmarks/results/retrieval_gate/gate_*.json
-benchmarks/results/longmemeval/*
+# benchmarks/results/ is v0.11-era output. Kept on the legacy/v0.11.0 tag;
+# rebuild/v2 ignores everything except the headline files referenced from
+# memory entries / REBUILD_PLAN. Phase 7 regenerates fresh result files
+# against the v2.0 default recipe and adds them to the keep list explicitly.
+benchmarks/results/**
+# Headline keepers (alphabetical within each subdir). Each file is the
+# evidence backstop for a memory entry or a documented baseline.
+!benchmarks/results/beir/
+!benchmarks/results/beir/pipeline_*_honest_e5_raw_v1.json
+!benchmarks/results/beir/new_arch/
+!benchmarks/results/beir/new_arch/aggregate_5beir_horizon1_v239.json
+!benchmarks/results/beir/new_arch/aggregate_5beir_qwen3_8b_v1.json
+!benchmarks/results/beir/new_arch/baseline_qwen3_8b_v1/
+!benchmarks/results/beir/new_arch/baseline_qwen3_8b_v1/**
+!benchmarks/results/beir/new_arch/baseline_qwen3_8b_v1_meanpool_broken/
+!benchmarks/results/beir/new_arch/baseline_qwen3_8b_v1_meanpool_broken/**
+!benchmarks/results/beir/new_arch/qwen3_8b_fullstack_v1/
+!benchmarks/results/beir/new_arch/qwen3_8b_fullstack_v1/**
+!benchmarks/results/beir/new_arch/stage1_v1/
+!benchmarks/results/beir/new_arch/stage1_v1/**
+!benchmarks/results/beir/new_arch/ws3_291_parity/
+!benchmarks/results/beir/new_arch/ws3_291_parity/aggregate_ws3_291_parity_5beir.json
+!benchmarks/results/locomo/
+!benchmarks/results/locomo/phase1_smoke_conv1_v3.json
+!benchmarks/results/locomo/phase2_5_cartridge_e5_cascade_all10.json
+!benchmarks/results/locomo/phase2_cartridge_e5_all10.json
+!benchmarks/results/locomo/phase2_cartridge_e5_all10_sonnet_judge.json
+# v2.0-stack LoCoMo retrieval recall (gte-mb 768d, FAISS HNSW). 1982 QAs
+# across 10 conversations; replaces v0.11 cartridge-baseline 68.2%
+# (different metric, same dataset).
+!benchmarks/results/locomo/locomo_v2_retrieval.json
+# Per-feature ablation smokes (2026-04-23) — kept as the audit trail for
+# project_locomo_feature_transfer.md memory claims.
+!benchmarks/results/locomo/smoke/
+!benchmarks/results/locomo/smoke/**
+!benchmarks/results/longmemeval/
 !benchmarks/results/longmemeval/v14_full500_800.json
+# v2.0-stack LongMemEval retrieval (gte-mb 768d base band, 500 instances).
+# MRR 0.936; per-question-type breakdown in JSON.
+!benchmarks/results/longmemeval/longmemeval_v2_retrieval.json
 !benchmarks/results/longmemeval/kaggle_v15_phase1_e5/
 !benchmarks/results/longmemeval/kaggle_v15_phase1_e5/**
 !benchmarks/results/longmemeval/runpod_v15_bge/
 !benchmarks/results/longmemeval/runpod_v15_bge/**
-
-# BEIR sweep transcripts (large, regenerable; keep aggregate + per-corpus JSONs)
-benchmarks/results/beir/new_arch/**/sweep*.log
+# Audit evidence (Phase 1 #14): FAISS-vs-hnswlib lock + efS=128 calibration.
+!benchmarks/results/ann_audit_04.json
+# Phase 1 #15 evidence: locked BEIR-5 floor for v2.0 base 768d gte-mb.
+# Source-of-truth backstop for docs/internal/BENCHMARK_GATE.md.
+!benchmarks/results/beir/new_arch/v2_floor_gte_mb_base_768d.json
+# v2.0-stack BEIR-5 encoder comparison (gte-mb vs BGE-large vs E5-large vs
+# Qwen3-4B). Same retrieval pipeline; replaces v0.11-era cross-encoder
+# comparisons that ran on different chunkers and ANN configs.
+!benchmarks/results/beir/new_arch/beir5_encoder_comparison_v1.json
+# Audit 4 / OPTIMISE.md headline win — Fabric optimised probe (62,953 passages,
+# +0.032 R@5, $8.16 / ~50 min Kaggle T4). Source-of-truth for the optimise
+# three-row table in OPTIMISE.md, BENCHMARKS.md, README.md.
+!benchmarks/results/optimised/
+!benchmarks/results/optimised/fabric_probe_v1.json
+# Bench 7 — BEIR fiqa optimise probe (Δ -0.042 nDCG@10, $2.47 / ~20 min T4).
+# Public-corpus negative result that falsified the predicted-positive
+# hypothesis; ships alongside Fabric in the OPTIMISE.md three-row table.
+!benchmarks/results/optimised/beir_fiqa_probe_v1.json
+# User-facing benchmark results from `python -m benchmarks.user_bench.<n>.run`.
+# hallucination_fabric_v3.json is the headline bench-2 result (Microsoft
+# Fabric corpus, 13× hallucination reduction vs LLM-only).
+!benchmarks/results/user_bench/
+!benchmarks/results/user_bench/*.json
+# Final-pattern wins: even inside allow-listed dirs, never track logs / npy
+# / jsonl / sweep transcripts. Keep only the headline JSON files.
+benchmarks/results/**/*.log
+benchmarks/results/**/*.npy
+benchmarks/results/**/*.jsonl
+benchmarks/results/**/sweep*.json
+# Specific run logs paired with headline results — kept as audit evidence
+# alongside the benchmark JSONs they validate.
+!benchmarks/results/beir/new_arch/stage1_v1/driver.log
+!benchmarks/results/beir/new_arch/stage1_v1/driver_v2.log
+!benchmarks/results/longmemeval/kaggle_v15_phase1_e5/rlat-longmemeval-v15-phase1-e5.log
+!benchmarks/results/longmemeval/runpod_v15_bge/run.log
 
 # Direction docs (strategic analysis, not code — track selectively)
 docs/direction/
@@ -147,9 +240,10 @@ docs/direction/
 .claude/scheduled_tasks.lock
 .claude/skills/skill-creator/
 
-# Website dev logs
-website/devserver.err
-website/devserver.log
+# Local-only sibling projects — not part of rebuild/v2 src/.
+# Both have zero tracked files; ignored wholesale rather than per-artefact.
+website/
+obsidian-plugin/
 
 # Sync scripts (local automation)
 scripts/sync-public.sh
@@ -158,26 +252,50 @@ scripts/sync-public.sh
 kaggle/**/*.tar.gz
 resonance_lattice_src.tar.gz
 
+# Kaggle output downloads (kernel logs + JSON + dataset-extract scratch).
+# Regenerable via `kaggle kernels output kanesnyder/<slug>`.
+kaggle_outputs/
+
+# Bench-suite Kaggle dataset staging dirs — track only the metadata.json,
+# not the bulk data files which live on Kaggle and are too large for git.
+kaggle/datasets/rlat2-longmemeval-data/longmemeval_s_cleaned.json
+kaggle/datasets/rlat2-fabric-docs-data/docs.tar.gz
+
 # Kaggle dataset staging dirs (regenerable by copy from src/ and benchmarks/)
 kaggle/longmemeval-dataset-v*/
 kaggle/*-dataset-v*/
+# Kaggle kernel push staging (the bench scripts under benchmarks/ are the
+# canonical source; kaggle/<job>/ is just a copy + kernel-metadata.json
+# regenerable via the kaggle-gpu skill recipe).
+kaggle/rlat2-beir5-floor-job/
+kaggle/rlat2-src-v2-data/
+kaggle/output/
+
+# Local API key delivery — Kaggle private dataset workaround for the
+# unreachable Secrets backend. key.txt holds the live Anthropic key; never
+# commit it. The dataset-metadata.json is fine to track.
+kaggle/rlat-api-key/key.txt
 
 # LoCoMo benchmark data (auto-downloaded by bench_locomo.py from
 # snap-research/locomo). 2.8MB, not worth tracking.
 benchmarks/data/locomo/
 
-# LoCoMo bench transient results (ignore *.json by default, allow
-# only the durable headline result files explicitly).
-benchmarks/results/locomo/*
-!benchmarks/results/locomo/phase2_cartridge_e5_all10.json
-!benchmarks/results/locomo/phase1_smoke_conv1_v3.json
-!benchmarks/results/locomo/phase2_5_cartridge_e5_cascade_all10.json
-!benchmarks/results/locomo/phase2_cartridge_e5_all10_sonnet_judge.json
-# Per-feature ablation smokes (2026-04-23) — kept as the audit trail for
-# project_locomo_feature_transfer.md memory claims.
-!benchmarks/results/locomo/smoke/
-!benchmarks/results/locomo/smoke/**
-
 # Benchmark working dirs (regenerable via benchmarks/extract_beir.py + rlat build)
 /benchmark_data/
 /bench_out/
+benchmarks/results/fabric/rung3_mrl/*/passage_emb.npy
+benchmarks/results/fabric/rung3_mrl/*/passages.jsonl
+benchmarks/results/*/rung3_mrl/*/passage_emb.npy
+benchmarks/results/*/rung3_mrl/*/passages.jsonl
+
+# Large training artifacts (regeneratable; do not commit)
+benchmarks/results/**/*.npy
+benchmarks/results/**/passage_emb*.npy
+benchmarks/results/**/dev_query_emb*.npy
+benchmarks/results/**/holdout_query_emb*.npy
+benchmarks/results/**/passages.jsonl
+benchmarks/results/**/lora_adapter/adapter_model.safetensors
+benchmarks/results/**/p_lora_adapter/adapter_model.safetensors
+benchmarks/results/**/q_lora_adapter/adapter_model.safetensors
+kaggle/datasets/rlat-fabric-corpus/fabric-docs/
+kaggle/datasets/rlat2-beir3-soak-source/resonance_lattice/
