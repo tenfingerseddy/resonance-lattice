@@ -14,6 +14,32 @@ The `[build]` extra pulls in `transformers`, `torch`, and `onnxscript`. Once you
 
 > If you only ever search and never build, use the base install and have someone else build the `.rlat` for you.
 
+## Don't want to build yet? Try a prebuilt `.rlat`
+
+Four launch-day knowledge models live on HuggingFace, ready to query without any encoder install or build step. They use **remote storage mode** — the .rlat itself only contains embeddings + source coordinates + a SHA-pinned URL manifest; the source files are fetched on demand from `raw.githubusercontent.com` at the pinned commit and SHA-verified locally.
+
+| Dataset | Source repo | Files | Passages | Size |
+|---|---|---:|---:|---:|
+| [`tenfingers/powerbi-developer-rlat`](https://huggingface.co/datasets/tenfingers/powerbi-developer-rlat) | [MicrosoftDocs/powerbi-docs](https://github.com/MicrosoftDocs/powerbi-docs) `powerbi-docs/developer` | 176 | 5,684 | 34 MB |
+| [`tenfingers/powershell-docs-rlat`](https://huggingface.co/datasets/tenfingers/powershell-docs-rlat) | [MicrosoftDocs/PowerShell-Docs](https://github.com/MicrosoftDocs/PowerShell-Docs) `reference` | 2,647 | 107,033 | 640 MB |
+| [`tenfingers/python-stdlib-rlat`](https://huggingface.co/datasets/tenfingers/python-stdlib-rlat) | [python/cpython](https://github.com/python/cpython) `Doc` | 617 | 49,179 | 293 MB |
+| [`tenfingers/tsql-docs-rlat`](https://huggingface.co/datasets/tenfingers/tsql-docs-rlat) | [MicrosoftDocs/sql-docs](https://github.com/MicrosoftDocs/sql-docs) `docs/t-sql` | 1,209 | 33,282 | 198 MB |
+
+```bash
+# pip install rlat (base install is enough — no [build] extras needed for query)
+pip install rlat huggingface_hub
+
+# Pick the corpus that fits your work
+huggingface-cli download tenfingers/python-stdlib-rlat python-stdlib.rlat --local-dir .
+
+# Query it — first hit caches the cited source files locally; subsequent queries are sub-20ms warm
+rlat search python-stdlib.rlat "asyncio Task cancellation" --top-k 5
+```
+
+All four are encoded with the same `gte-modernbert-base` 768d recipe documented in [BENCHMARK_GATE.md](../internal/BENCHMARK_GATE.md), so retrieval quality is identical to what you'd get building locally. The `.rlat` archive itself is the source of truth for the source-repo SHA — the README on each HuggingFace repo records it and the build date.
+
+If you outgrow the prebuilt set or want to index your own project, keep reading.
+
 ## Stage the encoder (one-time)
 
 The first `rlat build` will trigger this automatically. To pre-stage (offline-build environments, CI):

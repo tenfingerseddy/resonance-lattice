@@ -24,6 +24,25 @@ rlat search myproject.rlat "how does auth work?"
 
 Once you have a `.rlat`, query-time only needs the base install — `pip install rlat` (no extras) on a different machine is enough to search a knowledge model someone else built. Full walkthrough: [docs/user/GETTING_STARTED.md](docs/user/GETTING_STARTED.md). Full CLI reference: [docs/user/CLI.md](docs/user/CLI.md).
 
+### Don't want to build? Try a prebuilt `.rlat` first.
+
+Four launch-day knowledge models live on HuggingFace, ready to query in seconds — no encoder install, no build step. They use **remote storage mode** (passages reference the source repo at a pinned commit; sources are fetched on demand and SHA-verified at query time):
+
+| Corpus | Source | Files | Passages |
+|---|---|---:|---:|
+| [`tenfingers/powerbi-developer-rlat`](https://huggingface.co/datasets/tenfingers/powerbi-developer-rlat) | [MicrosoftDocs/powerbi-docs](https://github.com/MicrosoftDocs/powerbi-docs) `powerbi-docs/developer` | 176 | 5,684 |
+| [`tenfingers/powershell-docs-rlat`](https://huggingface.co/datasets/tenfingers/powershell-docs-rlat) | [MicrosoftDocs/PowerShell-Docs](https://github.com/MicrosoftDocs/PowerShell-Docs) `reference` | 2,647 | 107,033 |
+| [`tenfingers/python-stdlib-rlat`](https://huggingface.co/datasets/tenfingers/python-stdlib-rlat) | [python/cpython](https://github.com/python/cpython) `Doc` | 617 | 49,179 |
+| [`tenfingers/tsql-docs-rlat`](https://huggingface.co/datasets/tenfingers/tsql-docs-rlat) | [MicrosoftDocs/sql-docs](https://github.com/MicrosoftDocs/sql-docs) `docs/t-sql` | 1,209 | 33,282 |
+
+```bash
+pip install rlat
+huggingface-cli download tenfingers/python-stdlib-rlat python-stdlib.rlat --local-dir .
+rlat search python-stdlib.rlat "asyncio Task cancellation" --top-k 5
+```
+
+All four are encoded with `gte-modernbert-base` 768d at the pinned revision documented in [`docs/internal/BENCHMARK_GATE.md`](docs/internal/BENCHMARK_GATE.md), so retrieval quality matches anything you build locally with the same recipe.
+
 ## A real query, end-to-end
 
 ```bash
