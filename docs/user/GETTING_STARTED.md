@@ -128,15 +128,21 @@ rlat summary my-project.rlat -o .claude/resonance-context.md
 
 ## Keep things fresh
 
-When you edit source files, the on-disk content drifts from what was indexed. Two recovery paths:
+When you edit source files, the on-disk content drifts from what was indexed. Three recovery paths:
 
 ```bash
-# Re-ingest changed files in place. Atomic — old archive intact until new write succeeds.
+# Live: silent watch loop — debounced refresh on every save. Run once, forget about it.
+pip install rlat[watch]            # one-time
+rlat watch                         # zero-arg auto-discovers *.rlat in cwd
+
+# Manual: re-ingest changed files in place. Atomic — old archive intact until new write succeeds.
 rlat refresh my-project.rlat
 
-# Filter to only verified hits at query time
+# Query-time guard: filter to only verified hits
 rlat search my-project.rlat "..." --verified-only
 ```
+
+`rlat watch` runs the same incremental delta-apply pipeline as `rlat refresh`, but on a debounce timer triggered by filesystem events. Default UX is silent — startup confirms what's being watched, then the loop falls quiet. Errors are loud. On `Ctrl-C`, prints a one-line summary. `--once` is the CI / pre-commit shape.
 
 `rlat refresh` re-runs the build pipeline against the source paths recorded at build time. The chunker constants (min/max chars) and kind tag come from `metadata.build_config` so passage_idx layout stays the same.
 

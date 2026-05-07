@@ -45,7 +45,8 @@ The `.rlat` records `(source_file, char_offset, char_length)` triples and re-res
 |---|---|
 | Smallest `.rlat` (no source bytes) | The source-root path is part of the runtime contract |
 | Live edits — drift detection tells you what changed | Move/delete a file → that hit shows up as `missing` |
-| Cheap to rebuild incrementally (Phase 3 `rlat refresh`) | Source isn't portable with the `.rlat` |
+| Cheap to rebuild incrementally (`rlat refresh`) | Source isn't portable with the `.rlat` |
+| Stays live as you edit (`rlat watch`) | Watch needs the `[watch]` extra (`pip install rlat[watch]`) |
 
 `drift_status` tells the truth here. If you want to see only hits whose source matches the build:
 
@@ -53,7 +54,7 @@ The `.rlat` records `(source_file, char_offset, char_length)` triples and re-res
 rlat search my-corpus.rlat "..." --verified-only
 ```
 
-To re-ingest drifted files in place, use `rlat refresh` (Phase 3 deliverable).
+To re-ingest drifted files in place, use `rlat refresh`. To keep the archive live as you edit, use `rlat watch` — same incremental pipeline, debounced by filesystem events. `rlat watch --once` is the synchronous CI / pre-commit shape.
 
 ## Remote
 

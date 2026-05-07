@@ -13,7 +13,7 @@ rlat deep-search km.rlat "..."   # multi-hop research loop (Anthropic API key re
 rlat profile km.rlat        # corpus shape / cluster / drift summary
 rlat compare a.rlat b.rlat  # cross-knowledge-model comparison (base band)
 rlat summary km.rlat        # generate a context primer
-rlat memory <subcmd>        # layered memory (primer | recall | add | consolidate | gc)
+rlat memory <subcmd>        # flat memory (add | list | recall | train | doctor | hook | capture | migrate | gc; distil/feedback stubbed)
 rlat refresh km.rlat        # local-mode incremental delta-apply
 rlat sync km.rlat           # remote-mode incremental delta-apply
 rlat freshness km.rlat      # remote: read-only drift check
@@ -530,6 +530,48 @@ The pipeline:
 
 Override flags: `--source <dir>` (repeatable) ingests a different set of paths than recorded; `--source-root <dir>` overrides the registered root; `--ext <ext>` (repeatable) overrides the extension allowlist; `--batch-size N` for tight RAM.
 
+## `rlat watch` *(shipped post-2.0)*
+
+Live, silent, self-discovering refresh loop. Sits on top of `rlat refresh` — runs the incremental delta-apply pipeline on every save after a debounce window, so the archive stays current as you edit.
+
+```bash
+rlat watch                          # zero-arg: discover *.rlat in cwd, watch all
+rlat watch my-corpus.rlat           # explicit single archive
+rlat watch --once                   # CI / pre-commit: synchronous one-shot reconcile
+rlat watch --verbose                # print one line per refresh (default: silent)
+```
+
+Default UX is silent — errors are loud, success is invisible. A short startup line confirms what's being watched, then the loop falls quiet. On `Ctrl-C`, prints a single summary: elapsed time, total refreshes, error count.
+
+Multi-archive: zero-arg invocation auto-discovers `*.rlat` files in the current directory (non-recursive) and watches every one of their recorded source roots. FS events fan out to every archive whose `build_config.source_paths` covers the changed path — overlapping source roots get a single watchdog subscription rather than N copies.
+
+Local mode only. Bundled archives are immutable post-build (`rlat convert <km> --to local` first). Remote archives route to `rlat sync` for upstream reconciliation.
+
+Pre-flight checks at startup, all fail-fast with actionable hints:
+
+- archive loads cleanly + has recorded `source_paths` provenance
+- store mode is `local`
+- every recorded source path exists on disk
+
+The mental model is **events are hints to reconcile, not the unit of correctness.** Each FS notification debounces a refresh; the refresh itself does a full source-tree walk + `bucketise` against the archive registry. Over-triggering is bounded (empty delta = no archive write); under-triggering would be a correctness hole.
+
+Filtering on every event:
+
+1. Block known-noisy directory components (`.git/`, `node_modules/`, `__pycache__/`, `.venv/`, `.tox/`, `.mypy_cache/`, `.pytest_cache/`, `.idea/`, `.vscode/`, `.ruff_cache/`).
+2. For modify/create events: drop paths whose extension isn't in the archive's recorded `extensions` allowlist (cheap pre-filter; also drops editor swap files like `.swp` / `.tmp`).
+3. For deletes, moves, and directory events: skip the suffix pre-filter (rename-out scenarios like `foo.md → foo.bak` and directory deletes still need reconciliation; the path's *current* suffix is uninformative). Move events dispatch on both `src_path` and `dest_path`.
+4. Re-arm the per-archive debounce timer.
+
+After `RLAT_WATCH_DEBOUNCE_MS` (default `1000`) of idleness, refresh fires. Concurrency hazard: per-archive `threading.Lock` serialises refreshes — `apply_delta` writes via `<archive>.tmp` + `os.replace`, and two concurrent calls share that tmp path. The lock closes the race.
+
+**Transient read failures are NOT silent deletes.** If `_walk_sources` skips a file (Windows file lock during atomic save, mid-write UTF-8 decode error), `bucketise` would normally classify its passages as `removed` and `apply_delta` would write that deletion. The watch path post-processes the delta: any removal whose `source_file` is in the skipped set is demoted back to `unchanged`, and the next FS event drives the next refresh that reconciles for real.
+
+The encoder pre-loads at startup so the first event refreshes immediately (no model-load latency on the first save). Optimised bands re-project for free from the new base on every refresh, same as `rlat refresh`.
+
+`--once` is the CI / pre-commit shape — **synchronous one-shot reconciliation, no observer.** Walks the tree of every preflighted archive, runs `bucketise` + `apply_delta` against current disk state, prints a summary, and exits. No waiting for events: in CI / pre-commit / formatter-on-save / `git checkout` flows the files are already changed before the command runs, so an event-waiting `--once` would hang. If the archives are already up to date, exits silently with code 0.
+
+Requires the `[watch]` extra: `pip install rlat[watch]`. Pulls in `watchdog` (cross-platform FS event delivery) and the `[build]` deps (transformers + torch) for re-encoding.
+
 ## `rlat sync` *(shipped Audit 07)*
 
 Bring a remote-mode knowledge model back in sync against upstream. Same incremental delta-apply as `refresh`, with the upstream-state oracle replaced by a `RemoteIndex` that polls the network.
@@ -587,70 +629,139 @@ See [OPTIMISE.md](./OPTIMISE.md) for the full guide (when to optimise, cost cali
 
 ---
 
-## `rlat memory <sub>` *(shipped Phase 5)*
+## `rlat memory <sub>` *(v2.1 flat-memory; MVP)*
 
-Three-tier append-only memory: `working` (1d half-life), `episodic` (14d), `semantic` (∞). Recall fuses all tiers via `score = cosine × tier_weight × salience`.
+Per-user flat memory at `~/.rlat/memory/<user-id>/` — one `memory.npz`
+embedding band + one `sidecar.jsonl` row file per user. Polarity-tagged
+rows (`prefer | avoid | factual` plus scope tags `workspace:<hash>` /
+`cross-workspace`) drive the §0.6 retrieval pipeline. The full §0.7
+surface is documented below; **add**, **list**, **gc**, **recall**
+(both daemon mode AND synchronous one-shot), **train** (operator flags),
+**doctor**, **hook** (UserPromptSubmit), **capture** (SessionEnd), and
+**migrate** ship today; **distil** and **feedback** print a "ships in
+v2.1 MVP" banner with exit code 3 pending post-MVP work.
 
 ```bash
-# Add (default tier: working)
-rlat memory add "we use gte-modernbert-base 768d"
-rlat memory add "session note about hnswlib audit" --tier episodic --source-id audit-04
-rlat memory add "$(cat note.md)" --salience 2.0
-cat long-note.md | rlat memory add - --source-id long-note    # `-` reads stdin
+# Add a manual row — defaults to polarity=factual + cwd workspace tag
+rlat memory add "prefer pytest -xvs <path> for debugging" --polarity prefer
+rlat memory add "avoid 'from rlat import *' in code"      --polarity avoid
+rlat memory add "encoder revision pinned"                  --polarity factual
 
-# Recall — multi-tier weighted retrieval
-rlat memory recall "what encoder are we using" --top-k 5
-rlat memory recall "..." --format json
-rlat memory recall "..." --tier-weights '{"working":0.7,"semantic":0.3}'
+# Cross-workspace habits — visible in any cwd
+rlat memory add "prefer Sonnet 4.6 over Haiku 4.5 for distil" \
+    --polarity prefer --scope cross-workspace
 
-# Consolidate — promote near-duplicate episodic clusters to semantic
-rlat memory consolidate                              # default: 3 near-dups, 0.92 cosine
-rlat memory consolidate --recurrence-threshold 5 --session sess-12
+# Read from stdin
+cat note.md | rlat memory add - --polarity factual
 
-# Primer — write .claude/memory-primer.md from semantic+episodic
-rlat memory primer -o .claude/memory-primer.md
+# List — tabular view of the sidecar
+rlat memory list                              # all (is_bad rows hidden)
+rlat memory list --polarity prefer            # filter by primary tag
+rlat memory list --min-recurrence 3           # only well-corroborated rows
+rlat memory list --include-bad                # show is_bad rows too
+rlat memory list --format json                # machine-parseable
 
-# Garbage collect — apply retention decay + cap (DESTRUCTIVE — no dry-run)
-rlat memory gc                                       # all tiers
-rlat memory gc --tier working --tier episodic
+# Garbage collect — manual escape hatch only (§0.5).
+# Refuses to run without at least one filter; `--dry-run` previews.
+rlat memory gc --is-bad --dry-run                       # what would go
+rlat memory gc --is-bad                                 # delete is_bad rows
+rlat memory gc --polarity factual --max-age-days 90     # stale lookup-cache
+rlat memory gc --min-recurrence 1                       # one-off rows
 
-# Custom memory root — top-level flag, BEFORE the subcommand
-rlat memory --memory-root ./project-mem add "..."
+# Per-user override — defaults to $RLAT_MEMORY_USER → $USER → $USERNAME
+rlat memory --user alice list
+
+# Custom base directory — composes with --user as <root>/<user>/
+rlat memory --memory-root ./team-mem --user kane add "..."
 ```
+
+### Subcommand surface (§0.7)
+
+| Subcommand | Status | Purpose |
+|------------|--------|---------|
+| `add`        | shipped (Sub-MVP) | Append a manual row; auto-stamps cwd workspace tag. |
+| `list`       | shipped (Sub-MVP) | Tabular sidecar view with optional filters. |
+| `gc`         | shipped (Sub-MVP) | Manual escape-hatch deletion; never automatic (§0.5). |
+| `recall`     | shipped (MVP D7-9) | `--daemon` boots the long-lived recall server; one-shot synchronous body honours `--top-k`/`--polarity`/`--format`/`--explain`. |
+| `train`      | shipped (MVP D5-6; operator flags) | `--bad-vote`/`--good-vote`/`--corroborate` mutate single rows; full §8 GRPO loop runs via `/rlat-train`. |
+| `doctor`     | shipped (MVP D7-8) | Probe per-user store + daemon (POSIX socket / Windows pipe) + encoder revision. |
+| `hook`       | shipped (MVP D9-10) | UserPromptSubmit hook entry point. Reads JSON envelope from stdin, emits §0.4 `<rlat-memory>` block via `additionalContext` to stdout. Always rc=0 (fail-open). |
+| `migrate`    | shipped (MVP D11-12) | One-shot v2.0-tiered → v2.1-flat migration; lossy by design (§14.5). Deleted in v2.2. |
+| `distil`     | pending (post-MVP, #88)           | LLM distil over recent transcripts → expertise rows. (Library API ships via `memory.distil`; CLI body deferred.) |
+| `feedback`   | pending (post-MVP, #88)           | Log thumbs-up/down on the most recent injection. |
+| `consolidate`| **removed**       | Replaced by `rlat memory distil`. Banner + exit 2. |
+| `primer`     | **removed**       | Replaced by per-prompt `UserPromptSubmit` hook (no static primer in v2.1; see §17.3). |
 
 ### Flags
 
 | Subcommand | Flag | Default | Effect |
 |---|---|---|---|
-| (top-level) | `--memory-root` | `./memory/` | Memory directory; goes BEFORE the subcommand. |
-| `add` | `text` (positional) | (required) | Text to add. Pass `-` to read stdin. |
-| `add` | `--tier` | `working` | One of `working`, `episodic`, `semantic`. |
-| `add` | `--salience` | `1.0` | Per-entry weight; multiplies recall score. |
-| `add` | `--source-id` | `""` | Free-form label (filename, audit ref, etc.). |
-| `add` | `--session` | `None` | Session id; used by `consolidate --session` to scope. |
-| `recall` | `query` (positional) | (required) | Query text. |
-| `recall` | `--top-k` | `10` | Number of hits to return. |
-| `recall` | `--format` | `text` | `text` or `json`. |
-| `recall` | `--tier-weights` | `null` | JSON dict; merges with defaults — omitted tiers keep defaults. |
-| `consolidate` | `--recurrence-threshold` | `3` | Min cluster size to promote. |
-| `consolidate` | `--dup-threshold` | `0.92` | Min cosine for two entries to count as near-dups. |
-| `consolidate` | `--session` | `None` | Restrict scan + drop to one session's entries. |
-| `primer` | `-o`, `--output` | `.claude/memory-primer.md` | Output markdown path. |
-| `primer` | `--novelty` | `0.3` | Min cosine-to-centroid for entries to appear. |
-| `gc` | `--tier` (repeatable) | all tiers | Restrict gc to specific tiers. |
+| (top-level) | `--memory-root` | `~/.rlat/memory/` | Base directory; per-user subdir always nests inside (`<root>/<user>/`). |
+| (top-level) | `--user`        | `$RLAT_MEMORY_USER` → `$USER` → `$USERNAME` | User id picking the per-user store. |
+| `add`     | `text` (positional) | (required) | Row text. Pass `-` to read stdin. |
+| `add`     | `--polarity`        | `factual`  | One of `prefer`, `avoid`, `factual` (§0.3 closed primary). |
+| `add`     | `--scope`           | (none)     | Set to `cross-workspace` to add the cross-workspace tag. The cwd workspace tag is **always** stamped automatically. |
+| `list`    | `--polarity`        | (none)     | Filter to rows containing this tag. |
+| `list`    | `--min-recurrence`  | (none)     | Show only rows with `recurrence_count >= N`. |
+| `list`    | `--limit`           | (none)     | Cap the row count after filtering. |
+| `list`    | `--include-bad`     | off        | Show `is_bad: true` rows (hidden by default). |
+| `list`    | `--format`          | `text`     | `text` (Row.summary form) or `json` (full sidecar dict). |
+| `gc`      | `--polarity`        | (none)     | Filter targets to rows containing this tag. |
+| `gc`      | `--min-recurrence`  | (none)     | Delete rows with `recurrence_count <= N` (note: opposite sense from `list`). |
+| `gc`      | `--max-age-days`    | (none)     | Delete rows whose `last_corroborated_at` is older than N days (per §15.2 — corroboration resets the clock so a periodically-bumped row never ages out). |
+| `gc`      | `--is-bad`          | off        | Delete rows tagged `is_bad: true`. |
+| `gc`      | `--dry-run`         | off        | Print what would go; don't write. |
+| `recall`  | `query` (positional) | (required for one-shot) | Query text; ignored under `--daemon`. |
+| `recall`  | `--daemon`          | off        | Boot the long-lived recall server (idle-exits per §0.8). |
+| `recall`  | `--top-k`           | `5`        | Maximum hits to return on synchronous one-shot. |
+| `recall`  | `--polarity`        | (none)     | Post-filter to hits with this primary polarity tag. |
+| `recall`  | `--format`          | `text`     | `text` (Row.summary lines) or `json` (full hits dict). |
+| `recall`  | `--explain`         | off        | Append per-hit cosine score to text output. |
+| `train`   | `--bad-vote ROW_ID` | (none)     | Mark a row `is_bad=True` (drops from recall). |
+| `train`   | `--good-vote ROW_ID`| (none)     | Reverse a bad-vote: `is_bad=False`. |
+| `train`   | `--corroborate ROW_ID` | (none)  | Bump `recurrence_count` + refresh `last_corroborated_at`. |
+| `train`   | `--why TEXT`        | (none)     | Optional rationale recorded in the train audit log alongside `--bad-vote`. |
+| `migrate` | `v20_root` (positional) | (required) | Path to the v2.0 LayeredMemory root to migrate from. |
+| `migrate` | `--to PATH`         | (required) | v2.1 base directory — the per-user subdir is created inside. |
+| `migrate` | `--migrate-user ID` | (required) | User id for the v2.1 store (`<to>/<id>/`); distinct from the top-level `--user`. |
+| `migrate` | `--dry-run`         | off        | Preview the migration without writing or archiving the v2.0 root. **Recommended first invocation.** |
+| `migrate` | `--polarity-default`| `factual`  | Polarity for rows the verb-scan heuristic doesn't classify (§14.5). |
+
+`gc` requires **at least one** filter — bare `rlat memory gc` returns
+exit 1 with the explicit "manual escape hatch, not a sweep" message.
 
 ### Exit codes
 
 - `0` — success.
-- `1` — usage / runtime error: empty text on `add`, malformed `--tier-weights` JSON on `recall`.
+- `1` — usage / runtime error: empty text on `add`, missing filter on `gc`, invalid polarity, mutually-exclusive `train` operator flags.
+- `2` — deprecated subcommand (`consolidate`, `primer`); banner points at the v2.1 successor.
+- `3` — pending post-MVP subcommand (`distil`, `feedback`, plus `train <task>` GRPO body); banner names the tracking issue.
 
-### Empty-memory behaviour
+The split between exit 2 (removed forever) and exit 3 (ships in MVP)
+lets shell scripts distinguish "you typed something wrong" from "wait
+for the next release" from "this command is gone".
 
-`rlat memory recall "..."` against an empty memory tree prints nothing (text format) or `[]` (json). `rlat memory primer` writes a one-line "memory tree is empty" marker file. `rlat memory consolidate` and `gc` return 0 with a "0 promoted / 0 removed" banner.
+### Storage layout
 
-For per-tier policy, recall scoring formula, consolidation rules, and the primer shape, see [docs/internal/MEMORY.md](../internal/MEMORY.md).
+```
+~/.rlat/memory/<user-id>/
+├── memory.npz              # (N, 768) float32 embedding band
+├── sidecar.jsonl           # one JSON row per band row, §0.2 schema
+├── .lock                   # portalocker advisory lock for concurrent writes
+├── .recall.sock            # (POSIX) IPC socket; Windows uses \\.\pipe\rlat-memory-<hash>
+├── .daemon_authkey         # 32-byte random authkey (POSIX 0o600); per-root cross-tenant guard
+├── redaction.log           # append-only Layer-1 audit log
+├── train_audit.log         # append-only train-operator audit (bad/good vote + corroborate)
+└── .distil_watermark.json  # (D11-12) last_processed timestamp + transcript_hash
+```
 
-For the underlying primitives behind each subcommand, see [ARCHITECTURE.md](../internal/ARCHITECTURE.md) (technical) or [GETTING_STARTED.md](./GETTING_STARTED.md) (workflow walkthrough — also pending Phase 3 close).
+Empty stores are auto-created on first call. `rlat memory list` against
+an empty store prints `(no rows match)`.
+
+For the §0.2 9-field row schema, retrieval pipeline (§0.6), polarity
+vocabulary (§0.3), redaction layers (§6.2), and the full design
+context, see
+[.claude/plans/fabric-agent-flat-memory.md](../../.claude/plans/fabric-agent-flat-memory.md).
 
 ---
 

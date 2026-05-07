@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/lockup-horizontal.svg" alt="Resonance Lattice" width="640">
+</p>
+
 # Resonance Lattice (`rlat`)
 
 [![PyPI](https://img.shields.io/pypi/v/rlat?label=pypi%20rlat)](https://pypi.org/project/rlat/)
@@ -13,9 +17,10 @@
 
 - **One `.rlat` file you own.** Embeddings + source coordinates + content hashes — all in one ZIP. Open it with `unzip`, inspect the registry with `jq`. No hosted index, no proprietary binary, no vendor lock-in.
 - **Every passage carries provenance.** Each result is `(text, source_file, char_offset, char_length, content_hash, drift_status)`. Citation is free. Drift detection is free. Refusal on stale evidence is one flag away.
-- **No LLM in the retrieval loop.** `rlat search`, `rlat profile`, `rlat compare`, `rlat summary`, `rlat refresh`, `rlat skill-context`, `rlat memory`, and the entire RQL surface need no API key and no model call. After a one-time `rlat install-encoder` (downloads the 768d encoder), local-mode build/search workflows run offline. Remote-mode `rlat sync` and `rlat freshness` are network-backed by design (HTTP + SHA-pin verify); `rlat optimise` and the `rlat deep-search` CLI verb are the two opt-in commands that need an Anthropic API key — see [docs/user/API_KEYS.md](docs/user/API_KEYS.md).
+- **No LLM in the retrieval loop.** `rlat search`, `rlat profile`, `rlat compare`, `rlat summary`, `rlat refresh`, `rlat watch`, `rlat skill-context`, `rlat memory`, and the entire RQL surface need no API key and no model call. After a one-time `rlat install-encoder` (downloads the 768d encoder), local-mode build/search workflows run offline. Remote-mode `rlat sync` and `rlat freshness` are network-backed by design (HTTP + SHA-pin verify); `rlat optimise` and the `rlat deep-search` CLI verb are the two opt-in commands that need an Anthropic API key — see [docs/user/API_KEYS.md](docs/user/API_KEYS.md).
 - **A grounding directive your LLM sees.** `rlat search --format context` and `rlat skill-context` stamp an explicit instruction at the top of the markdown they emit (`augment` / `knowledge` / `constrain`) telling the consumer LLM how to weight the passages vs its training. The directive is non-negotiable — every consumer of the corpus sees the same rule.
 - **Three storage modes, switchable in place.** `bundled` (zstd-framed source inside the file, fully self-contained), `local` (default — source on disk, reconcile via `rlat refresh`), `remote` (HTTP-pinned, SHA-verified, reconcile via `rlat sync`). Switch with `rlat convert` — no rebuild, embeddings preserved.
+- **Stays live as you edit.** `rlat watch` (zero-arg, auto-discovers `*.rlat` in cwd) runs a silent debounced refresh on every save. No manual `rlat refresh` after each edit, no "did I forget to refresh?" tax. Local mode only — bundled is immutable, remote routes to `rlat sync`. Same incremental delta-apply pipeline; optimised bands re-project for free.
 - **Multi-hop research, free with your Claude subscription.** A `deep-research` skill ships in `.claude/skills/` that drives a plan → retrieve → refine → synthesize loop natively in your Claude Code session — same loop and prompts as the `rlat deep-search` CLI verb, but no API key required because the LLM hops run through your existing Claude subscription. The CLI verb is the same loop exposed for non-Claude-Code agents / CI / batch consumers (Anthropic API key required).
 
 ## Quickstart (~2 min)

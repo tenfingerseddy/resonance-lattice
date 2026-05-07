@@ -90,7 +90,7 @@ _NORETRIEVAL_SYSTEM = (
 
 
 def _retrieve(km_path: Path, query: str, mode: str | None, verified_only: bool, top_k: int = 5) -> tuple[str, str]:
-    """Subprocess `rlat search --format context` and return (markdown, stderr).
+    """Subprocess `rlat search --format context` and return (markdown, err).
 
     `mode` of None means we want plain passages without the directive (for
     `plain_rag` approach) — we strip the rlat-mode header lines.
@@ -99,8 +99,6 @@ def _retrieve(km_path: Path, query: str, mode: str | None, verified_only: bool, 
     the `rlat` console script so the bench always exercises the checked-out
     package on `sys.path`, never a stale globally-installed `rlat`.
     """
-    # `rlat search`'s query is positional (KM path + query); --mode is
-    # accepted only with --format context. --verified-only is a flag.
     cmd = [
         sys.executable, "-m", "resonance_lattice.cli.app",
         "search", str(km_path), query,
@@ -156,7 +154,7 @@ def _multi_query_retrieve(client, km_path: Path, question: str,
     blocks: list[str] = []
     header = format_header(Mode(mode)) + "\n"
     for q in queries:
-        ctx, err = _retrieve(km_path, q, mode, False, top_k=top_k)
+        ctx, err, _ = _retrieve(km_path, q, mode, False, top_k=top_k)
         if err:
             continue
         # Strip the per-query mode header (we'll write one combined header)

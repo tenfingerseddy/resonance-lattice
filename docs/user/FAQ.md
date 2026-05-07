@@ -148,7 +148,13 @@ The `evidence` op also returns `ConfidenceMetrics` (top1-top2 gap, source divers
 
 ## What if my source files change?
 
-Run `rlat refresh my.rlat` — applies an incremental delta against the existing archive: unchanged passages keep their band rows untouched, modified/added passages are re-encoded, removed passages are dropped. Atomic in-place write. Local mode only.
+Three options:
+
+**Live (recommended for active work):** `rlat watch` — runs the same incremental delta-apply as `refresh` but on a debounced timer triggered by filesystem events. Default UX is silent. Zero-arg invocation auto-discovers `*.rlat` in cwd and watches every recorded source root. Per-archive `threading.Lock` serialises refreshes so concurrent saves can't race the atomic-write path. Optimised bands re-project for free. Local mode only — bundled is immutable, remote routes to `rlat sync`. Requires the `[watch]` extra: `pip install rlat[watch]`.
+
+**Manual:** `rlat refresh my.rlat` — applies an incremental delta against the existing archive: unchanged passages keep their band rows untouched, modified/added passages are re-encoded, removed passages are dropped. Atomic in-place write. Local mode only.
+
+**CI / pre-commit:** `rlat watch --once` — synchronous one-shot reconciliation. Walks every preflighted archive, runs `bucketise` + `apply_delta` against current disk state, exits. No observer, no event wait — files are typically already changed before the command runs (formatter pass, applied patch, `git checkout`).
 
 If your knowledge model has an optimised band, refresh **re-projects it from the new base for free** — no LLM call, no GPU. The refresh path runs `optimised = (new_base @ W.T)` row-wise L2-normalised; W is preserved byte-identically. Pass `--discard-optimised` only if you specifically want a base-only archive afterwards (rare).
 

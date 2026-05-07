@@ -26,9 +26,8 @@ from __future__ import annotations
 
 import re
 
-# Sentence-end heuristic: punctuation followed by whitespace. Greedy enough
-# for prose / docs / code-comments without burning a sentence segmenter dep.
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+from ..field.text import iter_sentence_spans
+
 # Paragraph break: 2+ newlines (with optional intra-line whitespace).
 _PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n+")
 
@@ -58,13 +57,7 @@ def _split_oversize(text: str, base_offset: int, max_chars: int) -> list[tuple[i
     chunks ≤ `max_chars`. Any single sentence above `max_chars` is hard-split.
     Returns absolute-offset ranges.
     """
-    sentences: list[tuple[int, int]] = []
-    pos = 0
-    for m in _SENTENCE_END.finditer(text):
-        sentences.append((pos, m.end() - pos))
-        pos = m.end()
-    if pos < len(text):
-        sentences.append((pos, len(text) - pos))
+    sentences = iter_sentence_spans(text)
 
     out: list[tuple[int, int]] = []
     cur_start = -1

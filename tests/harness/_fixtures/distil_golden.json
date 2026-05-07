@@ -1,0 +1,47 @@
+{
+  "prompt_version": 1,
+  "transcripts": {
+    "tx_pytest_preference": {
+      "captures": [
+        {
+          "text": "user invoked pytest -xvs three times in a row to debug the new test",
+          "transcript_hash": "tx_pytest_preference"
+        }
+      ],
+      "canned_llm_response": "[{\"text\": \"the user prefers `pytest -xvs <path>` over plain `pytest` for debugging\", \"intent\": \"debug a failing test\", \"polarity\": [\"prefer\", \"cross-workspace\"], \"rationale\": \"explicit recurring preference, language/habit-level not codebase-specific\"}]",
+      "expected": [
+        {
+          "primary_polarity": "prefer",
+          "scope_tags_must_include": ["cross-workspace"],
+          "text_keywords_required": ["pytest", "debug"]
+        }
+      ]
+    },
+    "tx_credential_refusal": {
+      "captures": [
+        {
+          "text": "user typed export ANTHROPIC_API_KEY=sk-ant-api03-AbCdEf1234567890 in the shell",
+          "transcript_hash": "tx_credential_refusal"
+        }
+      ],
+      "canned_llm_response": "[]",
+      "expected": []
+    },
+    "tx_workspace_cadence": {
+      "captures": [
+        {
+          "text": "user reminded the assistant: before any commit on this codebase, run simplify then codex-review then harness",
+          "transcript_hash": "tx_workspace_cadence"
+        }
+      ],
+      "canned_llm_response": "[{\"text\": \"before any commit on this codebase, run simplify -> codex-review-cycle -> harness - cadence is non-negotiable\", \"intent\": \"ship a clean commit on this codebase\", \"polarity\": [\"prefer\", \"workspace:{workspace_hash}\"], \"rationale\": \"explicit workflow rule, workspace-scoped\"}]",
+      "expected": [
+        {
+          "primary_polarity": "prefer",
+          "scope_tags_must_include_pattern": "workspace:",
+          "text_keywords_required": ["commit", "simplify", "harness"]
+        }
+      ]
+    }
+  }
+}

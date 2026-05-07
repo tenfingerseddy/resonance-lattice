@@ -9,7 +9,7 @@ description: >-
   decisions from memory, comparing two corpora, switching storage modes
   (bundled / local / remote), and the opt-in MRL optimise pipeline. Trigger
   when the user mentions rlat by name, references a .rlat file, asks to
-  build/query/refresh/sync a knowledge model, asks "what does the project
+  build/query/refresh/sync/watch a knowledge model, asks "what does the project
   know about X" on a project with a .rlat file, or describes any task that
   maps onto an rlat workflow. This skill executes the workflow on the
   user's behalf — it does not just document the CLI. For multi-hop research
@@ -94,6 +94,37 @@ Same shape; fetches the manifest delta over HTTP first.
 **After**:
 - Run `rlat profile <km>.rlat` — drift count should be 0.
 - If a primer was generated from this KM, regenerate: `rlat summary <km>.rlat -o .claude/resonance-context.md`.
+
+---
+
+## Watch (live refresh)
+
+**When**: the user is actively editing source files and wants the knowledge model to stay current without remembering to refresh after each save. Also: CI / pre-commit hooks (`--once`) where a synchronous one-shot reconciliation is the right shape.
+
+**Run** (live, foreground):
+```bash
+rlat watch                          # zero-arg: discover *.rlat in cwd
+rlat watch <km>.rlat                # explicit single archive
+rlat watch --verbose                # one line per refresh (default: silent)
+```
+
+Default UX is silent. Errors are loud, success is invisible. On `Ctrl-C`, prints a one-line summary (elapsed time, refreshes, errors). Local-mode only — bundled / remote archives fail preflight with a `rlat convert` / `rlat sync` hint.
+
+**Run** (CI / pre-commit shape):
+```bash
+rlat watch --once                   # synchronous one-shot reconcile + exit
+```
+
+`--once` walks every preflighted archive, runs `bucketise` + `apply_delta` against current disk state, and exits. No observer, no event wait — files are typically already changed before the command runs in CI. Returns 0 even when archives are already up to date.
+
+**Pre-flight requirements**:
+- Local-mode KM (run `rlat convert <km> --to local` first if bundled).
+- `[watch]` extra installed (`pip install rlat[watch]` — pulls watchdog + the build extras for re-encoding).
+- The recorded `source_paths` exist on disk.
+
+**Concurrency**: per-archive `threading.Lock` serialises refreshes so concurrent FS events can't race the atomic-write path. Same incremental delta-apply pipeline as `refresh`; optimised bands re-project for free on every fire.
+
+**Override**: debounce window via `RLAT_WATCH_DEBOUNCE_MS` env var (default `1000`).
 
 ---
 

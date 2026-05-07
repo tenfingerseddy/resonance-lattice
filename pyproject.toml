@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rlat"
-version = "2.0.0"
+version = "2.1.0a1"
 description = "Knowledge-model retrieval for AI assistants — base-first, dense-only, three storage modes"
 readme = "README.md"
 license = {file = "LICENSE.md"}
@@ -35,6 +35,7 @@ dependencies = [
     "huggingface_hub>=0.20",
     "tokenizers>=0.15",
     "onnxruntime>=1.17",
+    "portalocker>=2.8",
 ]
 
 [project.optional-dependencies]
@@ -92,6 +93,14 @@ bench = [
     "sentence-transformers>=2.5",
     "psutil>=5.9",
 ]
+# Live filesystem watcher (rlat watch): debounced incremental refresh on
+# every save. Adds watchdog for cross-platform FS event delivery (inotify
+# / FSEvents / ReadDirectoryChangesW). watch re-encodes changed passages,
+# so it pulls [build] transitively for the encoder.
+watch = [
+    "rlat[build]",
+    "watchdog>=4.0",
+]
 # Dev tooling. Intentionally NOT in `all` — `all` is the user-facing convenience
 # extra; dev tools are only for contributors.
 dev = [
@@ -104,7 +113,7 @@ dev = [
 # Convenience: full user-facing surface. Excludes [gpu] only — the
 # onnxruntime/onnxruntime-gpu package clobber means [gpu] users must
 # uninstall onnxruntime first (see [gpu] block).
-all = ["rlat[build,optimise,bench,ann]"]
+all = ["rlat[build,optimise,bench,ann,watch]"]
 
 [project.scripts]
 rlat = "resonance_lattice.cli.app:main"

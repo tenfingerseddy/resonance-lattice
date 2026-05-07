@@ -49,7 +49,7 @@ When the user invokes this skill, three things happen:
 2. **The user's query gets dynamically retrieved.** `$user_query` interpolates via Anthropic's skill argument substitution; rlat searches the corpus for that specific question.
 3. **Both blocks land in the model's context with citations and drift status.** The model sees passages tagged `[verified]` (current) or `[drifted]` (source has changed since build) and can self-judge whether to make strong claims.
 
-If you add a new feature to the Fabric corpus and run `rlat refresh fabric-docs.rlat`, the very next skill invocation includes that feature — no skill edit required.
+If you add a new feature to the Fabric corpus and run `rlat refresh fabric-docs.rlat`, the very next skill invocation includes that feature — no skill edit required. For zero-friction live skills, run `rlat watch` in a background terminal: every save under the corpus's recorded source roots triggers a debounced refresh, so the skill's `!command` always sees current passages without you remembering to refresh manually.
 
 ## What gets injected
 

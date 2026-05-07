@@ -43,8 +43,8 @@ from ..field.encoder import Encoder
 from ..store import incremental, open_store
 from ..store.archive import read as archive_read
 from ..store.remote_index import HttpManifestIndex, RemoteDelta
-from .build import _DEFAULT_TEXT_EXTS, _walk_sources
-from ._load import load_or_exit
+from .build import _DEFAULT_MAX_CHARS, _DEFAULT_MIN_CHARS, _walk_sources
+from ._load import load_build_spec, load_or_exit
 
 
 def cmd_refresh(args: argparse.Namespace) -> int:
@@ -66,44 +66,22 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         )
         return 1
 
-    bc = contents.metadata.build_config
-    source_root_str = args.source_root or bc.get("source_root")
-    if not source_root_str:
+    spec = load_build_spec(
+        contents,
+        source_paths_override=args.source,
+        source_root_override=args.source_root,
+        extensions_override=args.ext,
+    )
+    if spec is None:
         print(
             f"error: {km_path} has no recorded source_root (older build?). "
             "Pass --source-root <dir> to override.",
             file=sys.stderr,
         )
         return 1
-    source_root = Path(source_root_str)
 
-    # Source paths: prefer the recorded `source_paths` (provenance — every
-    # input the original build saw); fall back to source_root for older
-    # archives that didn't record them. CLI override wins.
-    if args.source:
-        sources = [Path(s) for s in args.source]
-    elif bc.get("source_paths"):
-        sources = [Path(p) for p in bc["source_paths"]]
-    else:
-        sources = [source_root]
-    # Extension allowlist: prefer the recorded list; CLI override wins.
-    if args.ext is not None:
-        ext_arg = list(args.ext)
-    elif bc.get("extensions") is not None:
-        ext_arg = list(bc["extensions"])
-    else:
-        ext_arg = None
-    extensions = (
-        _DEFAULT_TEXT_EXTS
-        if not ext_arg
-        else frozenset(("." + e.lstrip(".")).lower() for e in ext_arg)
-    )
-
-    min_chars = int(bc.get("min_chars", 200))
-    max_chars = int(bc.get("max_chars", 3200))
-
-    print(f"[refresh] walking sources rooted at {source_root}")
-    files, skipped = _walk_sources(sources, source_root, extensions)
+    print(f"[refresh] walking sources rooted at {spec.source_root}")
+    files, skipped = _walk_sources(spec.source_paths, spec.source_root, spec.extensions)
     if skipped:
         reasons: dict[str, int] = {}
         for _, reason in skipped:
@@ -111,7 +89,7 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         print(f"[refresh] skipped {len(skipped)} files: "
               + ", ".join(f"{n} {r}" for r, n in sorted(reasons.items())))
 
-    candidates = incremental.chunk_files(files, min_chars, max_chars)
+    candidates = incremental.chunk_files(files, spec.min_chars, spec.max_chars)
     delta = incremental.bucketise(contents.registry, candidates)
 
     print(f"[refresh] delta: unchanged={delta.n_unchanged} "
@@ -256,8 +234,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
     # Fetch added + modified file bodies (unchanged files are not re-fetched
     # — their existing band rows stay verbatim, pivoting on stable passage_id).
     bc = contents.metadata.build_config
-    min_chars = int(bc.get("min_chars", 200))
-    max_chars = int(bc.get("max_chars", 3200))
+    min_chars = int(bc.get("min_chars", _DEFAULT_MIN_CHARS))
+    max_chars = int(bc.get("max_chars", _DEFAULT_MAX_CHARS))
     changed_paths = list(file_delta.added) + list(file_delta.modified)
     if changed_paths:
         print(f"[sync] fetching {len(changed_paths)} changed file(s) …")

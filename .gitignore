@@ -38,6 +38,11 @@ htmlcov/
 # Local scratch archives (large .rlat already covered by *.rlat below).
 _archive/
 
+# Bench / probe runtime artefacts. Bench result JSONs in benchmarks/results/
+# ARE tracked; only intermediate runtime state is excluded.
+logs/
+.rlat-snapshots/
+
 # Local machine state (accidentally written by infra scripts — not source)
 *known_hosts*
 *.ssh*

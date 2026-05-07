@@ -49,6 +49,12 @@ ANN search adds ~sub-millisecond. Cold start dominated by encoder load + tokeniz
 
 Evidence: round-trip + parity tests in `tests/harness/`; remote-mode end-to-end confirmed against a fixture HTTP server (the `incremental_sync` harness exercises build → sync-no-op → modify-upstream → sync-delta → catalog-mode-add → catalog-mode-remove → manifest-pin-advance, 5 guarantees, all hermetic). Remote manifest persists as `manifest.json` at the top of the ZIP. v2.0 reconciliation is read-only `rlat freshness` (CI gate) + `rlat sync` (incremental delta-apply on the same `store/incremental.py` pipeline as `rlat refresh`). The codex P0 manifest-only-sync mode is statically impossible — `apply_delta` requires the encoder, the only manifest-write path is `apply_delta`. Audit 07 is the design source of truth.
 
+### Live freshness (`rlat watch`)
+
+> **`rlat watch`** keeps a local-mode archive current as you edit, on the same `store/incremental.py` pipeline as `rlat refresh`. Default UX is silent. `--once` is a synchronous one-shot for CI / pre-commit. Concurrent FS events can't race the atomic write path; transient read failures don't become silent deletes.
+
+Evidence: `tests/harness/watch_loop.py` — 9 hermetic guarantees + 1 sanity check, all green. Specifically: (1) zero-arg auto-discovery of `*.rlat` in cwd, (2) single-event refresh updates the archive, (3) add+remove cycle reflects both, (4) per-archive `threading.Lock` serialises concurrent refreshes (closes the `<archive>.tmp` race), (5) bundled-mode preflight rejection with `rlat convert` hint, (6) optimised band re-projects through the watch path, (7) `--once` reconciles synchronously without waiting for events (the CI/pre-commit shape that the original event-waiting `--once` got wrong), (8) `force=True` dispatch on rename/delete/dir events bypasses the suffix pre-filter so `foo.md → foo.bak` doesn't leave stale passages indexed, (9) `_filter_skipped_removals` defends against the silent-delete hazard where Windows file locks during atomic save would otherwise make `bucketise` emit destructive removals for transiently unreadable files. Mental model in the implementation: events are hints to reconcile, not the unit of correctness — `bucketise` against the live source tree is the source of truth.
+
 ### Deep-search loop accuracy
 
 > **`rlat deep-search`** scores **92.2% answerable accuracy at 0% hallucination, $0.009/q** on the Microsoft Fabric corpus 11-lane v4 bench (63 questions, Sonnet 4.6, relaxed rubric).
@@ -201,11 +207,12 @@ Evidence: falsified 3 times in independent benchmarks (exp dominates log; collap
 
 - **`merge` doesn't carry source/ across bundled-mode inputs** in v2.0. Raises `NotImplementedError` if either input is bundled. Workaround: rebuild inputs in local mode before merging.
 - **`rlat refresh` for remote-mode KMs** prints a friendly error pointing at `rlat sync`. Refresh is the local-disk delta-apply path; sync is the remote delta-apply path. Both land on `store/incremental.py`.
+- **`rlat watch` for bundled / remote KMs** prints a friendly error pointing at `rlat convert` / `rlat sync` respectively. Watch is local-mode only — bundled is immutable post-build and remote sources are reconciled from upstream, not local FS edits.
 
 ### Optimised band
 
 - Optimised is corpus-specific. Doesn't transfer to OTHER corpora. Doesn't help cross-knowledge-model `compare`/`unique`/`intersect` (those use base band by design).
-- The optimised band re-projects from the new base on every `rlat refresh` and `rlat sync` — `optimised = (new_base @ W.T)` row-wise L2-normalised, sub-second for 50K passages, no LLM call, no GPU. The W matrix is preserved byte-identically (no retraining). Pass `--discard-optimised` to drop the band instead of re-projecting (rare).
+- The optimised band re-projects from the new base on every `rlat refresh`, `rlat sync`, and `rlat watch` fire — `optimised = (new_base @ W.T)` row-wise L2-normalised, sub-second for 50K passages, no LLM call, no GPU. The W matrix is preserved byte-identically (no retraining). Pass `--discard-optimised` (refresh / sync) to drop the band instead of re-projecting (rare).
 - Below ~1000 passages: the InfoNCE training early-kills at step 100 if dev R@1 < 0.2. You'll spend $14-21 on Haiku and get a band no better than base.
 
 ### Memory

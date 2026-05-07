@@ -178,12 +178,79 @@ def _check_rql_invariants(rng: np.random.Generator, failures: list[str]) -> None
             failures.append(f"merge_inflated: {n_kept} > {2 * n}")
 
 
+def _check_memory_v21_invariants(rng: np.random.Generator, failures: list[str]) -> None:
+    """P.1-P.6 from .claude/plans/fabric-agent-flat-memory.md §0.9 / §10.
+
+    P.2 (insertion-order independence) is the only one that requires a
+    fuzz harness — the other five are pinned as deterministic contracts
+    in their respective `memory_v21_*` suites. P.2 is verified here by
+    seeding the same row set in `_TRIALS` random orderings, confirming
+    `recall()` returns the same cosine-sorted hit list each time.
+    """
+    from resonance_lattice.memory._common import workspace_tag_for_cwd
+    from resonance_lattice.memory.recall import recall
+    from resonance_lattice.memory.store import Memory
+    from ._testutil import FixedEncoder, patch_zero_encoder
+
+    patch_zero_encoder()
+    cwd_tag = workspace_tag_for_cwd("/proj")
+    query_vec = np.zeros(_DIM, dtype=np.float32)
+    query_vec[0] = 1.0
+
+    for trial in range(_TRIALS):
+        # 8 rows with distinct cosines spaced > 0.05 (clears confidence
+        # gap); recurrence > 3 (clears recurrence gate); known cwd tag.
+        n = 8
+        cosines = np.linspace(0.95, 0.71, n).astype(np.float32)
+        embs = np.zeros((n, _DIM), dtype=np.float32)
+        embs[:, 0] = cosines
+        embs[:, 1] = np.sqrt(np.maximum(0.0, 1.0 - cosines ** 2))
+        rows_payload = [
+            {
+                "text": f"row {i}",
+                "polarity": ["factual", cwd_tag],
+                "transcript_hash": f"distilled:tx{i:04d}",
+                "embedding": embs[i],
+            }
+            for i in range(n)
+        ]
+
+        # Two random orderings → identical recall output.
+        order_a = list(range(n))
+        order_b = list(range(n))
+        rng.shuffle(order_a)
+        rng.shuffle(order_b)
+
+        cwd_hash = cwd_tag.removeprefix("workspace:")
+        with tempfile.TemporaryDirectory() as td_a, tempfile.TemporaryDirectory() as td_b:
+            mem_a = Memory(root=Path(td_a) / "u", encoder=FixedEncoder(query_vec))
+            mem_b = Memory(root=Path(td_b) / "u", encoder=FixedEncoder(query_vec))
+            for idx in order_a:
+                row_id = mem_a.add_row(**rows_payload[idx])
+                mem_a.update_row(row_id, recurrence_count=5)
+            for idx in order_b:
+                row_id = mem_b.add_row(**rows_payload[idx])
+                mem_b.update_row(row_id, recurrence_count=5)
+            hits_a = recall("anything", store=mem_a, cwd_hash=cwd_hash, top_k=n)
+            hits_b = recall("anything", store=mem_b, cwd_hash=cwd_hash, top_k=n)
+
+        cosines_a = [round(h.cosine, 6) for h in hits_a]
+        cosines_b = [round(h.cosine, 6) for h in hits_b]
+        if cosines_a != cosines_b:
+            failures.append(
+                f"P.2_recall_order_dependent (trial={trial}): "
+                f"{cosines_a} != {cosines_b}"
+            )
+            return  # one failure is enough
+
+
 def run() -> int:
     rng = np.random.default_rng(_SEED)
     failures: list[str] = []
     _check_field_algebra(rng, failures)
     _check_greedy_cluster_transitive(failures)
     _check_rql_invariants(rng, failures)
+    _check_memory_v21_invariants(rng, failures)
     if failures:
         for f in failures[:10]:
             print(f"[property] FAIL {f}")

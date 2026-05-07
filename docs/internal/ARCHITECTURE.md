@@ -79,6 +79,7 @@ Every subcommand is a thin orchestrator: load archive, pick band, retrieve, form
 | `rlat compare` | `compare.py` | Centroid cosine + asymmetric mutual coverage. Base band only. |
 | `rlat summary` | `summary.py` | Extractive primer (Landscape / Structure / Evidence). |
 | `rlat refresh` | `maintain.py` + `store/incremental.py` | Local-mode incremental delta-apply: walk source_paths → bucketise on stable passage_id → re-encode updated+added → preserve unchanged rows + re-project optimised band → atomic write. |
+| `rlat watch` | `watch.py` + `maintain.py` semantics + `watchdog` | Live, silent, self-discovering refresh loop on top of the same `incremental.apply_delta` pipeline. Per-archive `_DebouncedRefresher` + `threading.Lock` (closes the `<archive>.tmp` race that two concurrent refreshes would otherwise lose). Mental model: events are hints to reconcile, not the unit of correctness — every fire does a full source-tree walk + bucketise. `--once` is the synchronous CI / pre-commit shape (no observer, no event wait). Skipped-file preservation defends against transient read failures becoming silent deletes. Local mode only; bundled / remote rejected at preflight. Requires `[watch]` extra. |
 | `rlat sync` | `maintain.py` + `store/incremental.py` + `store/remote_index.py` | Remote-mode incremental delta-apply: `RemoteIndex.changed_files_since(pinned_ref)` → fetch deltas only → same `incremental.apply_delta` pipeline as refresh. Rewrites the in-archive `manifest.json` per-entry `sha256` and `metadata.build_config["pinned_ref"]` atomically with the band write (codex P0 correctness gate baked in: `apply_delta` requires the encoder by signature). |
 | `rlat convert` | `cli/convert.py` + `store/conversion.py` | Switch storage modes (bundled / local / remote) without rebuilding. `Store.fetch_all()` materialises bytes in the source mode; conversion validates per-passage `content_hash` against live bytes (drift abort if any mismatch); composes target-mode payload (`source/` zstd / `manifest.json` / disk files); rewrites metadata atomically. Bands + registry + projections + ANN preserved (`np.allclose` at 1e-6). Audit 08. |
 | `rlat freshness` | `maintain.py` + `store/remote.py` | Remote-mode read-only drift check: walks the manifest, downloads each entry, hashes it, reports per-entry status. CI-friendly gate before running sync. |
@@ -87,6 +88,8 @@ Shared helpers:
 
 - `cli/_load.py:load_or_exit(km_path)` — friendly archive read.
 - `cli/_load.py:open_store_or_exit(km_path, contents, source_root)` — friendly Store construction.
+- `cli/_load.py:load_build_spec(contents, *overrides)` — single owner of "read provenance from `build_config` (source_root / source_paths / extensions / min_chars / max_chars) with fallbacks + CLI overrides." Returns `BuildSpec` dataclass; used by `cmd_refresh` and `_preflight_archive` (watch).
+- `cli/build.py:_DEFAULT_MIN_CHARS` / `_DEFAULT_MAX_CHARS` — chunker bounds, single source of truth across build / refresh / sync / watch.
 - `cli/app.py` — `argparse` dispatch; each subcommand registers via its own `add_subparser(sub)`.
 
 ## Data flow

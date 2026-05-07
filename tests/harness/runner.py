@@ -59,6 +59,18 @@ SUITES: dict[str, str] = {
     "conversion": "tests.harness.conversion",
     "name_check": "tests.harness.name_check",
     "deep_search": "tests.harness.deep_search",
+    "watch_loop": "tests.harness.watch_loop",
+    "memory_v21_hook": "tests.harness.memory_v21_hook",
+    "memory_v21_privacy": "tests.harness.memory_v21_privacy",
+    "memory_v21_recall": "tests.harness.memory_v21_recall",
+    "memory_v21_workspace_scope": "tests.harness.memory_v21_workspace_scope",
+    "memory_v21_distil": "tests.harness.memory_v21_distil",
+    "memory_v21_corroborate": "tests.harness.memory_v21_corroborate",
+    "memory_v21_prompt_golden": "tests.harness.memory_v21_prompt_golden",
+    "memory_v21_daemon": "tests.harness.memory_v21_daemon",
+    "memory_v21_hook_inject": "tests.harness.memory_v21_hook_inject",
+    "memory_v21_retention": "tests.harness.memory_v21_retention",
+    "memory_v21_schema_compat": "tests.harness.memory_v21_schema_compat",
 }
 
 
@@ -96,10 +108,29 @@ def select(changed: Iterable[str]) -> set[str]:
             suites |= {"deep_search", "name_check"}
         if p.startswith("src/resonance_lattice/cli/deep_search"):
             suites |= {"deep_search", "doc_examples"}
+        if p.startswith("src/resonance_lattice/cli/watch"):
+            suites |= {"watch_loop", "doc_examples"}
         if p.startswith("src/resonance_lattice/memory/"):
-            suites |= {"memory_cycle", "doc_examples"}
+            # memory_cycle pins the v2.0 LayeredMemory contract (kept green
+            # during the deprecation window per §14.7); the v2.1 flat-memory
+            # store + redactor + capture + recall + distil layer is gated by
+            # memory_v21_*.
+            suites |= {
+                "memory_cycle", "doc_examples",
+                "memory_v21_hook", "memory_v21_privacy",
+                "memory_v21_recall", "memory_v21_workspace_scope",
+                "memory_v21_distil", "memory_v21_corroborate",
+                "memory_v21_prompt_golden", "memory_v21_daemon",
+                "memory_v21_hook_inject",
+                "memory_v21_retention", "memory_v21_schema_compat",
+            }
+        if p.startswith("src/resonance_lattice/cli/memory"):
+            suites |= {"memory_v21_hook", "doc_examples"}
         if p.startswith("src/resonance_lattice/rql/"):
             suites |= {"property"}
+        if p.startswith("src/resonance_lattice/field/text"):
+            # Sentence splitter is consumed by the chunker.
+            suites |= {"roundtrip"}
     return suites
 
 

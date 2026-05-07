@@ -29,6 +29,7 @@ from . import search as search_cmd
 from . import skill_context as skill_context_cmd
 from . import optimise as optimise_cmd
 from . import summary as summary_cmd
+from . import watch as watch_cmd
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     skill_context_cmd.add_subparser(sub)
     convert_cmd.add_subparser(sub)
     deep_search_cmd.add_subparser(sub)
+    watch_cmd.add_subparser(sub)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

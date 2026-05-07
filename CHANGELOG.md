@@ -3,6 +3,27 @@
 All notable changes to Resonance Lattice. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — `rlat watch`
+
+- **`rlat watch`** ships. Live, silent, self-discovering refresh loop on top of the Audit 07 incremental delta-apply pipeline. Zero-arg invocation auto-discovers `*.rlat` files in cwd and watches every recorded source root concurrently; explicit path overrides discovery. `--once` for CI / pre-commit; `--verbose` for per-refresh status lines. Default UX is silent — only errors and the startup + Ctrl-C summary are printed.
+- Per-archive `threading.Lock` serialises `apply_delta` calls so concurrent FS events can't race the `<archive>.tmp` write path.
+- `[watch]` extra in `pyproject.toml` (composes `[build]` + `watchdog>=4.0`); folded into `[all]`. Cross-platform FS event delivery via watchdog (inotify / FSEvents / ReadDirectoryChangesW).
+- Pre-flight rejection of bundled-mode (with `rlat convert` hint) and remote-mode (with `rlat sync` hint) archives at startup.
+- Path-prefix hygiene blocks `.git/`, `node_modules/`, `__pycache__/`, `.venv/` + 6 more known-noisy dirs.
+- Debounce default `1000ms` (override via `RLAT_WATCH_DEBOUNCE_MS`).
+- New harness suite [tests/harness/watch_loop.py](tests/harness/watch_loop.py): 9 contracts + a debounce-coalescing sanity check.
+- **CLI surface 15 → 16** (added `watch`).
+- Docs: `rlat watch` reference section in [docs/user/CLI.md](docs/user/CLI.md).
+
+### Fixed — `rlat watch` review pass
+
+- **`--once` was hanging in CI / pre-commit** despite docs claiming CI-friendliness — it waited for a future FS event before refreshing, and pre-commit hooks always run *after* the edit. Rewrote `--once` as a synchronous one-shot: walks every preflighted archive, runs `bucketise` + `apply_delta` against current disk state, exits. No observer, no event wait. Matches user mental model + actually works in pre-commit hooks.
+- **Renames / moves out of the watched suffix were leaving stale passages.** `foo.md → foo.bak` only fired `on_moved` with the dest path; the dest's suffix wasn't in `extensions`, the suffix pre-filter dropped it, the original `foo.md` passages stayed indexed forever. Added a `force` kwarg to the event dispatch that bypasses the suffix filter; move events now dispatch on **both** `src_path` and `dest_path`. Directory deletes also use `force=True` so the bucketise reconciliation can drop orphaned passages.
+- **Transient read failures could silently delete archive content.** Windows file locks during atomic save (or mid-write UTF-8 decode failures) make a real source file disappear from `_walk_sources`'s output, which would make `bucketise` emit a destructive removal for every passage of that file. Added `_filter_skipped_removals`: any removal whose `source_file` is in the post-walk `skipped` set gets demoted back to `unchanged`, with a stderr warning. The next FS event drives the next refresh that reconciles for real. The "events are hints to reconcile, not the unit of correctness" mental model is now baked into the implementation contract.
+- Three new harness contracts (7 / 8 / 9) cover --once with prior drift, force-dispatch bypass, and skip preservation.
+
 ## [2.0.0] — 2026-04-29
 
 The v2.0.0 rebuild collapses the v0.11 surface to an evidence-backed minimum.

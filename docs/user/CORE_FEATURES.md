@@ -57,7 +57,7 @@ Hallucinated citations are the failure mode that consequences hang on — legal 
 - **One command from clone to full context.** `rlat init-project` auto-detects `docs/`, `src/`, and top-level `*.md` / `*.rst` / `*.txt`, builds the knowledge model, generates a primer, and (optionally) writes a memory primer too. A new contributor — or your future self after weeks away — gets the assistant fully briefed in under a minute.
 - **Two primers, no duplication.** A *code primer* (`rlat summary`) captures what the project IS — landscape, file structure, evidence per topical query. A *memory primer* (`rlat memory primer`) captures how the work has unfolded — settled facts, in-flight items, recurring themes. They're queried independently so the assistant gets denser context per token.
 - **Targeted evidence sections.** `rlat summary --query "auth" --query "billing"` adds an Evidence block per query so a primer covers the topics you actually ask about, not just the corpus centroid.
-- **Stays current.** `rlat refresh` re-ingests local-mode knowledge models against the recorded source paths atomically; primers regenerate from the refreshed archive.
+- **Stays current — manually or live.** `rlat refresh` re-ingests local-mode knowledge models against the recorded source paths atomically. `rlat watch` runs the same refresh on every save (debounced, silent by default, auto-discovers `*.rlat` in cwd) so the archive stays fresh without you remembering to refresh after each edit. Primers regenerate from the refreshed archive.
 - **Works with any assistant.** Claude Code, Cursor, command-line LLMs, agents in any IDE — anywhere a project-context file gets loaded.
 
 ### Run
@@ -150,7 +150,7 @@ The assistant remembers across sessions without re-reading transcripts. Because 
 - **Single-file portability.** One `.rlat` packages embeddings, source coordinates, drift hashes, optional ANN index, and (in bundled mode) the source text itself. Copy it, version it, share it — it works anywhere Python 3.12+ runs.
 - **Three storage modes for three trust models.**
   - `bundled` — source text is zstd-framed inside the archive. Fully self-contained; ship it without the source files.
-  - `local` (default) — source text stays on disk; the archive resolves it via `--source-root`. No duplication; ideal when source is a git repo you already version.
+  - `local` (default) — source text stays on disk; the archive resolves it via `--source-root`. No duplication; ideal when source is a git repo you already version. `rlat watch` keeps the archive live as you edit (debounced refresh on every save, zero-arg auto-discovery).
   - `remote` — source text lives behind an HTTP base URL with SHA-pinned manifests. Read-only `rlat freshness` confirms upstream hasn't changed; `rlat sync` applies an incremental delta when it has (Audit 07 — same `store/incremental.py` pipeline as `rlat refresh`).
 - **Fully offline after first install.** `rlat install-encoder` downloads gte-modernbert-base once. After that, `build` / `search` / `optimise` need zero network access. Pair with a local LLM (Ollama, llama.cpp) for an end-to-end private stack.
 - **Field-only sharing.** Ship a `.rlat` containing `bands/base.npz` without `source/` — recipients see the semantic structure (and can search against it) without reading your raw text. Useful for publishing the structure of a private corpus.

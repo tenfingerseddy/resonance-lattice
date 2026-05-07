@@ -40,6 +40,13 @@ from ..store.metadata import BackboneInfo, BandInfo, Metadata
 from ..store.registry import PassageCoord, compute_id
 from ..store.remote import compose_manifest
 
+# Chunker bounds — recorded into `build_config` at build time and replayed
+# verbatim by `rlat refresh` / `rlat watch`. Centralised here so the four
+# call sites (CLI argparse defaults, refresh fallback, sync fallback,
+# watch fallback) read from one source of truth.
+_DEFAULT_MIN_CHARS = 200
+_DEFAULT_MAX_CHARS = 3200
+
 # Allowlist of source-text extensions. Conservative on purpose — a build
 # that silently ingests a 50 MB binary file would produce garbage embeddings
 # and waste compute. Users with non-listed extensions add explicit
@@ -322,10 +329,10 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
                    help="Knowledge-model kind tag (default: corpus)")
     p.add_argument("--source-root", default=None,
                    help="Root for source_file paths (default: common ancestor of sources)")
-    p.add_argument("--min-chars", type=int, default=200,
-                   help="Chunker min size (default: 200)")
-    p.add_argument("--max-chars", type=int, default=3200,
-                   help="Chunker max size (default: 3200)")
+    p.add_argument("--min-chars", type=int, default=_DEFAULT_MIN_CHARS,
+                   help=f"Chunker min size (default: {_DEFAULT_MIN_CHARS})")
+    p.add_argument("--max-chars", type=int, default=_DEFAULT_MAX_CHARS,
+                   help=f"Chunker max size (default: {_DEFAULT_MAX_CHARS})")
     p.add_argument("--batch-size", type=int, default=32,
                    help="Encoder batch size (default: 32)")
     p.add_argument("--runtime", default="auto",

@@ -2,7 +2,7 @@
 
 The canonical reference is [docs/user/CLI.md](../../../../docs/user/CLI.md) — every command, every flag, current to v2.0.
 
-The 16 SHIP commands at v2.0:
+The 16 SHIP commands (15 at v2.0 launch + `rlat watch` post-2.0):
 
 | Command | One-line |
 |---|---|
@@ -15,6 +15,7 @@ The 16 SHIP commands at v2.0:
 | `rlat compare` | Cross-knowledge-model comparison (always base band) |
 | `rlat summary` | Generate `.claude/resonance-context.md` primer |
 | `rlat refresh` | Incremental delta-apply (local mode) |
+| `rlat watch` | Live, silent, debounced `rlat refresh` on FS events (local mode); `--once` for CI / pre-commit |
 | `rlat sync` | Incremental delta-apply (remote mode) |
 | `rlat freshness` | Read-only drift check (remote mode) |
 | `rlat optimise` | Add MRL optimised band to a knowledge model (opt-in; requires API key) |
