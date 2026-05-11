@@ -71,6 +71,30 @@ SUITES: dict[str, str] = {
     "memory_v21_hook_inject": "tests.harness.memory_v21_hook_inject",
     "memory_v21_retention": "tests.harness.memory_v21_retention",
     "memory_v21_schema_compat": "tests.harness.memory_v21_schema_compat",
+    "memory_v22_schema": "tests.harness.memory_v22_schema",
+    "memory_v22_rerank": "tests.harness.memory_v22_rerank",
+    "memory_v22_intent_classify": "tests.harness.memory_v22_intent_classify",
+    "memory_v22_forget": "tests.harness.memory_v22_forget",
+    "memory_v22_distil_arrow1": "tests.harness.memory_v22_distil_arrow1",
+    "memory_v22_confidence": "tests.harness.memory_v22_confidence",
+    "memory_v22_what_next": "tests.harness.memory_v22_what_next",
+    "memory_v22_decompose": "tests.harness.memory_v22_decompose",
+    "memory_v22_distil_arrow2": "tests.harness.memory_v22_distil_arrow2",
+    "memory_v22_distil_arrow3": "tests.harness.memory_v22_distil_arrow3",
+    "memory_v22_api_key": "tests.harness.memory_v22_api_key",
+    "state_workspace": "tests.harness.state_workspace",
+    "state_intent": "tests.harness.state_intent",
+    "state_ledger": "tests.harness.state_ledger",
+    "state_hooks": "tests.harness.state_hooks",
+    "state_attribution": "tests.harness.state_attribution",
+    "state_eval": "tests.harness.state_eval",
+    "cli_intent_workspace": "tests.harness.cli_intent_workspace",
+    "cli_intent_durable": "tests.harness.cli_intent_durable",
+    "fabric_bootstrap": "tests.harness.fabric_bootstrap",
+    "fabric_client": "tests.harness.fabric_client",
+    "expertise_primer": "tests.harness.expertise_primer",
+    "memory_dedup": "tests.harness.memory_dedup",
+    "build_pipeline": "tests.harness.build_pipeline",
 }
 
 
@@ -89,7 +113,14 @@ def select(changed: Iterable[str]) -> set[str]:
                        "incremental_refresh", "incremental_sync",
                        "optimised_reproject", "conversion"}
         if p.startswith("src/resonance_lattice/optimise/"):
-            suites |= {"optimise_roundtrip", "band_parity", "optimised_reproject"}
+            suites |= {"optimise_roundtrip", "band_parity",
+                       "optimised_reproject", "memory_v22_api_key"}
+        if p.startswith("src/resonance_lattice/build/"):
+            # Pure-Python build/refresh pipeline; CLI + UDF both wrap it.
+            suites |= {"build_pipeline", "incremental_refresh", "watch_loop",
+                       "fabric_bootstrap"}
+        if p.startswith("src/resonance_lattice/cli/build"):
+            suites |= {"build_pipeline", "incremental_refresh"}
         if p.startswith("src/resonance_lattice/cli/maintain"):
             suites |= {"incremental_refresh", "incremental_sync", "optimised_reproject"}
         if p.startswith("src/resonance_lattice/cli/convert"):
@@ -123,11 +154,37 @@ def select(changed: Iterable[str]) -> set[str]:
                 "memory_v21_prompt_golden", "memory_v21_daemon",
                 "memory_v21_hook_inject",
                 "memory_v21_retention", "memory_v21_schema_compat",
+                "memory_v22_schema", "memory_v22_rerank",
+                "memory_v22_intent_classify",
+                "memory_v22_forget", "memory_v22_distil_arrow1",
+                "memory_v22_confidence", "memory_v22_what_next",
+                "memory_v22_decompose", "memory_v22_distil_arrow2",
+                "memory_v22_distil_arrow3", "memory_v22_api_key",
             }
         if p.startswith("src/resonance_lattice/cli/memory"):
             suites |= {"memory_v21_hook", "doc_examples"}
+        if p.startswith("src/resonance_lattice/state/"):
+            suites |= {
+                "state_workspace", "state_intent", "state_ledger",
+                "state_hooks", "state_attribution", "state_eval",
+                "cli_intent_workspace",
+            }
+        if p.startswith("src/resonance_lattice/cli/intent") or \
+           p.startswith("src/resonance_lattice/cli/workspace"):
+            suites |= {"cli_intent_workspace", "cli_intent_durable"}
         if p.startswith("src/resonance_lattice/rql/"):
             suites |= {"property"}
+        if p.startswith("src/resonance_lattice/fabric/"):
+            suites |= {"fabric_bootstrap"}
+        if p.startswith("src/resonance_lattice/expertise/") or \
+           p.startswith("src/resonance_lattice/cli/expertise"):
+            suites |= {"expertise_primer"}
+        if p.startswith("src/resonance_lattice/memory/dedup") or \
+           p.startswith("src/resonance_lattice/memory/capture"):
+            suites |= {"memory_dedup"}
+        if p.startswith("src/resonance_lattice/cli/_fabric") or \
+           p.startswith("src/resonance_lattice/cli/fabric"):
+            suites |= {"fabric_client"}
         if p.startswith("src/resonance_lattice/field/text"):
             # Sentence splitter is consumed by the chunker.
             suites |= {"roundtrip"}

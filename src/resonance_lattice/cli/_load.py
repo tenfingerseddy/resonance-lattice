@@ -51,7 +51,7 @@ class BuildSpec:
     `source_paths` and `extensions` come from the recorded provenance
     (`build_config.source_paths`, `build_config.extensions` — Audit 07).
     `min_chars` / `max_chars` fall back to the build-time defaults
-    (`_DEFAULT_MIN_CHARS` / `_DEFAULT_MAX_CHARS`) when an older archive
+    (`DEFAULT_MIN_CHARS` / `DEFAULT_MAX_CHARS`) when an older archive
     didn't record them. CLI overrides are applied by the caller via the
     keyword arguments of `load_build_spec`.
     """
@@ -75,10 +75,8 @@ def load_build_spec(
     Returns `None` if neither the override nor the recorded `source_root`
     is available — caller surfaces an actionable error and exits.
     """
-    # Lazy import to keep `cli/_load.py` decoupled from `cli/build.py` at
-    # module load time (build.py is the heavy entry point that pulls
-    # encoder constants on import).
-    from .build import _DEFAULT_MAX_CHARS, _DEFAULT_MIN_CHARS, _DEFAULT_TEXT_EXTS
+    from ..build.pipeline import DEFAULT_MAX_CHARS, DEFAULT_MIN_CHARS
+    from ..build.walker import DEFAULT_TEXT_EXTENSIONS
 
     bc = contents.metadata.build_config
     source_root_str = source_root_override or bc.get("source_root")
@@ -100,14 +98,14 @@ def load_build_spec(
     elif bc.get("extensions"):
         extensions = frozenset(bc["extensions"])
     else:
-        extensions = _DEFAULT_TEXT_EXTS
+        extensions = DEFAULT_TEXT_EXTENSIONS
 
     return BuildSpec(
         source_root=source_root,
         source_paths=sources,
         extensions=extensions,
-        min_chars=int(bc.get("min_chars", _DEFAULT_MIN_CHARS)),
-        max_chars=int(bc.get("max_chars", _DEFAULT_MAX_CHARS)),
+        min_chars=int(bc.get("min_chars", DEFAULT_MIN_CHARS)),
+        max_chars=int(bc.get("max_chars", DEFAULT_MAX_CHARS)),
     )
 
 

@@ -20,8 +20,11 @@ from . import build as build_cmd
 from . import compare as compare_cmd
 from . import convert as convert_cmd
 from . import deep_search as deep_search_cmd
+from . import expertise as expertise_cmd
+from . import fabric as fabric_cmd
 from . import init as init_cmd
 from . import install_encoder as install_encoder_cmd
+from . import intent as intent_cmd
 from . import maintain as maintain_cmd
 from . import memory as memory_cmd
 from . import profile as profile_cmd
@@ -30,9 +33,24 @@ from . import skill_context as skill_context_cmd
 from . import optimise as optimise_cmd
 from . import summary as summary_cmd
 from . import watch as watch_cmd
+from . import workspace as workspace_cmd
 
 
 def main(argv: list[str] | None = None) -> int:
+    # CLI output uses unicode (e.g. `→` in compare summaries, `≥` in
+    # banners). On Windows the default console codec is cp1252, which
+    # raises `UnicodeEncodeError` mid-print and aborts the command.
+    # Reconfigure stdout/stderr to UTF-8 so every subcommand renders
+    # cleanly regardless of host codec. No-op on terminals that already
+    # use UTF-8 (most POSIX shells, Windows Terminal with `chcp 65001`).
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass  # Detached / non-tty streams; leave alone.
+
     parser = argparse.ArgumentParser(prog="rlat")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -50,6 +68,10 @@ def main(argv: list[str] | None = None) -> int:
     convert_cmd.add_subparser(sub)
     deep_search_cmd.add_subparser(sub)
     watch_cmd.add_subparser(sub)
+    intent_cmd.add_subparser(sub)
+    workspace_cmd.add_subparser(sub)
+    fabric_cmd.add_subparser(sub)
+    expertise_cmd.add_subparser(sub)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

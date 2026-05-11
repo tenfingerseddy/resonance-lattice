@@ -6,8 +6,8 @@
 
 Both `refresh` and `sync` land on `store/incremental.apply_delta` — the
 only difference is the upstream-state source. Refresh walks the local
-filesystem (using `cli/build._walk_sources`); sync polls a `RemoteIndex`
-(see `store/remote_index.py`).
+filesystem (via `build.walker.FilesystemSourceWalker`); sync polls a
+`RemoteIndex` (see `store/remote_index.py`).
 
 The pipeline:
 
@@ -38,34 +38,27 @@ import json
 import sys
 from pathlib import Path
 
+from ..build.pipeline import (
+    DEFAULT_MAX_CHARS,
+    DEFAULT_MIN_CHARS,
+    RefreshError,
+    refresh_rlat,
+)
+from ..build.walker import FilesystemSourceWalker
 from ..config import StoreMode
 from ..field.encoder import Encoder
 from ..store import incremental, open_store
-from ..store.archive import read as archive_read
 from ..store.remote_index import HttpManifestIndex, RemoteDelta
-from .build import _DEFAULT_MAX_CHARS, _DEFAULT_MIN_CHARS, _walk_sources
+from .build import _print_skipped
 from ._load import load_build_spec, load_or_exit
 
 
 def cmd_refresh(args: argparse.Namespace) -> int:
     km_path = Path(args.knowledge_model)
+    # Pre-flight: read once for mode check + spec; refresh_rlat re-opens the
+    # archive itself (it owns the local-mode contract). Two reads is cheap
+    # vs duplicating mode/spec error handling across CLI + pipeline.
     contents = load_or_exit(km_path)
-    mode = StoreMode(contents.metadata.store_mode)
-    if mode is StoreMode.BUNDLED:
-        print(
-            "error: bundled-mode knowledge models are immutable post-build. "
-            "Re-run `rlat build` to produce a fresh archive.",
-            file=sys.stderr,
-        )
-        return 1
-    if mode is StoreMode.REMOTE:
-        print(
-            "error: `rlat refresh` is for local-mode archives. Use "
-            "`rlat sync` for remote-mode reconciliation.",
-            file=sys.stderr,
-        )
-        return 1
-
     spec = load_build_spec(
         contents,
         source_paths_override=args.source,
@@ -80,60 +73,39 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         )
         return 1
 
+    walker = FilesystemSourceWalker(
+        spec.source_paths, spec.source_root, spec.extensions,
+    )
     print(f"[refresh] walking sources rooted at {spec.source_root}")
-    files, skipped = _walk_sources(spec.source_paths, spec.source_root, spec.extensions)
-    if skipped:
-        reasons: dict[str, int] = {}
-        for _, reason in skipped:
-            reasons[reason] = reasons.get(reason, 0) + 1
-        print(f"[refresh] skipped {len(skipped)} files: "
-              + ", ".join(f"{n} {r}" for r, n in sorted(reasons.items())))
+    try:
+        result = refresh_rlat(
+            walker,
+            km_path,
+            runtime=getattr(args, "runtime", "auto"),
+            batch_size=args.batch_size,
+            min_chars=spec.min_chars,
+            max_chars=spec.max_chars,
+            discard_optimised=args.discard_optimised,
+            dry_run=args.dry_run,
+        )
+    except RefreshError as exc:
+        _print_skipped(walker, "refresh")
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
-    candidates = incremental.chunk_files(files, spec.min_chars, spec.max_chars)
-    delta = incremental.bucketise(contents.registry, candidates)
-
-    print(f"[refresh] delta: unchanged={delta.n_unchanged} "
-          f"updated={delta.n_updated} added={delta.n_added} "
-          f"removed={delta.n_removed}")
+    _print_skipped(walker, "refresh")
+    print(f"[refresh] delta: unchanged={result.n_unchanged} "
+          f"updated={result.n_changed} added={result.n_added} "
+          f"removed={result.n_deleted}")
 
     if args.dry_run:
         print(f"[refresh] --dry-run: no changes written")
         return 0
-
-    # Optimised-band warning (not abort): refresh now re-projects the
-    # optimised band from the new base for free, so there's no $14-21 +
-    # 30 min penalty. The --discard-optimised opt-out is preserved for
-    # users who specifically want a base-only archive afterwards.
-    re_project_optimised = "optimised" in contents.bands and not args.discard_optimised
-
-    if delta.is_empty:
-        if re_project_optimised:
-            # Even with an empty delta, the optimised band stays valid against
-            # the unchanged base. Skip the rewrite entirely — fast no-op.
-            print(f"[refresh] no changes; archive already up to date")
-            return 0
+    if result.is_noop:
         print(f"[refresh] no source changes; nothing to do")
         return 0
 
-    if "optimised" in contents.bands and args.discard_optimised:
-        # Strip the optimised band from contents in-place before apply_delta
-        # re-projects, so apply_delta sees a base-only archive.
-        contents.bands.pop("optimised", None)
-        contents.projections.pop("optimised", None)
-        contents.metadata.bands.pop("optimised", None)
-        contents.metadata.ann.pop("optimised", None)
-
-    n_re_encode = delta.n_re_encode
-    encoder = Encoder(runtime="torch")
-    if n_re_encode:
-        print(f"[refresh] re-encoding {n_re_encode} passage(s) "
-              f"(runtime={encoder.runtime_name}, batch={args.batch_size})")
-    result = incremental.apply_delta(
-        km_path, contents, delta,
-        encoder=encoder, batch_size=args.batch_size,
-    )
-
-    print(f"[refresh] wrote {result.archive_path} "
+    print(f"[refresh] wrote {result.output_path} "
           f"({result.n_passages} passages)")
     if result.re_projected_optimised:
         print(f"[refresh] optimised band re-projected from new base "
@@ -234,8 +206,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
     # Fetch added + modified file bodies (unchanged files are not re-fetched
     # — their existing band rows stay verbatim, pivoting on stable passage_id).
     bc = contents.metadata.build_config
-    min_chars = int(bc.get("min_chars", _DEFAULT_MIN_CHARS))
-    max_chars = int(bc.get("max_chars", _DEFAULT_MAX_CHARS))
+    min_chars = int(bc.get("min_chars", DEFAULT_MIN_CHARS))
+    max_chars = int(bc.get("max_chars", DEFAULT_MAX_CHARS))
     changed_paths = list(file_delta.added) + list(file_delta.modified)
     if changed_paths:
         print(f"[sync] fetching {len(changed_paths)} changed file(s) …")
@@ -313,7 +285,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         contents.metadata.bands.pop("optimised", None)
         contents.metadata.ann.pop("optimised", None)
 
-    encoder = Encoder(runtime="torch")
+    encoder = Encoder(runtime=getattr(args, "runtime", "auto"))
     if delta.n_re_encode:
         print(f"[sync] re-encoding {delta.n_re_encode} passage(s) "
               f"(runtime={encoder.runtime_name}, batch={args.batch_size})")

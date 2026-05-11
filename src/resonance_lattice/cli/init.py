@@ -29,7 +29,7 @@ from .summary import cmd_summary
 # Conservative on purpose — surprising the user with what got ingested is
 # worse than asking them to add `--source` for unconventional layouts.
 # Top-level dirs only; `rlat build` walks recursively so subdirs are covered
-# automatically. `_walk_sources` dedupes by relative posix path, so even if
+# automatically. `FilesystemSourceWalker` dedupes by relative posix path, so even if
 # a future entry overlaps (e.g. `docs/` and `docs/internal/`) double-
 # ingestion is structurally prevented.
 _AUTO_DIRS = ("docs", "src", "lib", "notebooks", "examples")

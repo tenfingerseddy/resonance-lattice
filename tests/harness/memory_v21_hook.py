@@ -38,6 +38,14 @@ Pins seven invariants (Sub-MVP slice of Appendix D row D.5 in
       user-error (1) from success (0). Verifies one representative of
       each across the §0.7 surface.
 
+  (j) Capture-time dedup: same `(text, workspace_tag)` from a different
+      session bumps the existing row's recurrence_count instead of
+      writing a new row. Different workspace with identical text produces
+      a new row — the workspace boundary is what tells two checkouts of
+      the same project apart. The architecture's recurrence_count tracks
+      events that recur across sessions, not duplicate captures of the
+      same content.
+
 Sub-MVP issue: #94. Hermetic — no live encoder, no LLM calls, no real
 network. Mocked encoder via the v2.0 `_testutil` pattern.
 """
@@ -136,6 +144,13 @@ def _check_fail_open() -> int:
     class _ExplodingStore:
         def __init__(self, exc: Exception) -> None:
             self.exc = exc
+
+        def read_all(self):
+            # Capture's same-text dedup probe runs BEFORE add_row; this
+            # stub returns no rows so the dedup miss path falls through
+            # to the explosive add_row, which is what the test exercises.
+            import numpy as np
+            return [], np.zeros((0, 768), dtype=np.float32)
 
         def add_row(self, **kwargs: object) -> str:
             raise self.exc
@@ -337,7 +352,9 @@ def _check_exit_codes() -> int:
                   file=sys.stderr)
             return 1
 
-        for name in ["consolidate", "primer"]:
+        # `consolidate` reclaimed in v2.2 for the agent-harness session-end
+        # pass (distil → confidence → forget); `primer` remains deprecated.
+        for name in ["primer"]:
             rc, _, err = _run_cli(common + [name])
             if rc != 2:
                 print(f"[memory_v21_hook] FAIL (i): `{name}` rc={rc} "
@@ -444,6 +461,86 @@ def _check_exit_codes() -> int:
 # ---------------------------------------------------------------------------
 
 
+def _check_capture_dedup() -> int:
+    """(j) Same `(text, workspace)` capture bumps recurrence_count instead
+    of writing a new row. Different workspace → new row, even with
+    identical text. The architecture's `recurrence_count` is meant to
+    grow when an event recurs across sessions, not when the same content
+    is captured to disk N times."""
+    from resonance_lattice.memory.capture import (
+        capture, GateConfig, Message, ToolCall, Transcript,
+    )
+    from resonance_lattice.memory.redaction import Redactor
+    from resonance_lattice.memory.store import Memory
+
+    def _transcript(session_id: str, cwd: str) -> Transcript:
+        return Transcript(
+            session_id=session_id,
+            messages=[
+                Message("user", "diagnose the failing test please look at recent commits"),
+                Message(
+                    "assistant",
+                    "the failing test is a regression in the encoder cache; "
+                    "the fix is to bump CACHE_VERSION in field/encoder.py" + " " * 100,
+                    tool_calls=(ToolCall("Read", "/proj/src/encoder.py", ""),),
+                ),
+            ],
+            cwd=cwd,
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        memory = Memory(root=Path(td) / "u")
+        redactor = Redactor()
+        gate = GateConfig(require_tool_use=True, min_assistant_chars=200)
+
+        # First capture from session A in workspace P
+        r1 = capture(_transcript("sess-A", "/proj-P"),
+                     store=memory, redactor=redactor, gate=gate)
+        if not r1.row_id:
+            print(f"[memory_v21_hook] FAIL (j): first capture skipped: "
+                  f"{r1.skip_reason!r}", file=sys.stderr)
+            return 1
+
+        # Second capture from a DIFFERENT session but same text + same workspace
+        r2 = capture(_transcript("sess-B", "/proj-P"),
+                     store=memory, redactor=redactor, gate=gate)
+        if r2.row_id != r1.row_id:
+            print(f"[memory_v21_hook] FAIL (j): same-text-same-workspace "
+                  f"dedup failed; got new row_id {r2.row_id} "
+                  f"vs existing {r1.row_id}", file=sys.stderr)
+            return 1
+
+        rows, _ = memory.read_all()
+        if len(rows) != 1:
+            print(f"[memory_v21_hook] FAIL (j): expected 1 row after dedup, "
+                  f"got {len(rows)}", file=sys.stderr)
+            return 1
+        if rows[0].recurrence_count != 2:
+            print(f"[memory_v21_hook] FAIL (j): expected recurrence_count=2 "
+                  f"after second capture, got {rows[0].recurrence_count}",
+                  file=sys.stderr)
+            return 1
+
+        # Third capture: same text, DIFFERENT workspace → new row
+        r3 = capture(_transcript("sess-C", "/proj-Q"),
+                     store=memory, redactor=redactor, gate=gate)
+        if r3.row_id == r1.row_id:
+            print(f"[memory_v21_hook] FAIL (j): different-workspace capture "
+                  f"deduped onto workspace-P row {r1.row_id}",
+                  file=sys.stderr)
+            return 1
+
+        rows, _ = memory.read_all()
+        if len(rows) != 2:
+            print(f"[memory_v21_hook] FAIL (j): expected 2 rows after "
+                  f"different-workspace capture, got {len(rows)}",
+                  file=sys.stderr)
+            return 1
+    print("[memory_v21_hook] (j) capture dedup bumps recurrence_count + "
+          "respects workspace boundary OK", file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     patch_zero_encoder()
     for check in [
@@ -453,6 +550,7 @@ def run() -> int:
         _check_scope_tag_default,
         _check_root_user_composition,
         _check_exit_codes,
+        _check_capture_dedup,
     ]:
         rc = check()
         if rc != 0:

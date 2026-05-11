@@ -96,11 +96,25 @@ class ZeroEncoder:
     suite has run in the same `--all` sweep.
     """
 
+    # `cmd_build` reads `encoder.revision` + `encoder.runtime_name` when
+    # stamping build metadata — must be present so `--all` sweeps (where a
+    # memory_v21 suite has rebound the symbol globally before an
+    # incremental_* / optimise / arrow suite calls `cmd_build`) don't
+    # AttributeError.
+    revision = "zero-encoder-test"
+    runtime_name = "zero-encoder-test"
+
     def __init__(self, *args, **kwargs):
         pass
 
     def encode(self, texts: list[str]) -> np.ndarray:
         return np.zeros((len(texts), 768), dtype="float32")
+
+    def encode_batched(self, texts: list[str], batch_size: int = 0) -> np.ndarray:
+        # Real `Encoder.encode_batched` was lifted in simplify-3 commit
+        # 38d18d64; the fake fixture must mirror the surface for the same
+        # cross-suite reason as `revision` above.
+        return self.encode(texts)
 
 
 class FixedEncoder:
@@ -235,6 +249,22 @@ def run_cli(argv: list[str], *, stdin_text: str | None = None) -> tuple[int, str
          contextlib.redirect_stderr(err):
         rc = main(argv)
     return rc, out.getvalue(), err.getvalue()
+
+
+def check_guarantee(ok: bool, label: str, prefix: str) -> bool:
+    """Print PASS/FAIL banner for a single harness guarantee.
+
+    Returns the boolean unchanged so the caller can fold it into a
+    failure counter (`failures += not check_guarantee(...)`). `prefix`
+    is the suite name (e.g. "fabric_bootstrap") so a multi-suite log
+    stays attributable.
+    """
+    import sys
+    if not ok:
+        print(f"[{prefix}] FAIL {label}", file=sys.stderr)
+        return False
+    print(f"[{prefix}] {label} OK", file=sys.stderr)
+    return True
 
 
 def patch_zero_encoder() -> None:

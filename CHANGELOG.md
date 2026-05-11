@@ -5,6 +5,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Microsoft Fabric UDF integration
+
+- **Host a `.rlat` on Microsoft Fabric**, query it from anywhere with `rlat search fabric://<alias>[/<km>] "..."`. The maintainer publishes one User Data Function bound to a Lakehouse holding `Files/rlat/<km>.rlat`; team members run `rlat fabric add <alias>=<udf-url>` once and query through the existing `rlat search` surface. Single hosted copy, no per-user `.rlat` download, no encoder install on each machine.
+- **Server-side runtime helpers** at `src/resonance_lattice/fabric/`: `_runtime.bootstrap()` (mtime cache-bust + LRU(8) over `(kmName, OneLake last_modified)` so a re-uploaded `.rlat` propagates within one warm call), `lakehouse_loader` (DataLake reads), `hf_loader` (HuggingFace revision-pinned encoder fetch).
+- **UDF template** at `fabric/udf/` — `function_app.py` + `requirements.txt` + publish recipe README. Two endpoints: `search(kmName, query, ...)` and `list_kms()` for discovery.
+- **Client URL dispatch** — `rlat search` accepts `fabric://<alias>[/<km>]`. `fabric://<alias>` (no km) hits the discovery endpoint and lists available KMs; `fabric://<alias>/<km>` runs single-shot retrieval via the same `--top-k` / `--format` / `--mode` / `--verified-only` flags.
+- **`rlat fabric add | list | remove`** subcommand — alias storage at `~/.config/rlat/fabric.toml`, plus a per-cwd skill scaffold at `.claude/skills/rlat-fabric-search/SKILL.md` so Claude Code's skill list reflects the registered alias set.
+- **Auth** — Microsoft Entra device-code flow by default (URL + code printed to stderr; Claude Code surfaces it through Bash tool stdout, the user completes the browser sign-in inline). Service-principal env-var fallback (`AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID`) for silent CI / shared-machine setups. Token cache via msal-extensions to OS keyring (`rlat-fabric` cache name).
+- **`[fabric]` extra** in `pyproject.toml` — `azure-identity>=1.15`, `azure-storage-file-datalake>=12.14`. `requires-python` relaxed from `>=3.12` to `>=3.11` (Fabric UDFs run 3.11.9 only); ruff + pyright targets adjusted accordingly.
+- **CLI surface 16 → 17** (added `fabric` subcommand).
+- New harness suites: [tests/harness/fabric_bootstrap.py](tests/harness/fabric_bootstrap.py) (7 server-side guarantees: cold/warm bootstrap, mtime drift, LRU(8) cap, list_kms_for, missing-rlat error, blank-revision error) and [tests/harness/fabric_client.py](tests/harness/fabric_client.py) (10 client-side guarantees against a fake `http.server` UDF: URL parse, search/list_kms dispatch, unknown alias, HTTPError surfacing, `rlat fabric add/list/remove` round-trip, SP env detection, missing `azure-identity`).
+- Docs: end-to-end walkthrough at [docs/user/FABRIC.md](docs/user/FABRIC.md); "Hosted (Fabric UDF)" section in [STORAGE_MODES.md](docs/user/STORAGE_MODES.md); `fabric://` URL form + `rlat fabric` reference in [CLI.md](docs/user/CLI.md).
+
 ### Added — `rlat watch`
 
 - **`rlat watch`** ships. Live, silent, self-discovering refresh loop on top of the Audit 07 incremental delta-apply pipeline. Zero-arg invocation auto-discovers `*.rlat` files in cwd and watches every recorded source root concurrently; explicit path overrides discovery. `--once` for CI / pre-commit; `--verbose` for per-refresh status lines. Default UX is silent — only errors and the startup + Ctrl-C summary are printed.

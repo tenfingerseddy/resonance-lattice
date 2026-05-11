@@ -28,17 +28,16 @@ from ..memory.store import (
     Memory,
     path_for_user,
 )
+from ._errors import EXIT_OK, EXIT_USER_ERROR, user_error as _user_error
 
 DEFAULT_PRIMARY_POLARITY = "factual"
 PRIMARY_CHOICES: list[str] = sorted(PRIMARY_POLARITY)
 
 # Exit codes:
-#   0 — success
-#   1 — user input error (bad polarity, empty text, unknown row id)
+#   0 — success (EXIT_OK, imported)
+#   1 — user input error (EXIT_USER_ERROR, imported)
 #   2 — deprecated subcommand: removed permanently in v2.1
 #   3 — pending: subcommand ships in MVP, body not yet implemented
-EXIT_OK = 0
-EXIT_USER_ERROR = 1
 EXIT_DEPRECATED = 2
 EXIT_PENDING_MVP = 3
 
@@ -46,6 +45,21 @@ EXIT_PENDING_MVP = 3
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _parse_iso_strict(value: str) -> _dt.datetime:
+    """Strict ISO-8601 parser for user-supplied flag values.
+
+    Naïve timestamps are treated as UTC. Unparseable input raises
+    `ValueError` so the caller can surface a usage error — the tolerant
+    `memory._common.parse_iso_utc` falls back to "now", which is wrong
+    for an explicit operator-supplied window.
+    """
+    cleaned = value.replace("Z", "+00:00") if value.endswith("Z") else value
+    parsed = _dt.datetime.fromisoformat(cleaned)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+    return parsed
 
 
 def _open_memory(args: argparse.Namespace) -> Memory:
@@ -64,17 +78,6 @@ def _open_memory(args: argparse.Namespace) -> Memory:
 def _print_banner(message: str, *, code: int) -> int:
     print(message, file=sys.stderr)
     return code
-
-
-def _user_error(msg: str) -> int:
-    """Print `error: <msg>` to stderr and return EXIT_USER_ERROR.
-
-    Centralised so all `rlat memory` subcommands surface user-facing
-    errors with the same prefix and exit code (memory_v21_hook (i)
-    rc=1 contract).
-    """
-    print(f"error: {msg}", file=sys.stderr)
-    return EXIT_USER_ERROR
 
 
 def _deprecation_banner(old: str, replacement: str) -> int:
@@ -308,6 +311,287 @@ def cmd_memory_hook(args: argparse.Namespace) -> int:
     return run_hook(user_id=args.user, memory_root_base=base)
 
 
+def cmd_memory_eval(args: argparse.Namespace) -> int:
+    """`rlat memory eval` — print the longitudinal scorecard.
+
+    Three modes:
+      latest    — print the scorecard for the most recent window (default)
+      compare   — split N day-windows into early + late and print the
+                  pass/fail comparison
+      json      — emit JSON for downstream tooling
+    """
+    import json as _json
+
+    from ..state import (
+        OutcomeLedger,
+        RecallCache,
+        WindowSpec,
+        aggregate_windows,
+        compute_session_scorecard,
+        daily_windows,
+        render_comparison,
+        render_summary,
+        resolve_workspace,
+        scorecard_to_dict,
+        state_root_for,
+    )
+
+    cwd = Path(args.cwd) if args.cwd else Path.cwd()
+    identity = resolve_workspace(cwd)
+    state_root = state_root_for(identity.root)
+    memory = _open_memory(args)
+
+    # Read ledger + cache + memory depth once and reuse across all
+    # windows — without this, default `--sessions=20` would do 40 full
+    # JSONL parses where 2 + filtering does the same work.
+    outcomes = list(OutcomeLedger(state_root).iter_records())
+    recalls = RecallCache(state_root).read_recent(limit=None)
+    rows, _ = memory.read_all()
+    memory_depth: dict[str, int] = {}
+    for row in rows:
+        memory_depth[row.level] = memory_depth.get(row.level, 0) + 1
+
+    if args.since is not None or args.until is not None:
+        # Explicit window overrides the daily-window default. Must be
+        # paired; --compare needs ≥2 windows so it's incompatible here.
+        if args.since is None or args.until is None:
+            print(
+                "error: --since and --until must be supplied together",
+                file=sys.stderr,
+            )
+            return EXIT_USER_ERROR
+        try:
+            since_dt = _parse_iso_strict(args.since)
+            until_dt = _parse_iso_strict(args.until)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USER_ERROR
+        if since_dt >= until_dt:
+            print(
+                "error: --since must be strictly earlier than --until",
+                file=sys.stderr,
+            )
+            return EXIT_USER_ERROR
+        if args.compare:
+            print(
+                "error: --compare requires multiple windows; "
+                "drop --since/--until or remove --compare",
+                file=sys.stderr,
+            )
+            return EXIT_USER_ERROR
+        windows = [WindowSpec(
+            since=since_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            until=until_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            label=since_dt.strftime("explicit-%Y-%m-%d"),
+        )]
+    else:
+        windows = daily_windows(
+            n_sessions=args.sessions, state_root=state_root,
+        )
+    scorecards = [
+        compute_session_scorecard(
+            state_root, memory=memory, window=w,
+            outcomes=outcomes, recalls=recalls, memory_depth=memory_depth,
+        )
+        for w in windows
+    ]
+
+    if args.compare:
+        early_n = max(1, args.sessions // 4)
+        late_n = max(1, args.sessions // 4)
+        comparison = aggregate_windows(
+            scorecards,
+            early=(0, early_n),
+            late=(args.sessions - late_n, args.sessions),
+        )
+        if args.json:
+            print(_json.dumps({
+                "early": scorecard_to_dict(comparison.early),
+                "late": scorecard_to_dict(comparison.late),
+                "useful_passed": comparison.useful_passed,
+                "effortless_passed": comparison.effortless_passed,
+                "benchmark_passed": comparison.benchmark_passed,
+            }, indent=2))
+        else:
+            print(render_comparison(comparison))
+        return EXIT_OK
+
+    latest = scorecards[-1]
+    if args.json:
+        print(_json.dumps(scorecard_to_dict(latest), indent=2))
+    else:
+        print(render_summary(latest))
+    return EXIT_OK
+
+
+def cmd_memory_rollup(args: argparse.Namespace) -> int:
+    """`rlat memory rollup` — weekly digest: this week vs prior week.
+
+    The operational measurement of the manifesto's falsifiable claim:
+    "the harness gets measurably better at session N+1 than at N."
+    Aggregates the trailing 7 days vs the 7 days before that, prints
+    the same useful/effortless PASS/FAIL the cumulative-window
+    `--compare` mode prints — but anchored on absolute time so
+    regressions surface the week they land. Pair with `rlat freshness`
+    so cartridge staleness can't quietly drag the numbers.
+
+    `--weeks N` extends the comparison: with N=4, the early window
+    aggregates the first 2 weeks and the late window aggregates the
+    last 2 weeks. Default N=2 is the "this week vs last week" case.
+    """
+    from ..state import (
+        OutcomeLedger,
+        RecallCache,
+        aggregate_windows,
+        compute_session_scorecard,
+        render_comparison,
+        resolve_workspace,
+        scorecard_to_dict,
+        state_root_for,
+        weekly_windows,
+    )
+
+    cwd = Path(args.cwd) if args.cwd else Path.cwd()
+    identity = resolve_workspace(cwd)
+    state_root = state_root_for(identity.root)
+    memory = _open_memory(args)
+
+    if args.weeks < 2:
+        return _user_error(
+            f"--weeks must be ≥2 to compare; got {args.weeks}"
+        )
+
+    outcomes = list(OutcomeLedger(state_root).iter_records())
+    recalls = RecallCache(state_root).read_recent(limit=None)
+    rows, _ = memory.read_all()
+    memory_depth: dict[str, int] = {}
+    for row in rows:
+        memory_depth[row.level] = memory_depth.get(row.level, 0) + 1
+
+    windows = weekly_windows(n_weeks=args.weeks)
+    scorecards = [
+        compute_session_scorecard(
+            state_root, memory=memory, window=w,
+            outcomes=outcomes, recalls=recalls, memory_depth=memory_depth,
+        )
+        for w in windows
+    ]
+    # For N=2, compare prev_week (early=[0:1]) vs current_week (late=[1:2]).
+    # For N=4, compare first half (early=[0:2]) vs last half (late=[2:4]).
+    half = args.weeks // 2
+    comparison = aggregate_windows(
+        scorecards, early=(0, half), late=(args.weeks - half, args.weeks),
+    )
+    if args.json:
+        print(json.dumps({
+            "early": scorecard_to_dict(comparison.early),
+            "late": scorecard_to_dict(comparison.late),
+            "useful_passed": comparison.useful_passed,
+            "effortless_passed": comparison.effortless_passed,
+            "benchmark_passed": comparison.benchmark_passed,
+        }, indent=2))
+    else:
+        print(render_comparison(comparison))
+    return EXIT_OK
+
+
+def cmd_memory_dedup(args: argparse.Namespace) -> int:
+    """`rlat memory dedup` — retroactive same-text-same-workspace collapse.
+
+    Capture-time dedup (commit 46b74013) prevents new duplicates from
+    accumulating. Memory written before that fix still carries N copies
+    of every recurring captured event. This pass groups event rows by
+    `(text, workspace_tag)`, keeps the oldest of each group with
+    `recurrence_count` set to the cluster total, and deletes the rest.
+
+    Idempotent. `--dry-run` reports what would change without touching disk.
+    """
+    from ..memory.dedup import dedup_event_rows
+
+    memory = _open_memory(args)
+    result = dedup_event_rows(memory, dry_run=args.dry_run)
+    verb = "would collapse" if args.dry_run else "collapsed"
+    print(
+        f"[rlat memory] dedup: {verb} {result.rows_collapsed} row(s) into "
+        f"{result.groups_collapsed} group(s); {result.rows_examined} event "
+        f"rows examined"
+    )
+    return EXIT_OK
+
+
+def cmd_memory_session_mark(args: argparse.Namespace) -> int:
+    """`rlat memory session-mark` — record a session boundary timestamp.
+
+    Appends one row to `<state-root>/ledger/sessions.jsonl`. When markers
+    exist, `rlat memory eval` slices windows by session id instead of
+    calendar day. Sessions that span midnight stay coherent; multiple
+    sessions in one day each get their own scorecard.
+    """
+    from ..state import (
+        SessionMarkerLog,
+        resolve_workspace,
+        state_root_for,
+    )
+
+    cwd = Path(args.cwd) if args.cwd else Path.cwd()
+    identity = resolve_workspace(cwd)
+    state_root = state_root_for(identity.root)
+    marker = SessionMarkerLog(state_root).write()
+    print(
+        f"[rlat memory] session-mark {marker.session_id} at {marker.timestamp}",
+        file=sys.stderr,
+    )
+    return EXIT_OK
+
+
+def cmd_memory_consolidate(args: argparse.Namespace) -> int:
+    """`rlat memory consolidate` — run the session-end pass.
+
+    Sequences distil Arrow 1 + Arrow 2 (LLM-driven; skipped when no API
+    key OR `--no-llm`) → confidence raising → forget. Reports a one-line
+    summary per stage so the user sees what happened.
+
+    `--dry-run` runs every stage but skips every write; the per-stage
+    counts then describe what *would* have changed.
+    """
+    from ..memory.session_end_pass import consolidation_pass
+    from ..state import resolve_workspace, state_root_for
+
+    cwd = Path(args.cwd) if args.cwd else Path.cwd()
+    identity = resolve_workspace(cwd)
+    state_root = state_root_for(identity.root)
+    memory = _open_memory(args)
+    llm = None
+    if not args.no_llm:
+        from .intent import _maybe_llm_client
+        llm = _maybe_llm_client()
+    result = consolidation_pass(
+        memory, llm=llm, state_root=state_root, cwd=str(cwd),
+        dry_run=args.dry_run,
+    )
+    promoted_verb = "would promote" if args.dry_run else "promoted"
+    rejected_verb = "would reject" if args.dry_run else "rejected"
+    def _arrow_line(name: str, result_obj) -> str:
+        if result_obj is None:
+            return f"{name}: skipped (no LLM)"
+        return (
+            f"{name}: {len(result_obj.promoted_row_ids)} {promoted_verb}, "
+            f"{len(result_obj.rejections)} {rejected_verb}"
+        )
+
+    if args.dry_run:
+        print("[rlat memory] --dry-run: pipeline ran, no writes",
+              file=sys.stderr)
+    print(_arrow_line("arrow1", result.arrow1))
+    print(_arrow_line("arrow2", result.arrow2))
+    print(_arrow_line("arrow3", result.arrow3))
+    confidence_verb = "would change" if args.dry_run else "change(s)"
+    forget_verb = "would drop" if args.dry_run else "dropped"
+    print(f"confidence: {len(result.confidence_changes)} {confidence_verb}")
+    print(f"forget: {result.forget_dropped} {forget_verb}")
+    return EXIT_OK
+
+
 def cmd_memory_capture(args: argparse.Namespace) -> int:
     """`rlat memory capture` — SessionEnd-hook entry point.
 
@@ -449,9 +733,11 @@ def cmd_memory_gc(args: argparse.Namespace) -> int:
 _PENDING_MVP_SUBCOMMANDS: tuple[str, ...] = (
     "distil", "feedback",
 )
-# `(removed_name, v2.1 successor or guidance)`.
+# `(removed_name, v2.1 successor or guidance)`. v2.2 reclaims `consolidate`
+# for the agent-harness session-end pass (distil → confidence → forget) —
+# the v0.11 `consolidate` redirect to `distil` shipped through v2.0/v2.1
+# and is removed here.
 _DEPRECATED_SUBCOMMANDS: tuple[tuple[str, str], ...] = (
-    ("consolidate", "rlat memory distil"),
     ("primer",
      "the per-prompt UserPromptSubmit hook (no static primer in v2.1; see §17.3)"),
 )
@@ -556,6 +842,98 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
              "settings.json `hooks.SessionEnd`.",
     )
     p_capture.set_defaults(func=cmd_memory_capture)
+
+    p_eval = sub_mem.add_parser(
+        "eval",
+        help="Compute the longitudinal scorecard (useful + effortless "
+             "axes from the agent-harness manifesto's benchmark).",
+    )
+    p_eval.add_argument(
+        "--cwd", help="override workspace cwd (defaults to $PWD)",
+    )
+    p_eval.add_argument(
+        "--sessions", type=int, default=20,
+        help="number of day-windows to consider (default: 20)",
+    )
+    p_eval.add_argument(
+        "--since",
+        help="ISO-8601 start of an explicit window (UTC if naïve); "
+             "must be paired with --until and overrides --sessions",
+    )
+    p_eval.add_argument(
+        "--until",
+        help="ISO-8601 end of an explicit window (UTC if naïve); "
+             "must be paired with --since",
+    )
+    p_eval.add_argument(
+        "--compare", action="store_true",
+        help="aggregate first N/4 vs last N/4 windows; print pass/fail",
+    )
+    p_eval.add_argument(
+        "--json", action="store_true",
+        help="emit JSON instead of human-readable text",
+    )
+    p_eval.set_defaults(func=cmd_memory_eval)
+
+    p_session_mark = sub_mem.add_parser(
+        "session-mark",
+        help="Record a session boundary in <state-root>/ledger/sessions.jsonl. "
+             "When markers exist, `memory eval` slices by session_id instead "
+             "of calendar day.",
+    )
+    p_session_mark.add_argument(
+        "--cwd", help="override workspace cwd (defaults to $PWD)",
+    )
+    p_session_mark.set_defaults(func=cmd_memory_session_mark)
+
+    p_rollup = sub_mem.add_parser(
+        "rollup",
+        help="Weekly digest: this-week-vs-prior-week comparison on the "
+             "manifesto's useful + effortless axes. Operational PASS/FAIL "
+             "anchored on absolute time so regressions surface promptly.",
+    )
+    p_rollup.add_argument(
+        "--weeks", type=int, default=2,
+        help="number of trailing weeks; first half vs second half is the "
+             "comparison (default: 2 → prior-week vs this-week; min: 2)",
+    )
+    p_rollup.add_argument(
+        "--json", action="store_true",
+        help="emit JSON {early, late, *_passed} instead of the text view",
+    )
+    p_rollup.add_argument(
+        "--cwd", help="override workspace cwd (defaults to $PWD)",
+    )
+    p_rollup.set_defaults(func=cmd_memory_rollup)
+
+    p_dedup = sub_mem.add_parser(
+        "dedup",
+        help="Retroactively collapse same-text-same-workspace event rows. "
+             "Idempotent — safe to re-run.",
+    )
+    p_dedup.add_argument(
+        "--dry-run", action="store_true",
+        help="report what would collapse; do not touch disk",
+    )
+    p_dedup.set_defaults(func=cmd_memory_dedup)
+
+    p_consolidate = sub_mem.add_parser(
+        "consolidate",
+        help="Run the per-session-end consolidation pass: distil arrows "
+             "(events → patterns → learnings) → confidence raise → forget.",
+    )
+    p_consolidate.add_argument(
+        "--cwd", help="override workspace cwd (defaults to $PWD)",
+    )
+    p_consolidate.add_argument(
+        "--no-llm", action="store_true",
+        help="skip distil arrows; run only confidence raise + forget",
+    )
+    p_consolidate.add_argument(
+        "--dry-run", action="store_true",
+        help="run the pipeline but skip every write; report what would change",
+    )
+    p_consolidate.set_defaults(func=cmd_memory_consolidate)
 
     p_migrate = sub_mem.add_parser(
         "migrate",

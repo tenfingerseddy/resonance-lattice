@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Sequence
 
-from ._common import stable_hash, workspace_tag_for_cwd
+from ._common import stable_hash, utcnow_iso, workspace_tag_for_cwd
 from .redaction import RedactionEvent, Redactor
 from .store import Memory
 
@@ -177,6 +177,26 @@ def _scrub_transcript(
     return "\n\n".join(pieces).strip(), events_buffer
 
 
+def _find_dup_row(store: Memory, *, text: str, workspace_tag: str):
+    """Return the existing event row matching `(text, workspace_tag)` or None.
+
+    Same-workspace check matters: identical text from two different repos
+    (e.g. two checkouts of the same project) is genuinely two events; the
+    workspace tag is what tells them apart. Only event-level rows are
+    eligible — a captured row is always written at level=event, and we
+    don't want to bump recurrence on a promoted pattern from below.
+    """
+    rows, _ = store.read_all()
+    for r in rows:
+        if r.level != "event":
+            continue
+        if r.text != text:
+            continue
+        if workspace_tag in r.polarity:
+            return r
+    return None
+
+
 def capture(
     transcript: Transcript,
     *,
@@ -223,12 +243,30 @@ def capture(
             # whatever falls past 8192 tokens.
             text = text[:_MAX_CAPTURED_CHARS]
 
-        polarity = ["factual", workspace_tag_for_cwd(transcript.cwd)]
-        row_id = store.add_row(
-            text=text,
-            polarity=polarity,
-            transcript_hash=transcript_hash(transcript),
-        )
+        workspace_tag = workspace_tag_for_cwd(transcript.cwd)
+        polarity = ["factual", workspace_tag]
+        # Same-text-same-workspace dedup: a fresh capture that's textually
+        # identical to an existing row in the same workspace bumps that
+        # row's recurrence_count + last_corroborated_at instead of writing
+        # a new row. Without this, every re-run of a stable prompt+response
+        # accumulates duplicate event rows; arrow1 then sees a "cluster" of
+        # identical copies and the LLM correctly refuses to promote noise.
+        # (Recurrence is the architecture's signal that an event is
+        # *recurring*, not that it's been re-captured 8 times.)
+        existing = _find_dup_row(store, text=text, workspace_tag=workspace_tag)
+        if existing is not None:
+            store.update_row(
+                existing.row_id,
+                recurrence_count=existing.recurrence_count + 1,
+                last_corroborated_at=utcnow_iso(),
+            )
+            row_id = existing.row_id
+        else:
+            row_id = store.add_row(
+                text=text,
+                polarity=polarity,
+                transcript_hash=transcript_hash(transcript),
+            )
         # Log the buffered events with the now-known row_id for audit
         # correlation (§6.4).
         if events:

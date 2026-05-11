@@ -96,16 +96,18 @@ def discover_api_key() -> str | None:
     indirected = os.environ.get("RLAT_LLM_API_KEY_ENV")
     if indirected and (val := os.environ.get(indirected)):
         return val
-    if (val := os.environ.get("CLAUDE_API")):
-        return val
-    if (val := os.environ.get("ANTHROPIC_API_KEY")):
-        return val
+    # CLAUDE_API_2 is Kane's active env-var slot for the harness LLM key;
+    # CLAUDE_API + ANTHROPIC_API_KEY remain supported for legacy install
+    # docs and for kaggle_secrets parity.
+    for name in ("CLAUDE_API_2", "CLAUDE_API", "ANTHROPIC_API_KEY"):
+        if (val := os.environ.get(name)):
+            return val
     try:
         from kaggle_secrets import UserSecretsClient
     except ImportError:
         return None
     client = UserSecretsClient()
-    for name in ("CLAUDE_API", "ANTHROPIC_API_KEY"):
+    for name in ("CLAUDE_API_2", "CLAUDE_API", "ANTHROPIC_API_KEY"):
         try:
             return client.get_secret(name)
         except Exception:

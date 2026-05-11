@@ -381,17 +381,15 @@ def run() -> int:
     print("[watch_loop] guarantee 8 (force-dispatch bypass) OK", file=sys.stderr)
 
     # ---- Guarantee 9: skipped files don't become silent deletes ----
-    # _walk_sources records files it couldn't read (Windows lock, mid-
-    # write decode error) into `skipped`. Without _filter_skipped_removals,
-    # bucketise sees no candidate for that file and emits a destructive
-    # removal for every passage of it. Test the helper directly so we can
-    # construct a `skipped` set without simulating a real FS lock.
-    from resonance_lattice.cli.watch import (
-        _filter_skipped_removals,
-        _skipped_rel_set,
-    )
+    # FilesystemSourceWalker records files it couldn't read (Windows lock,
+    # mid-write decode error) into `walker.skipped`. Without
+    # _filter_skipped_removals, bucketise sees no candidate for that file
+    # and emits a destructive removal for every passage of it. Two halves:
+    # the demotion helper, then a real walker pass on a binary file to
+    # confirm `.skipped` carries the rel-posix name watch keys against.
+    from resonance_lattice.build.walker import FilesystemSourceWalker
+    from resonance_lattice.cli.watch import _filter_skipped_removals
     from resonance_lattice.store.incremental import BucketedDelta
-    from resonance_lattice.store.registry import PassageCoord
     with tempfile.TemporaryDirectory() as d:
         root = Path(d) / "corpus"
         km = _build(root, dict(_FILES))
@@ -432,13 +430,16 @@ def run() -> int:
                   file=sys.stderr)
             return 1
 
-        # _skipped_rel_set sanity: rel-posix conversion mirrors registry.
-        synthetic_skipped = [(root / "b.md", "OSError")]
-        rel_set = _skipped_rel_set(synthetic_skipped, root)
-        if "b.md" not in rel_set:
-            print(f"[watch_loop] FAIL guarantee 9: _skipped_rel_set "
-                  f"didn't produce 'b.md' from absolute path; got {rel_set}",
-                  file=sys.stderr)
+        # Walker rel-posix sanity: an undecodable file surfaces as the
+        # registry-keyed `source_file` in walker.skipped.
+        (root / "broken.md").write_bytes(b"\x80\x81\x82\x83")
+        walker = FilesystemSourceWalker([root], root, extensions=None)
+        _ = list(walker.iter_files())
+        skipped_names = {rel for rel, _ in walker.skipped}
+        if "broken.md" not in skipped_names:
+            print(f"[watch_loop] FAIL guarantee 9: walker.skipped didn't "
+                  f"produce 'broken.md' for an undecodable file; "
+                  f"got {skipped_names}", file=sys.stderr)
             return 1
     print("[watch_loop] guarantee 9 (skip preservation) OK", file=sys.stderr)
 

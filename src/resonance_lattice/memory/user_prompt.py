@@ -43,12 +43,27 @@ from pathlib import Path
 # proxy. Truncate at row boundary so callers never see a half-row.
 _MAX_INJECTION_CHARS = 6000
 
-# §5.2.1 hook → daemon retry window after lazy-spawn.
+# §5.2.1 hook → daemon retry window after lazy-spawn. The legacy 0.1s
+# boot-wait + 0.5s retry assumes the daemon is listening within ~600ms
+# of spawn. Cold encoder loads can take >1s, so the v3 bench surfaced
+# first-call-after-spawn misses. The fix is the ready-marker poll loop
+# below: after spawn we poll `daemon_ready_path` until either the
+# marker appears (encoder + snapshot loaded → safe to connect) or
+# `_DAEMON_READY_POLL_BUDGET_S` elapses (give up, fail-open).
 _DAEMON_BOOT_WAIT_S = 0.1
 _DAEMON_RETRY_TIMEOUT_MS = 500
+_DAEMON_READY_POLL_INTERVAL_S = 0.1
+_DAEMON_READY_POLL_BUDGET_S = 5.0
 
 # §0.6 default M (recurrence threshold) — must match recall.py default.
 _RECURRENCE_M = 3
+
+
+def _iso_now() -> str:
+    """Same-shape ISO timestamp `state` modules use. Inline here so the
+    fast-exit gates above this line don't pay the `_common` import cost."""
+    from ._common import utcnow_iso
+    return utcnow_iso()
 
 
 def _trace(event: str) -> None:
@@ -123,6 +138,78 @@ def _format_injection(hits: list[dict], recurrence_m: int) -> tuple[str, int]:
     return block, len(body_lines)
 
 
+def _resolve_active_intent_id(state_root: Path) -> str | None:
+    """Look up the most-recently-created active/blocked/proposed intent.
+
+    Returns None on any failure or empty store. Fail-open: a diagnostic
+    write must never break the hook. Same selection rule as the
+    success-path recall_cache stamp, hoisted so every diagnostic entry
+    can include the intent_id regardless of whether the recall hit.
+    """
+    try:
+        from ..state import LiveIntentStore
+        store = LiveIntentStore(state_root)
+        live = [
+            i for i in store.list_active()
+            if i.status in ("active", "blocked", "proposed")
+        ]
+        if not live:
+            return None
+        return max(live, key=lambda i: i.created_at).intent_id
+    except Exception:
+        return None
+
+
+_UNSET: object = object()
+
+
+def _log_diagnostic(
+    *,
+    cwd: str,
+    prompt: str,
+    intent_kind: str,
+    status: str,
+    n_hits: int,
+    diagnostic: dict | None,
+    intent_id: object = _UNSET,
+) -> None:
+    """Write one `recall_diagnostic.jsonl` entry. Best-effort — any
+    exception is swallowed so the diagnostic surface can never break
+    the hook (same fail-open contract as the rest of the path).
+
+    `intent_id` accepts a sentinel default so the success path can pass
+    the already-resolved value and avoid a duplicate LiveIntentStore
+    read; miss / unreachable paths pass nothing and we resolve here.
+    """
+    try:
+        from ..state import (
+            RecallDiagnosticEntry,
+            RecallDiagnosticLog,
+            hash_prompt,
+            make_turn_id,
+            resolve_workspace,
+            state_root_for,
+        )
+        identity = resolve_workspace(cwd)
+        state_root = state_root_for(identity.root)
+        if intent_id is _UNSET:
+            resolved_intent_id = _resolve_active_intent_id(state_root)
+        else:
+            resolved_intent_id = intent_id  # type: ignore[assignment]
+        RecallDiagnosticLog(state_root).append(RecallDiagnosticEntry(
+            turn_id=make_turn_id(prompt),
+            timestamp=_iso_now(),
+            prompt_hash=hash_prompt(prompt),
+            intent_kind=intent_kind,
+            intent_id=resolved_intent_id,
+            status=status,
+            n_hits=n_hits,
+            diagnostic=diagnostic,
+        ))
+    except Exception:
+        pass
+
+
 def _spawn_daemon(memory_root: Path) -> None:
     """Lazy-spawn the recall daemon as a detached background subprocess.
 
@@ -156,6 +243,39 @@ def _spawn_daemon(memory_root: Path) -> None:
         return
 
 
+def _debug_daemon_log(event: str) -> None:
+    """RLAT_DEBUG_DAEMON=1 gates a verbose connect-attempt trace.
+
+    Investigation context (V1 in `_probe/longitudinal_v4/V1_INVESTIGATION.md`):
+    `claude -p` subprocesses fire the hook but hit `daemon_unreachable` 80%
+    of the time. Three candidate causes (per-user resolution drift, named
+    pipe ACL, spawn-retry shape) need address + exception attribution to
+    distinguish. This trace lets a probe capture pid/ppid + env-derived
+    user_id + pipe address + exception type per attempt, all in one file.
+
+    Always off when the env var isn't `1`. Will be retired once V1 is fixed.
+    """
+    if os.environ.get("RLAT_DEBUG_DAEMON") != "1":
+        return
+    try:
+        from datetime import datetime, timezone
+        log_dir = Path.home() / ".rlat" / "memory"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        ppid = os.getppid() if hasattr(os, "getppid") else -1
+        line = (
+            f"{datetime.now(timezone.utc).isoformat()}  "
+            f"pid={os.getpid()} ppid={ppid}  "
+            f"USER={os.environ.get('USER')!r} "
+            f"USERNAME={os.environ.get('USERNAME')!r} "
+            f"RLAT_MEMORY_USER={os.environ.get('RLAT_MEMORY_USER')!r}  "
+            f"{event}\n"
+        )
+        with (log_dir / ".daemon_debug.log").open("a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
 def _recall_via_daemon_or_spawn(request, memory_root: Path):
     """Try the daemon; on connect-fail, lazy-spawn and retry once.
 
@@ -166,6 +286,7 @@ def _recall_via_daemon_or_spawn(request, memory_root: Path):
 
     from .daemon import (
         DEFAULT_TIMEOUT_MS,
+        daemon_ready_path,
         daemon_socket_address,
         load_or_create_authkey,
         request_recall,
@@ -173,18 +294,61 @@ def _recall_via_daemon_or_spawn(request, memory_root: Path):
 
     address = daemon_socket_address(memory_root)
     authkey = load_or_create_authkey(memory_root)
+    _debug_daemon_log(
+        f"entry memory_root={memory_root!s} address={address!r} "
+        f"authkey_len={len(authkey)}"
+    )
     reply = request_recall(
         request, address=address, authkey=authkey,
         timeout_ms=DEFAULT_TIMEOUT_MS,
     )
+    _debug_daemon_log(
+        f"attempt-1 reply_is_none={reply is None} "
+        f"reply_error={getattr(reply, 'error', None)!r}"
+    )
     if reply is not None:
         return reply
+
+    # Clear any stale marker BEFORE spawn. A previous daemon killed
+    # without running its finally block (SIGKILL, OOM, system reboot)
+    # leaves a `.recall.ready` behind. The polling loop below would
+    # then observe that stale marker immediately, conclude the daemon
+    # is ready, and try connecting — failing because no daemon is
+    # actually listening. Clearing here means any marker we observe
+    # after spawn was written by the freshly-spawned daemon. Best-
+    # effort: a concurrent spawn racing this hook would re-create
+    # the marker, and the connect attempt below tolerates either way.
+    ready_path = daemon_ready_path(memory_root)
+    try:
+        ready_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
     _spawn_daemon(memory_root)
-    time.sleep(_DAEMON_BOOT_WAIT_S)
-    return request_recall(
+    _debug_daemon_log(f"spawned daemon for {memory_root!s}")
+    deadline = time.monotonic() + _DAEMON_READY_POLL_BUDGET_S
+    saw_marker = False
+    while time.monotonic() < deadline:
+        if ready_path.exists():
+            saw_marker = True
+            break
+        time.sleep(_DAEMON_READY_POLL_INTERVAL_S)
+    _debug_daemon_log(
+        f"ready_marker saw={saw_marker} ready_path={ready_path!s}"
+    )
+    if not saw_marker:
+        time.sleep(_DAEMON_BOOT_WAIT_S)
+    reply2 = request_recall(
         request, address=address, authkey=authkey,
         timeout_ms=_DAEMON_RETRY_TIMEOUT_MS,
     )
+    _debug_daemon_log(
+        f"attempt-2 reply_is_none={reply2 is None} "
+        f"reply_error={getattr(reply2, 'error', None)!r}"
+    )
+    return reply2
 
 
 def run_hook(
@@ -203,15 +367,18 @@ def run_hook(
     to debug, but they never block the prompt.
     """
     _trace("UserPromptSubmit:fired")
+    _debug_daemon_log("run_hook:fired")
     try:
         payload = json.loads(stdin.read())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        _debug_daemon_log(f"BAIL: bad stdin {type(exc).__name__}: {exc}")
         json.dump({}, stdout)
         return 0
 
     prompt = payload.get("prompt", "")
     cwd = payload.get("cwd") or os.getcwd()
     if not isinstance(prompt, str) or not prompt.strip():
+        _debug_daemon_log(f"BAIL: empty/invalid prompt prompt_type={type(prompt).__name__} stripped_len={len(prompt.strip()) if isinstance(prompt, str) else -1}")
         json.dump({}, stdout)
         return 0
 
@@ -220,39 +387,136 @@ def run_hook(
     # + portalocker import chain.
     from ._common import workspace_hash
     from .daemon import RecallRequest
+    from .intent_classify import classify_intent_kind
     from .store import path_for_user
 
     try:
         memory_root = path_for_user(user_id=user_id, root=memory_root_base)
-    except RuntimeError:
+    except RuntimeError as exc:
+        _debug_daemon_log(f"BAIL: path_for_user RuntimeError: {exc}")
         json.dump({}, stdout)
         return 0
+    _debug_daemon_log(f"memory_root resolved: {memory_root!s} exists={memory_root.exists()}")
 
     # First hook fire on a fresh install: don't spawn the daemon for an
-    # empty store. Skip silently.
+    # empty store. Skip silently — but record the no-store status in
+    # the diagnostic log so a fresh-workspace blackout is attributable
+    # post-hoc.
     if not memory_root.exists():
+        _log_diagnostic(
+            cwd=cwd, prompt=prompt, intent_kind="none",
+            status="no_store", n_hits=0, diagnostic=None,
+        )
         json.dump({}, stdout)
         return 0
 
+    # Cheap-path intent classifier — sub-millisecond regex scan; conditions
+    # the daemon's manifesto re-rank without touching the 200ms hot-path
+    # budget. "none" preserves the v2.1 cosine-only ordering.
+    intent_kind = classify_intent_kind(prompt)
     request = RecallRequest(
         query=prompt,
         cwd_hash=workspace_hash(str(cwd)),
+        intent_kind=intent_kind,
+        # Cold-start auto-relax: when the per-user store has fewer than
+        # `recall.COLD_START_ROW_THRESHOLD` rows, the daemon overrides
+        # `cosine_floor` and `min_recurrence` to relaxed values so a
+        # fresh workspace surfaces something rather than nothing. The
+        # longitudinal benchmark caught the v1 defaults as a 20-session
+        # blackout on diverse-task workloads. Reply carries
+        # `effective_min_recurrence` so the injection-time gate stays
+        # in sync with the daemon's actual filter.
+        auto_tune_cold_start=True,
     )
     try:
         reply = _recall_via_daemon_or_spawn(request, memory_root)
     except Exception as exc:
         print(f"[rlat] hook recall failed: {type(exc).__name__}", file=stderr)
+        _log_diagnostic(
+            cwd=cwd, prompt=prompt, intent_kind=intent_kind,
+            status="daemon_error", n_hits=0, diagnostic=None,
+        )
         json.dump({}, stdout)
         return 0
 
-    if reply is None or not reply.hits:
+    if reply is None:
+        _log_diagnostic(
+            cwd=cwd, prompt=prompt, intent_kind=intent_kind,
+            status="daemon_unreachable", n_hits=0, diagnostic=None,
+        )
+        json.dump({}, stdout)
+        return 0
+    if reply.error:
+        _log_diagnostic(
+            cwd=cwd, prompt=prompt, intent_kind=intent_kind,
+            status="daemon_error", n_hits=0, diagnostic=reply.diagnostic,
+        )
+        json.dump({}, stdout)
+        return 0
+    if not reply.hits:
+        _log_diagnostic(
+            cwd=cwd, prompt=prompt, intent_kind=intent_kind,
+            status="no_hit", n_hits=0, diagnostic=reply.diagnostic,
+        )
         json.dump({}, stdout)
         return 0
 
-    block, n_rows = _format_injection(reply.hits, _RECURRENCE_M)
+    # Use the daemon's effective_min_recurrence (defaults to _RECURRENCE_M
+    # for back-compat with replies that pre-date the field) so the
+    # injection gate matches the filter the daemon actually applied.
+    injection_recurrence = getattr(
+        reply, "effective_min_recurrence", _RECURRENCE_M,
+    )
+    block, n_rows = _format_injection(reply.hits, injection_recurrence)
     if not block:
         json.dump({}, stdout)
         return 0
+
+    # Persist this recall to the per-workspace cache so PostToolUse and
+    # intent resolution can attribute outcomes back to the rows that
+    # surfaced. Best-effort — any failure here must not break the hook.
+    active_intent_id: object = _UNSET
+    try:
+        from ..state import (
+            RecallCache,
+            RecallEntry,
+            RecallHitMetadata,
+            hash_prompt,
+            make_turn_id,
+            resolve_workspace,
+            state_root_for,
+        )
+        identity = resolve_workspace(cwd)
+        state_root = state_root_for(identity.root)
+        # Outcome-attributed retrieval (Horizon 4): stamp the recall with
+        # the live intent_id when one is active so accept/reject can
+        # attribute outcomes to recalls *deterministically* — no timestamp
+        # window heuristic.
+        active_intent_id = _resolve_active_intent_id(state_root)
+        cache = RecallCache(state_root)
+        cache.append(RecallEntry(
+            turn_id=make_turn_id(prompt),
+            timestamp=_iso_now(),
+            prompt_hash=hash_prompt(prompt),
+            intent_kind=intent_kind,
+            intent_id=active_intent_id,  # type: ignore[arg-type]
+            row_metadata=[
+                RecallHitMetadata(
+                    row_id=hit["row"]["row_id"],
+                    rank=idx,
+                    cosine=float(hit.get("cosine", 0.0)),
+                )
+                for idx, hit in enumerate(reply.hits)
+            ],
+        ))
+    except Exception:
+        pass
+
+    _log_diagnostic(
+        cwd=cwd, prompt=prompt, intent_kind=intent_kind,
+        status="ok", n_hits=len(reply.hits),
+        diagnostic=reply.diagnostic, intent_id=active_intent_id,
+    )
 
     print(f"[rlat] Recalled {n_rows} row(s)", file=stderr)
     json.dump({

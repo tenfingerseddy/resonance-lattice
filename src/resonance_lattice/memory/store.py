@@ -1,33 +1,38 @@
-"""Flat memory store — v2.1.
+"""Flat memory store — v2.2 (Horizon 1 schema).
 
 Per-user `memory.npz` + `sidecar.jsonl` pair under `~/.rlat/memory/<user-id>/`.
 Atomic write via `portalocker` advisory lock + tmp + os.replace pair, mirroring
 v2.0 archive write contracts.
 
-The 9-field row schema is locked in `.claude/plans/fabric-agent-flat-memory.md`
-§0.2; this module is the single source of truth on disk for that schema.
+v2.2 extends the v2.1 9-field row to 13 memory fields + 5 intent-only fields,
+adding the strength × development × truth axes the agent-harness architecture
+requires (`.claude/plans/agent-harness-architecture.md` §"Memory schema").
+v1 sidecars load through `_apply_v1_defaults`; all additions are additive, no
+breaking change. Mirrors the v4 → v4.1 archive bump pattern.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import secrets
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable, Literal, TypedDict
 
 import numpy as np
 import portalocker
 
 from ..field._runtime_common import l2_normalize
 from ..field.encoder import DIM, Encoder
-from ._common import utcnow_iso
+from ._common import (
+    make_ulid,
+    utcnow_iso,
+    validate_criterion as _validate_criterion,
+    validate_enum as _validate_enum,
+)
 
-SCHEMA_VERSION = 1
-
-_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+SCHEMA_VERSION = 2
 
 PrimaryPolarity = Literal["prefer", "avoid", "factual"]
 # Polarity is `[primary, *scope_tags]`. Scope tags include `workspace:<hash>`
@@ -44,29 +49,106 @@ MANUAL_TRANSCRIPT_HASH = "manual"
 DISTILLED_PREFIX = "distilled:"
 MIGRATED_PREFIX = "migrated:"
 
+# Memory ladder (event → pattern → learning → principle) and intent ladder
+# (step → task → goal → direction) share the `level` field; the two enums are
+# non-overlapping so `level` alone discriminates memory rows from intent rows.
+Level = Literal[
+    "event", "pattern", "learning", "principle",
+    "step", "task", "goal", "direction",
+]
+MEMORY_LEVELS: frozenset[str] = frozenset(
+    {"event", "pattern", "learning", "principle"}
+)
+INTENT_LEVELS: frozenset[str] = frozenset(
+    {"step", "task", "goal", "direction"}
+)
+LEVEL_VALUES: frozenset[str] = MEMORY_LEVELS | INTENT_LEVELS
 
-def _ulid() -> str:
-    """26-char Crockford base-32 ULID. Stdlib-only.
+Criticality = Literal["low", "normal", "high", "severe"]
+CRITICALITY_VALUES: frozenset[str] = frozenset(
+    {"low", "normal", "high", "severe"}
+)
 
-    Encodes 48-bit ms timestamp + 80-bit randomness. Lexicographically
-    sortable, collision-safe across machines.
+Confidence = Literal["low", "medium", "high", "verified"]
+CONFIDENCE_VALUES: frozenset[str] = frozenset(
+    {"low", "medium", "high", "verified"}
+)
+
+Origin = Literal[
+    "manual", "distilled", "migrated", "outcome_derived", "intent_resolution",
+]
+ORIGIN_VALUES: frozenset[str] = frozenset(
+    {"manual", "distilled", "migrated", "outcome_derived", "intent_resolution"}
+)
+
+# Captured at row-write time — the agent's intent-kind context, used by the
+# manifesto recall re-rank's `level_match` factor. `none` is the default for
+# rows captured outside an active intent (e.g. v1-migrated rows).
+IntentKind = Literal[
+    "debug", "design", "implement", "review", "explain", "refactor", "none",
+]
+INTENT_KIND_VALUES: frozenset[str] = frozenset(
+    {"debug", "design", "implement", "review", "explain", "refactor", "none"}
+)
+
+# Intent-row-only enums.
+Stance = Literal["do", "avoid", "know"]
+STANCE_VALUES: frozenset[str] = frozenset({"do", "avoid", "know"})
+
+Achievability = Literal["low", "medium", "high"]
+ACHIEVABILITY_VALUES: frozenset[str] = frozenset({"low", "medium", "high"})
+
+Status = Literal[
+    "proposed", "active", "blocked", "satisfied", "abandoned", "superseded",
+]
+STATUS_VALUES: frozenset[str] = frozenset(
+    {"proposed", "active", "blocked", "satisfied", "abandoned", "superseded"}
+)
+# `proposed` is the captured-but-not-yet-confirmed state — used by the
+# planning-mode-listening hook to record plan-mode output before the
+# user explicitly accepts. Transitions to `active` on first execution
+# signal or `abandoned` on rejection.
+
+
+class Criterion(TypedDict):
+    """One success criterion. SMART minus time-bound; lifecycle bounds it.
+
+    `text` is the specific, measurable statement. `measure` names the
+    verification mechanism — one of `mechanical:<spec>`, `user_confirms`,
+    `llm_judges:<rubric>` (architecture §"Success criteria").
     """
-    import datetime as _dt
-    ts_ms = int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
-    rand_bits = secrets.randbits(80)
-    value = (ts_ms << 80) | rand_bits
-    return "".join(_CROCKFORD[(value >> (5 * (25 - i))) & 0b11111] for i in range(26))
+    text: str
+    measure: str
+
+
+def _derive_origin(transcript_hash: str) -> Origin:
+    """Categorical `origin` from the v1 `transcript_hash` prefix.
+
+    Maps the prefix system to the v2.2 `origin` enum so v1 rows missing
+    `origin` populate from the existing field on load (architecture
+    §"Migration from v2.1").
+    """
+    if transcript_hash.startswith(DISTILLED_PREFIX):
+        return "distilled"
+    if transcript_hash.startswith(MIGRATED_PREFIX):
+        return "migrated"
+    return "manual"
+
+
+_ulid = make_ulid  # Local alias kept for callers within this module.
 
 
 @dataclass(frozen=True)
 class Row:
-    """One sidecar row. The 9-field schema from §0.2 of the v2.1 plan.
+    """One sidecar row.
 
-    Frozen because the v2.1 store always rebuilds rows on update — a
-    mutation goes through `Memory.update_row(row_id, **fields)` which
-    constructs a new Row from `asdict(old) | fields`.
+    13 memory fields (the schema's strength × development × truth axes from
+    architecture §"Memory schema") plus 5 intent-only fields populated when
+    `level` is one of `INTENT_LEVELS`. Frozen because mutations always go
+    through `Memory.update_row(row_id, **fields)` which rebuilds the row.
     """
 
+    # --- v2.1 base (9 fields) — unchanged shape ---
     row_id: str
     text: str
     polarity: Polarity
@@ -76,6 +158,22 @@ class Row:
     transcript_hash: str
     is_bad: bool
     schema_version: int = SCHEMA_VERSION
+
+    # --- v2.2 memory extension (4 net-new + origin lift + intent-kind ctx) ---
+    level: Level = "event"
+    criticality: Criticality = "normal"
+    confidence: Confidence = "medium"
+    parent_ids: list[str] = field(default_factory=list)
+    cited_passages: list[str] = field(default_factory=list)
+    origin: Origin = "manual"
+    created_under_intent_kind: IntentKind = "none"
+
+    # --- v2.2 intent-row extension (forbidden when level ∈ MEMORY_LEVELS) ---
+    stance: Stance | None = None
+    achievability: Achievability | None = None
+    status: Status | None = None
+    success_criteria: list[Criterion] | None = None
+    constraints: list[str] | None = None
 
     def to_jsonl_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -93,6 +191,10 @@ class Row:
 
     def is_migrated(self) -> bool:
         return self.transcript_hash.startswith(MIGRATED_PREFIX)
+
+    def is_intent(self) -> bool:
+        """True if this row's `level` is in the intent ladder."""
+        return self.level in INTENT_LEVELS
 
     def summary(self, *, max_text: int = 80) -> str:
         """Single-line tabular row for CLI / harness display."""
@@ -115,6 +217,97 @@ def _validate_polarity(polarity: list[str]) -> None:
             f"polarity must have exactly one primary tag from {sorted(PRIMARY_POLARITY)}; "
             f"got {primaries!r} in {polarity!r}"
         )
+
+
+def _validate_row_fields(
+    *,
+    level: str,
+    criticality: str,
+    confidence: str,
+    origin: str,
+    created_under_intent_kind: str,
+    stance: str | None,
+    achievability: str | None,
+    status: str | None,
+    success_criteria: list[Any] | None,
+    constraints: list[Any] | None,
+) -> None:
+    """Validate the v2.2 enum fields and intent-only required-vs-forbidden rule.
+
+    Intent-only fields are *required* when `level` is in `INTENT_LEVELS` and
+    *forbidden* when `level` is in `MEMORY_LEVELS`. Architecture §"Schema
+    additions for intent" — clean validation rule, driven by the level field.
+    """
+    _validate_enum("level", level, LEVEL_VALUES)
+    _validate_enum("criticality", criticality, CRITICALITY_VALUES)
+    _validate_enum("confidence", confidence, CONFIDENCE_VALUES)
+    _validate_enum("origin", origin, ORIGIN_VALUES)
+    _validate_enum(
+        "created_under_intent_kind",
+        created_under_intent_kind,
+        INTENT_KIND_VALUES,
+    )
+    intent_fields = {
+        "stance": stance,
+        "achievability": achievability,
+        "status": status,
+        "success_criteria": success_criteria,
+        "constraints": constraints,
+    }
+    is_intent = level in INTENT_LEVELS
+    if is_intent:
+        missing = [k for k, v in intent_fields.items() if v is None]
+        if missing:
+            raise ValueError(
+                f"intent row (level={level!r}) requires fields {missing}; "
+                f"all of stance/achievability/status/success_criteria/"
+                f"constraints must be set"
+            )
+        _validate_enum("stance", stance, STANCE_VALUES)
+        _validate_enum("achievability", achievability, ACHIEVABILITY_VALUES)
+        _validate_enum("status", status, STATUS_VALUES)
+        if not isinstance(success_criteria, list):
+            raise ValueError("success_criteria must be a list of {text, measure}")
+        for c in success_criteria:
+            _validate_criterion(c)
+        if not isinstance(constraints, list) or any(
+            not isinstance(s, str) for s in constraints
+        ):
+            raise ValueError("constraints must be a list[str]")
+    else:
+        present = [k for k, v in intent_fields.items() if v is not None]
+        if present:
+            raise ValueError(
+                f"memory row (level={level!r}) must not set intent-only "
+                f"fields {present}"
+            )
+
+
+def _apply_v1_defaults(obj: dict[str, Any]) -> dict[str, Any]:
+    """Populate v2.2 fields that are missing from a v1 sidecar row.
+
+    v1 rows carried `schema_version=1` and lacked the seven memory-extension
+    fields and five intent-only fields. The migration table in architecture
+    §"Migration from v2.1" specifies the per-field default; this helper
+    realises it. Memory-row defaults are applied to all v1 rows (v1 had no
+    intent rows by construction).
+    """
+    if obj.get("schema_version", SCHEMA_VERSION) >= SCHEMA_VERSION:
+        return obj
+    # Memory-extension defaults from the migration table.
+    obj.setdefault("level", "event")
+    obj.setdefault("criticality", "normal")
+    # `is_bad` rows in v1 partially encoded low confidence; lift accordingly.
+    obj.setdefault("confidence", "low" if obj.get("is_bad") else "medium")
+    obj.setdefault("parent_ids", [])
+    obj.setdefault("cited_passages", [])
+    # Origin lifts from the existing transcript_hash prefix.
+    obj.setdefault(
+        "origin",
+        _derive_origin(obj.get("transcript_hash", MANUAL_TRANSCRIPT_HASH)),
+    )
+    obj.setdefault("created_under_intent_kind", "none")
+    return obj
 
 
 def path_for_user(user_id: str | None = None, root: Path | None = None) -> Path:
@@ -166,6 +359,7 @@ def _load_sidecar(root: Path) -> list[Row]:
                 file=sys.stderr,
             )
             warned_future = True
+        obj = _apply_v1_defaults(obj)
         rows.append(Row(**{k: v for k, v in obj.items() if k in known}))
     return rows
 
@@ -289,15 +483,45 @@ class Memory:
         transcript_hash: str,
         intent: str = "",
         embedding: np.ndarray | None = None,
+        level: Level = "event",
+        criticality: Criticality = "normal",
+        confidence: Confidence = "medium",
+        parent_ids: list[str] | None = None,
+        cited_passages: list[str] | None = None,
+        origin: Origin | None = None,
+        created_under_intent_kind: IntentKind = "none",
+        stance: Stance | None = None,
+        achievability: Achievability | None = None,
+        status: Status | None = None,
+        success_criteria: list[Criterion] | None = None,
+        constraints: list[str] | None = None,
     ) -> str:
         """Append a row. Returns the new row_id (ULID).
 
         `embedding` is optional — if omitted, the encoder is loaded lazily
-        and runs `text + " | intent: " + intent` (per §0.2 last paragraph).
-        Callers with a pre-computed embedding (distil, migration) pass it
-        directly to skip the encoder load.
+        and runs `text + " | intent: " + intent`. Callers with a pre-computed
+        embedding (distil, migration) pass it directly.
+
+        `origin` defaults to the value derived from `transcript_hash` so v2.1
+        call-sites stay valid without specifying origin explicitly. Intent
+        rows (level ∈ INTENT_LEVELS) must set stance/achievability/status/
+        success_criteria/constraints; memory rows must not.
         """
         _validate_polarity(polarity)
+        if origin is None:
+            origin = _derive_origin(transcript_hash)
+        _validate_row_fields(
+            level=level,
+            criticality=criticality,
+            confidence=confidence,
+            origin=origin,
+            created_under_intent_kind=created_under_intent_kind,
+            stance=stance,
+            achievability=achievability,
+            status=status,
+            success_criteria=success_criteria,
+            constraints=constraints,
+        )
         if embedding is None:
             encoder = self._ensure_encoder()
             payload = f"{text} | intent: {intent}" if intent else text
@@ -317,6 +541,22 @@ class Memory:
             transcript_hash=transcript_hash,
             is_bad=False,
             schema_version=SCHEMA_VERSION,
+            level=level,
+            criticality=criticality,
+            confidence=confidence,
+            parent_ids=list(parent_ids) if parent_ids else [],
+            cited_passages=list(cited_passages) if cited_passages else [],
+            origin=origin,
+            created_under_intent_kind=created_under_intent_kind,
+            stance=stance,
+            achievability=achievability,
+            status=status,
+            success_criteria=(
+                [dict(c) for c in success_criteria]
+                if success_criteria is not None
+                else None
+            ),
+            constraints=list(constraints) if constraints is not None else None,
         )
 
         with self._lock():
@@ -357,6 +597,28 @@ class Memory:
         now = utcnow_iso()
         for r in rows:
             _validate_polarity(r["polarity"])
+            level = r.get("level", "event")
+            criticality = r.get("criticality", "normal")
+            confidence = r.get("confidence", "medium")
+            origin = r.get("origin") or _derive_origin(r["transcript_hash"])
+            cuik = r.get("created_under_intent_kind", "none")
+            stance = r.get("stance")
+            achievability = r.get("achievability")
+            status = r.get("status")
+            success_criteria = r.get("success_criteria")
+            constraints = r.get("constraints")
+            _validate_row_fields(
+                level=level,
+                criticality=criticality,
+                confidence=confidence,
+                origin=origin,
+                created_under_intent_kind=cuik,
+                stance=stance,
+                achievability=achievability,
+                status=status,
+                success_criteria=success_criteria,
+                constraints=constraints,
+            )
             new_rows.append(Row(
                 row_id=_ulid(),
                 text=r["text"],
@@ -367,6 +629,24 @@ class Memory:
                 transcript_hash=r["transcript_hash"],
                 is_bad=False,
                 schema_version=SCHEMA_VERSION,
+                level=level,
+                criticality=criticality,
+                confidence=confidence,
+                parent_ids=list(r.get("parent_ids") or []),
+                cited_passages=list(r.get("cited_passages") or []),
+                origin=origin,
+                created_under_intent_kind=cuik,
+                stance=stance,
+                achievability=achievability,
+                status=status,
+                success_criteria=(
+                    [dict(c) for c in success_criteria]
+                    if success_criteria is not None
+                    else None
+                ),
+                constraints=(
+                    list(constraints) if constraints is not None else None
+                ),
             ))
         with self._lock():
             existing, band = self._read_state()
@@ -382,11 +662,17 @@ class Memory:
     def update_row(self, row_id: str, **fields: Any) -> Row:
         """Update mutable fields on a row by id. Returns the updated Row.
 
-        Mutable per §0.2: `recurrence_count`, `last_corroborated_at`,
-        `transcript_hash`, `is_bad`, `polarity`. Immutable: `row_id`,
-        `text`, `created_at`, `schema_version`.
+        Mutable: `recurrence_count`, `last_corroborated_at`, `transcript_hash`,
+        `is_bad`, `polarity`, plus the v2.2 axes (`level`, `criticality`,
+        `confidence`, `parent_ids`, `cited_passages`, `origin`,
+        `created_under_intent_kind`) and intent-only fields (`stance`,
+        `achievability`, `status`, `success_criteria`, `constraints`).
+        Immutable: `row_id`, `text`, `created_at`, `schema_version`.
 
         The band is never touched by this path — only the sidecar is rewritten.
+        After merge the resulting row is revalidated so updates can't leave
+        the row in an inconsistent state (e.g. switching `level` to an intent
+        value without populating the intent-only fields).
         """
         immutable = {"row_id", "text", "created_at", "schema_version"}
         bad = set(fields) & immutable
@@ -399,7 +685,22 @@ class Memory:
             rows, _ = self._read_state()
             for i, r in enumerate(rows):
                 if r.row_id == row_id:
-                    updated = Row(**{**asdict(r), **fields})
+                    merged = {**asdict(r), **fields}
+                    _validate_row_fields(
+                        level=merged["level"],
+                        criticality=merged["criticality"],
+                        confidence=merged["confidence"],
+                        origin=merged["origin"],
+                        created_under_intent_kind=merged[
+                            "created_under_intent_kind"
+                        ],
+                        stance=merged["stance"],
+                        achievability=merged["achievability"],
+                        status=merged["status"],
+                        success_criteria=merged["success_criteria"],
+                        constraints=merged["constraints"],
+                    )
+                    updated = Row(**merged)
                     rows[i] = updated
                     _atomic_write_sidecar(self.root, rows)
                     return updated

@@ -29,7 +29,7 @@ from pathlib import Path
 
 from ..field.encoder import Encoder
 from ._common import workspace_hash
-from .recall import rank
+from .recall import rank_with_diagnostic
 from .store import Memory, Row
 
 DEFAULT_IDLE_EXIT_SECONDS = 1800  # 30 min per §0.8
@@ -55,6 +55,14 @@ _CONNECT_BUDGET_FRACTION = 0.6
 
 _AUTHKEY_FILENAME = ".daemon_authkey"
 _SOCKET_FILENAME = ".recall.sock"
+# Synchronisation marker: the daemon writes this file after encoder load
+# + initial snapshot are complete. The hook polls for it on cold-spawn
+# instead of guessing at a boot-wait timeout — the v3 bench surfaced
+# first-call-after-spawn misses because the boot-wait (100ms) plus
+# retry-timeout (500ms) couldn't cover a >1s cold encoder load. Marker
+# is removed on daemon exit so a stale file from a crashed daemon
+# doesn't fake-out a fresh hook fire.
+_READY_FILENAME = ".recall.ready"
 
 
 @dataclass(frozen=True)
@@ -65,6 +73,17 @@ class RecallRequest:
     cosine_floor: float = 0.7
     top1_top2_gap: float = 0.05
     min_recurrence: int = 3
+    # `intent_kind` opts the post-gate hits into the manifesto re-rank
+    # (architecture §"Layer manifesto scoring factors"). None / "none"
+    # preserves cosine ordering — the v2.1 wire shape every existing
+    # daemon contract pins.
+    intent_kind: str | None = None
+    # `auto_tune_cold_start` lets the daemon override `cosine_floor` and
+    # `min_recurrence` with relaxed values when the row count is below
+    # `recall.COLD_START_ROW_THRESHOLD`. Default False preserves the
+    # exact wire shape every test pins; the UserPromptSubmit hook opts
+    # in so a fresh workspace surfaces something rather than nothing.
+    auto_tune_cold_start: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,11 +92,31 @@ class RecallReply:
     encoder_revision: str
     server_version: int = SERVER_VERSION
     error: str | None = None
+    # The recurrence floor the daemon actually applied. Defaults to 3
+    # (the v1 RecallRequest default) so older clients that ignore the
+    # field get the same behaviour they had. The hook reads it instead
+    # of hardcoding `_RECURRENCE_M = 3` so the injection-time gate stays
+    # in sync with the daemon's actual filter.
+    effective_min_recurrence: int = 3
+    # Per-recall query-shape diagnostic — serialised `RankDiagnostic`.
+    # The hook writes it to `recall_diagnostic.jsonl` so future bench
+    # runs can attribute misses ("16/20 sessions had no recall" turns
+    # into per-gate `dropped_at` counts).
+    diagnostic: dict | None = None
 
 
 # ---------------------------------------------------------------------------
 # Address + authkey management
 # ---------------------------------------------------------------------------
+
+
+def daemon_ready_path(root: Path) -> Path:
+    """File the daemon touches after encoder load to signal readiness.
+
+    Hook callers poll for this file's existence on cold-spawn before
+    re-attempting connect; sidesteps the brittle fixed-timeout heuristic.
+    """
+    return root / _READY_FILENAME
 
 
 def daemon_socket_address(root: Path):
@@ -182,8 +221,23 @@ class DaemonServer:
                 pass
 
     def serve_forever(self) -> None:
+        # Clear any stale marker from a previous crashed daemon before
+        # loading the encoder, so a hook that's polling can't observe
+        # the marker while we're still cold.
+        ready_path = daemon_ready_path(self.store.root)
+        try:
+            ready_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
         self.reload_snapshot()
         self._listener = _conn.Listener(self.address, authkey=self.authkey)
+        # Encoder + snapshot loaded, listener bound — safe to advertise.
+        try:
+            ready_path.write_text(str(os.getpid()), encoding="utf-8")
+        except OSError:
+            pass
 
         # Watchdog thread polls `_stop` + idle deadline, closes the
         # listener on either trigger so `accept()` raises and the main
@@ -228,6 +282,15 @@ class DaemonServer:
                     os.unlink(self.address)
                 except FileNotFoundError:
                     pass
+            # Remove the ready marker on clean exit so the next hook
+            # spawn doesn't see a stale "ready" before the new daemon
+            # has finished loading.
+            try:
+                daemon_ready_path(self.store.root).unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
 
     def _watchdog_loop(self) -> None:
         """Idle/stop poller; unwedges `accept()` so the main loop exits.
@@ -299,17 +362,26 @@ class DaemonServer:
             )))
             return
         req = RecallRequest(**payload["request"])
+        cosine_floor = req.cosine_floor
+        top1_top2_gap = req.top1_top2_gap
+        min_recurrence = req.min_recurrence
+        if req.auto_tune_cold_start:
+            from .recall import cold_start_gates
+            relaxed = cold_start_gates(len(self._rows))
+            if relaxed is not None:
+                cosine_floor, top1_top2_gap, min_recurrence = relaxed
         try:
-            hits = rank(
+            hits, diagnostic = rank_with_diagnostic(
                 req.query,
                 rows=self._rows,
                 band=self._band,
                 encoder=self.encoder,
                 cwd_hash=req.cwd_hash,
                 top_k=req.top_k,
-                cosine_floor=req.cosine_floor,
-                top1_top2_gap=req.top1_top2_gap,
-                min_recurrence=req.min_recurrence,
+                cosine_floor=cosine_floor,
+                top1_top2_gap=top1_top2_gap,
+                min_recurrence=min_recurrence,
+                intent_kind=req.intent_kind,  # type: ignore[arg-type]
             )
         except Exception as exc:
             conn.send(asdict(RecallReply(
@@ -322,6 +394,8 @@ class DaemonServer:
         ]
         conn.send(asdict(RecallReply(
             hits=serialised, encoder_revision=self.encoder_revision,
+            effective_min_recurrence=min_recurrence,
+            diagnostic=asdict(diagnostic),
         )))
 
 

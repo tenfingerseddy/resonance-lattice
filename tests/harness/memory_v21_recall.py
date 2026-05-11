@@ -1,6 +1,7 @@
 """memory_v21_recall — §0.6 retrieval pipeline contracts (Appendix D D.1).
 
-Pins six guarantees on `memory.recall.recall` / `memory.recall.rank`:
+Pins eight guarantees on `memory.recall.recall` / `memory.recall.rank` /
+`memory.recall.rank_with_diagnostic`:
 
   (a) Cosine-descending sort: result rows are sorted by cosine
       descending. Any reordering is a §0.6 step-5 violation.
@@ -19,6 +20,13 @@ Pins six guarantees on `memory.recall.recall` / `memory.recall.rank`:
   (f) Workspace filter scopes correctly to current `cwd_hash`. (D.8
       covers the collision-detection edge cases; this suite asserts
       the integration shape.)
+
+  (g) `cold_start_gates` returns relaxed `(0.5, 0.0, 1)` for sparse
+      memory, None for dense — the longitudinal-v3 fix.
+
+  (h) `rank_with_diagnostic` reports the per-gate counts + dropped_at
+      reason so the hook's `recall_diagnostic.jsonl` can attribute
+      bench misses without re-probing the daemon.
 
 Hermetic — uses FixedEncoder, deterministic seeded fixtures.
 """
@@ -329,6 +337,195 @@ def _check_workspace_filter() -> int:
 # ---------------------------------------------------------------------------
 
 
+def _check_rank_diagnostic() -> int:
+    """Pins `rank_with_diagnostic` per-gate accounting + dropped_at codes.
+
+    Workspace-mismatch case is the one the v3 bench needed: top1 above
+    cosine floor, but the rows all carry a different workspace tag. The
+    old `rank()` collapsed that to an empty list with no signal — the
+    diagnostic must distinguish it from "no semantic match at all".
+    """
+    import tempfile
+
+    from resonance_lattice.memory.recall import (
+        DROPPED_BELOW_COSINE_FLOOR,
+        DROPPED_BELOW_CONFIDENCE_GAP,
+        DROPPED_BELOW_RECURRENCE,
+        DROPPED_NO_ROWS,
+        DROPPED_OK,
+        DROPPED_WRONG_WORKSPACE,
+        rank_with_diagnostic,
+    )
+
+    # (h.1) Empty snapshot → no_rows.
+    import numpy as np
+    hits, diag = rank_with_diagnostic(
+        "q", rows=[], band=np.zeros((0, 768), dtype="float32"),
+        encoder=FixedEncoder(np.zeros(768, dtype="float32")),
+        cwd_hash="test00",
+    )
+    if hits or diag.dropped_at != DROPPED_NO_ROWS or diag.n_rows != 0:
+        print(f"[memory_v21_recall] FAIL (h.1): empty rows expected "
+              f"no_rows, got dropped_at={diag.dropped_at!r} "
+              f"n_rows={diag.n_rows}", file=sys.stderr)
+        return 1
+
+    # (h.2) All rows below cosine floor → below_cosine_floor.
+    with tempfile.TemporaryDirectory() as td:
+        memory = _make_memory(Path(td))
+        rows_meta = [
+            {"text": "weak", "polarity": ["prefer", "workspace:test00"],
+             "cosine": 0.3, "recurrence_count": 5},
+        ]
+        query_vec = _add_rows_with_band(memory, rows_meta)
+        rows, band = memory.read_all()
+        hits, diag = rank_with_diagnostic(
+            "q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            cwd_hash="test00",
+        )
+        if hits or diag.dropped_at != DROPPED_BELOW_COSINE_FLOOR:
+            print(f"[memory_v21_recall] FAIL (h.2): below-floor row expected "
+                  f"below_cosine_floor, got {diag.dropped_at!r}",
+                  file=sys.stderr)
+            return 1
+        if diag.n_above_cosine_floor != 0:
+            print(f"[memory_v21_recall] FAIL (h.2): expected "
+                  f"n_above_cosine_floor=0 got {diag.n_above_cosine_floor}",
+                  file=sys.stderr)
+            return 1
+
+    # (h.3) Above floor but wrong workspace → wrong_workspace.
+    with tempfile.TemporaryDirectory() as td:
+        memory = _make_memory(Path(td))
+        rows_meta = [
+            {"text": "other ws", "polarity": ["prefer", "workspace:other1"],
+             "cosine": 0.85, "recurrence_count": 5},
+        ]
+        query_vec = _add_rows_with_band(memory, rows_meta)
+        rows, band = memory.read_all()
+        hits, diag = rank_with_diagnostic(
+            "q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            cwd_hash="test00",
+        )
+        if hits or diag.dropped_at != DROPPED_WRONG_WORKSPACE:
+            print(f"[memory_v21_recall] FAIL (h.3): wrong-workspace row "
+                  f"expected wrong_workspace got {diag.dropped_at!r}",
+                  file=sys.stderr)
+            return 1
+        if diag.n_above_cosine_floor != 1 or diag.n_after_workspace != 0:
+            print(f"[memory_v21_recall] FAIL (h.3): expected "
+                  f"n_above_cosine_floor=1 n_after_workspace=0 got "
+                  f"{diag.n_above_cosine_floor}/{diag.n_after_workspace}",
+                  file=sys.stderr)
+            return 1
+
+    # (h.4) Tied near-top → below_confidence_gap.
+    with tempfile.TemporaryDirectory() as td:
+        memory = _make_memory(Path(td))
+        rows_meta = [
+            {"text": "tie A", "polarity": ["prefer", "workspace:test00"],
+             "cosine": 0.85, "recurrence_count": 5},
+            {"text": "tie B", "polarity": ["prefer", "workspace:test00"],
+             "cosine": 0.83, "recurrence_count": 5},
+        ]
+        query_vec = _add_rows_with_band(memory, rows_meta)
+        rows, band = memory.read_all()
+        hits, diag = rank_with_diagnostic(
+            "q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            cwd_hash="test00", top1_top2_gap=0.05,
+        )
+        if hits or diag.dropped_at != DROPPED_BELOW_CONFIDENCE_GAP:
+            print(f"[memory_v21_recall] FAIL (h.4): tied near-top expected "
+                  f"below_confidence_gap got {diag.dropped_at!r}",
+                  file=sys.stderr)
+            return 1
+
+    # (h.5) Survives gates but recurrence below M → below_recurrence.
+    with tempfile.TemporaryDirectory() as td:
+        memory = _make_memory(Path(td))
+        rows_meta = [
+            {"text": "low rec", "polarity": ["prefer", "workspace:test00"],
+             "cosine": 0.90, "recurrence_count": 1},
+        ]
+        query_vec = _add_rows_with_band(memory, rows_meta)
+        rows, band = memory.read_all()
+        hits, diag = rank_with_diagnostic(
+            "q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            cwd_hash="test00", min_recurrence=3,
+        )
+        if hits or diag.dropped_at != DROPPED_BELOW_RECURRENCE:
+            print(f"[memory_v21_recall] FAIL (h.5): low-recurrence row "
+                  f"expected below_recurrence got {diag.dropped_at!r}",
+                  file=sys.stderr)
+            return 1
+
+    # (h.6) Happy path → ok + n_hits matches returned list.
+    with tempfile.TemporaryDirectory() as td:
+        memory = _make_memory(Path(td))
+        rows_meta = [
+            {"text": "hit", "polarity": ["prefer", "workspace:test00"],
+             "cosine": 0.90, "recurrence_count": 5},
+        ]
+        query_vec = _add_rows_with_band(memory, rows_meta)
+        rows, band = memory.read_all()
+        hits, diag = rank_with_diagnostic(
+            "q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            cwd_hash="test00",
+        )
+        if not hits or diag.dropped_at != DROPPED_OK:
+            print(f"[memory_v21_recall] FAIL (h.6): hit expected ok got "
+                  f"{diag.dropped_at!r} hits={len(hits)}", file=sys.stderr)
+            return 1
+        if diag.n_hits != len(hits):
+            print(f"[memory_v21_recall] FAIL (h.6): n_hits={diag.n_hits} "
+                  f"!= len(hits)={len(hits)}", file=sys.stderr)
+            return 1
+
+    print("[memory_v21_recall] (h) rank_with_diagnostic per-gate dropped_at OK",
+          file=sys.stderr)
+    return 0
+
+
+def _check_cold_start_gates() -> int:
+    """Pins `recall.cold_start_gates` — sparse memory returns relaxed
+    `(0.5, 0.0, 1)` gates; dense memory returns None so callers fall
+    through to the v1 defaults. The longitudinal benchmark (run #2)
+    caught the v1 defaults as a 20-session blackout on diverse-task
+    workloads; the run #3 prep probe showed top1_top2_gap also needed
+    relaxing because cold-corpus hits cluster tightly.
+    """
+    from resonance_lattice.memory.recall import (
+        COLD_START_COSINE_FLOOR,
+        COLD_START_MIN_RECURRENCE,
+        COLD_START_ROW_THRESHOLD,
+        COLD_START_TOP1_TOP2_GAP,
+        cold_start_gates,
+    )
+    expected = (
+        COLD_START_COSINE_FLOOR,
+        COLD_START_TOP1_TOP2_GAP,
+        COLD_START_MIN_RECURRENCE,
+    )
+    sparse = cold_start_gates(COLD_START_ROW_THRESHOLD - 1)
+    if sparse != expected:
+        print(f"[memory_v21_recall] FAIL (g): sparse memory returned "
+              f"{sparse!r} (want {expected!r})", file=sys.stderr)
+        return 1
+    dense = cold_start_gates(COLD_START_ROW_THRESHOLD)
+    if dense is not None:
+        print(f"[memory_v21_recall] FAIL (g): dense memory returned "
+              f"{dense!r} (want None)", file=sys.stderr)
+        return 1
+    boundary = cold_start_gates(0)
+    if boundary != expected:
+        print(f"[memory_v21_recall] FAIL (g): empty memory returned "
+              f"{boundary!r} (want {expected!r})", file=sys.stderr)
+        return 1
+    print("[memory_v21_recall] (g) cold-start gates relax below threshold OK",
+          file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     patch_zero_encoder()
     for check in [
@@ -338,6 +535,8 @@ def run() -> int:
         _check_top_k_truncation,
         _check_is_bad_excluded,
         _check_workspace_filter,
+        _check_cold_start_gates,
+        _check_rank_diagnostic,
     ]:
         rc = check()
         if rc != 0:

@@ -85,6 +85,25 @@ rlat freshness my-corpus.rlat   # read-only: are upstream SHAs still what we pin
 - Switching modes is `rlat convert <km> --to {bundled|local|remote}` (Audit 08) — preserves embeddings + drift hashes, no rebuild. See [CLI.md §rlat convert](CLI.md#rlat-convert-shipped-audit-08).
 - Drift is per-passage, not per-file: editing one line in a 5K-line file marks only the passages whose char-range actually changed.
 
+## Hosted (Fabric UDF)
+
+Sharing a `.rlat` with a team — single hosted copy, no per-user download. The `.rlat` lives in OneLake, queries go through a Fabric User Data Function:
+
+```bash
+rlat fabric add team=https://<udf-endpoint-url>
+rlat search fabric://team/team-docs "..."
+```
+
+This isn't a fourth `--store-mode`; the `.rlat` itself stays in any of the three modes above. Fabric hosting layers on top: the UDF reads the `.rlat` from OneLake, runs retrieval server-side, and returns hits over HTTPS. Auth is Microsoft Entra (device-code default; service-principal fallback).
+
+| Pro | Con |
+|---|---|
+| One `.rlat`, queryable by everyone on the workspace | Maintainer pays Fabric capacity-unit cost per call |
+| Re-upload `.rlat` → next query sees fresh content (mtime cache-bust) | Requires a Fabric workspace + UDF item |
+| First-call cold start ~5-15s; warm calls sub-second | Fabric UDFs are Python 3.11.9 only |
+
+See [FABRIC.md](FABRIC.md) for the end-to-end setup (build → OneLake upload → publish UDF → register alias).
+
 ## Picking a mode
 
 If you're not sure:
@@ -92,5 +111,6 @@ If you're not sure:
 - **You're building a knowledge model for yourself, against your own working repo.** Use `local`. Get drift detection. Rebuild as the corpus evolves.
 - **You're publishing a knowledge model for others to download.** Use `bundled` if the corpus is self-contained (consumers get a single file); use `remote` if the source belongs at canonical URLs (e.g. a tagged GitHub release — the manifest pins SHAs so a moved or rewritten upstream fails loud).
 - **You're shipping a knowledge model in CI / a Docker image / an air-gapped install.** Use `bundled`.
+- **You're sharing a knowledge model with a team where each user works in Claude Code / a local IDE.** Host it on Fabric — the maintainer publishes one UDF, each user runs `rlat fabric add` and queries via `fabric://`. See [FABRIC.md](FABRIC.md).
 
 For the technical layout (ZIP internals, NPZ format, manifest schema), see [docs/internal/STORE.md](../internal/STORE.md) and [docs/internal/KNOWLEDGE_MODEL_FORMAT.md](../internal/KNOWLEDGE_MODEL_FORMAT.md).

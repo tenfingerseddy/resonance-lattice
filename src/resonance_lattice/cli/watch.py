@@ -28,10 +28,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..build.walker import FilesystemSourceWalker
 from ..config import StoreMode
 from ..field.encoder import Encoder
 from ..store import incremental
-from .build import _walk_sources
 from ._load import load_build_spec, load_or_exit
 
 
@@ -165,26 +165,6 @@ def _log_refresh_error(state: _ArchiveState, exc: BaseException) -> None:
     )
 
 
-def _skipped_rel_set(
-    skipped: list[tuple[Path, str]], source_root: Path,
-) -> set[str]:
-    """Convert `_walk_sources`'s `skipped` paths to the rel-posix names
-    that match registry `source_file` keys. Mirrors the rel-path
-    computation in `_walk_sources` so a file walked as `docs/intro.md`
-    that becomes unreadable also keys as `docs/intro.md`."""
-    if not skipped:
-        return set()
-    root_resolved = source_root.resolve()
-    out: set[str] = set()
-    for path, _reason in skipped:
-        try:
-            rel = path.resolve().relative_to(root_resolved)
-        except ValueError:
-            rel = path.resolve()
-        out.add(rel.as_posix())
-    return out
-
-
 def _filter_skipped_removals(
     delta: incremental.BucketedDelta, skipped_rel: set[str],
 ) -> int:
@@ -193,7 +173,7 @@ def _filter_skipped_removals(
 
     Defends against the silent-delete hazard where a transient read
     failure (Windows file lock during save, mid-write UTF-8 decode
-    error) makes a real source file disappear from `_walk_sources`'s
+    error) makes a real source file disappear from the walker's
     output. Bucketise then marks every passage from that file as
     `removed`, and apply_delta writes the deletion. With this filter,
     a "we couldn't read it on this pass" outcome preserves the
@@ -224,12 +204,13 @@ def _refresh_one(
     call to serialise concurrent refreshes."""
     with state.lock:
         contents = load_or_exit(state.archive_path)
-        files, skipped = _walk_sources(
+        walker = FilesystemSourceWalker(
             state.source_paths, state.source_root, state.extensions,
         )
+        files = list(walker.iter_files())
         candidates = incremental.chunk_files(files, state.min_chars, state.max_chars)
         delta = incremental.bucketise(contents.registry, candidates)
-        skipped_rel = _skipped_rel_set(skipped, state.source_root)
+        skipped_rel = {rel for rel, _ in walker.skipped}
         preserved = _filter_skipped_removals(delta, skipped_rel)
         if preserved:
             print(
@@ -536,7 +517,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     )
 
     print("[rlat watch] loading encoder…", file=sys.stderr, flush=True)
-    encoder = Encoder(runtime="torch")
+    encoder = Encoder(runtime=getattr(args, "runtime", "auto"))
     print("[rlat watch] encoder ready", file=sys.stderr)
 
     debounce_ms = int(os.environ.get("RLAT_WATCH_DEBOUNCE_MS", "1000"))

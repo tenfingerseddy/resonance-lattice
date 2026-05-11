@@ -22,6 +22,11 @@ Pins four guarantees on `memory.daemon`:
       output contains the canonical recovery instruction. Always
       returns rc=0.
 
+  (e) Ready marker — daemon writes `.recall.ready` after encoder +
+      snapshot load, clears any stale marker first, removes the
+      marker on clean exit. The hook polls for the marker on cold
+      spawn instead of guessing at a boot-wait timeout.
+
 Hermetic — daemon servers run as in-process threads bound to
 per-test tempfile-derived addresses; no subprocesses, no real
 network.
@@ -291,6 +296,57 @@ def _check_doctor_recovery_lines() -> int:
 # ---------------------------------------------------------------------------
 
 
+def _check_ready_marker() -> int:
+    """The daemon writes `.recall.ready` after encoder + snapshot are
+    loaded so hook callers can poll for it instead of guessing at a
+    boot-wait timeout. Marker is removed on clean exit.
+    """
+    from resonance_lattice.memory.daemon import daemon_ready_path
+    from resonance_lattice.memory.store import Memory
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "u"
+        memory = Memory(root=root, encoder=ZeroEncoder())
+        _seed_50_rows(memory)
+
+        # Plant a stale marker so we can verify the daemon clears it
+        # before declaring readiness — a stale marker from a crashed
+        # previous daemon must not fake-out a fresh hook poll.
+        ready_path = daemon_ready_path(root)
+        ready_path.parent.mkdir(parents=True, exist_ok=True)
+        ready_path.write_text("stale-pid", encoding="utf-8")
+
+        address = isolated_daemon_address(root)
+        with booted_daemon(memory, address=address) as (server, _):
+            # Poll briefly — marker is written immediately after
+            # listener bind in serve_forever; booted_daemon returns
+            # when listener is up, so the marker should appear within
+            # a few hundred ms.
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline and not ready_path.exists():
+                time.sleep(0.02)
+            if not ready_path.exists():
+                print("[memory_v21_daemon] FAIL (e): marker not written after "
+                      "daemon boot", file=sys.stderr)
+                return 1
+            content = ready_path.read_text(encoding="utf-8").strip()
+            if content == "stale-pid":
+                print("[memory_v21_daemon] FAIL (e): stale marker not cleared "
+                      "before fresh daemon advertised", file=sys.stderr)
+                return 1
+        # Server stopped — marker should be cleaned up.
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and ready_path.exists():
+            time.sleep(0.02)
+        if ready_path.exists():
+            print("[memory_v21_daemon] FAIL (e): marker not removed on clean "
+                  "exit", file=sys.stderr)
+            return 1
+    print("[memory_v21_daemon] (e) ready marker write-on-boot + clear-on-exit OK",
+          file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     patch_zero_encoder()
     for check in [
@@ -298,6 +354,7 @@ def run() -> int:
         _check_p99_latency,
         _check_fail_open_on_crash,
         _check_doctor_recovery_lines,
+        _check_ready_marker,
     ]:
         rc = check()
         if rc != 0:

@@ -121,6 +121,18 @@ def _format_context(
 
 
 def cmd_search(args: argparse.Namespace) -> int:
+    if str(args.knowledge_model).startswith("fabric://"):
+        from . import _fabric
+        return _fabric.cmd_search_fabric(args)
+
+    if args.query is None:
+        print(
+            "error: query is required for path-style search "
+            "(only `fabric://<alias>` discovery may omit it)",
+            file=sys.stderr,
+        )
+        return 2
+
     km_path = Path(args.knowledge_model)
     contents = load_or_exit(km_path)
     handle = contents.select_band()
@@ -169,8 +181,11 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 def add_subparser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("search", help="Top-k retrieval")
-    p.add_argument("knowledge_model", help="Path to a .rlat knowledge model")
-    p.add_argument("query", help="Query text")
+    p.add_argument("knowledge_model",
+                   help="Path to a .rlat knowledge model, or a fabric://<alias>[/<km>] URL")
+    p.add_argument("query", nargs="?", default=None,
+                   help="Query text. Optional only for `fabric://<alias>` discovery; "
+                        "required for any path-style or `fabric://<alias>/<km>` search.")
     p.add_argument("--top-k", type=int, default=10, help="Number of hits (default: 10)")
     p.add_argument(
         "--format", default="text", choices=["text", "json", "context"],

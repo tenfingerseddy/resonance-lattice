@@ -1,0 +1,5 @@
+{"arc": "A", "open_session": 1, "title": "Understand the recall path end-to-end", "tasks": [1, 2, 3, 4, 5, 6]}
+{"arc": "B", "open_session": 7, "title": "Understand the consolidation pipeline", "tasks": [7, 8, 9, 10, 11, 12]}
+{"arc": "C", "open_session": 13, "title": "Understand the longitudinal scorecard substrate", "tasks": [13, 14, 15, 16, 17, 18]}
+{"arc": "D", "open_session": 19, "title": "Understand the rlat CLI surface", "tasks": [19, 20, 21, 22, 23, 24]}
+{"arc": "E", "open_session": 25, "title": "Cross-arc synthesis", "tasks": [25, 26, 27, 28, 29, 30]}

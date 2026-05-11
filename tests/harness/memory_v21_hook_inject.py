@@ -27,6 +27,20 @@ Pins the contracts for the synchronous `recall <query>` body, the
       cumulative char count would exceed `_MAX_INJECTION_CHARS`
       (~6000 chars / 1500 tokens). Never emits a half-row.
 
+  (f) Diagnostic log entry written on every recall outcome (no_store,
+      daemon_unreachable, no_hit, ok). The longitudinal-v3 bench
+      surfaced "16/20 sessions had no recall" without any way to
+      attribute the misses — the diagnostic log gives every miss a
+      `status` + `dropped_at` so future bench misses are explainable.
+
+  (g) `_recall_via_daemon_or_spawn` clears a stale `.recall.ready`
+      marker BEFORE spawning a daemon. A previous daemon killed
+      without running its finally (SIGKILL / OOM / reboot) leaves a
+      stale marker; without the pre-spawn clear, the polling loop
+      observes the stale marker immediately and tries to connect to
+      a nonexistent daemon — the v4 bench's 80% daemon_unreachable
+      rate from `claude -p` subprocesses traced to exactly this.
+
 Hermetic: no live encoder, no daemon spawn (the hook's connect-fail
 path is gated on `memory_root.exists()`); the spawn branch is
 exercised against a tempdir without a daemon, which makes the hook
@@ -328,8 +342,120 @@ def _check_token_budget() -> int:
 
 
 # ---------------------------------------------------------------------------
+# (f) diagnostic log written on every recall outcome
+# ---------------------------------------------------------------------------
+
+
+def _check_diagnostic_logged() -> int:
+    from resonance_lattice.memory.user_prompt import run_hook
+    from resonance_lattice.state import RecallDiagnosticLog, state_root_for
+
+    # Missing memory_root → status=no_store path. Use a tempdir as cwd
+    # so the diagnostic write target (`<cwd>/.rlat-state/ledger/`) is
+    # writable but otherwise empty before the call.
+    with tempfile.TemporaryDirectory() as td:
+        cwd = Path(td)
+        base = cwd / "missing-base"  # never mkdir
+        stdin = io.StringIO(json.dumps({
+            "prompt": "what should I prefer?",
+            "cwd": str(cwd),
+        }))
+        stdout, stderr = io.StringIO(), io.StringIO()
+        rc = run_hook(
+            stdin=stdin, stdout=stdout, stderr=stderr,
+            user_id="u", memory_root_base=base,
+        )
+        if rc != 0 or stdout.getvalue().strip() != "{}":
+            print(f"[memory_v21_hook_inject] FAIL (f.1): no-store path "
+                  f"rc={rc} stdout={stdout.getvalue()!r}", file=sys.stderr)
+            return 1
+        state_root = state_root_for(cwd)
+        entries = RecallDiagnosticLog(state_root).read_recent()
+        if len(entries) != 1:
+            print(f"[memory_v21_hook_inject] FAIL (f.1): expected 1 "
+                  f"diagnostic entry, got {len(entries)}", file=sys.stderr)
+            return 1
+        entry = entries[0]
+        if entry.status != "no_store":
+            print(f"[memory_v21_hook_inject] FAIL (f.1): expected "
+                  f"status=no_store, got {entry.status!r}", file=sys.stderr)
+            return 1
+        if entry.n_hits != 0 or entry.diagnostic is not None:
+            print(f"[memory_v21_hook_inject] FAIL (f.1): no-store entry "
+                  f"should have n_hits=0 diagnostic=None; got "
+                  f"n_hits={entry.n_hits} diagnostic={entry.diagnostic!r}",
+                  file=sys.stderr)
+            return 1
+    print("[memory_v21_hook_inject] (f) diagnostic entry logged on no-store "
+          "outcome OK", file=sys.stderr)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # entry point
 # ---------------------------------------------------------------------------
+
+
+def _check_stale_ready_marker_cleared_pre_spawn() -> int:
+    """`_recall_via_daemon_or_spawn` must unlink any pre-existing
+    `.recall.ready` marker BEFORE invoking `_spawn_daemon`, so the
+    subsequent poll loop only observes markers from the freshly
+    spawned daemon.
+
+    v4 bench root cause: a killed daemon left a stale marker; hook
+    polled, saw the marker instantly (0ms after spawn — impossibly
+    fast for a real daemon to advertise readiness), trusted it,
+    tried to connect to a nonexistent daemon, fell into the
+    daemon_unreachable path. Repeated across ~80% of `claude -p`
+    bench sessions.
+    """
+    from unittest.mock import patch
+
+    from resonance_lattice.memory.daemon import daemon_ready_path
+    from resonance_lattice.memory.user_prompt import _recall_via_daemon_or_spawn
+
+    with tempfile.TemporaryDirectory() as td:
+        memory_root = Path(td) / "u"
+        memory_root.mkdir(parents=True)
+        # Plant a stale marker that no live daemon backs.
+        ready_path = daemon_ready_path(memory_root)
+        ready_path.write_text("99999", encoding="utf-8")
+        assert ready_path.exists(), "fixture stale marker missing"
+
+        marker_seen_at_spawn: list[bool] = []
+
+        def _fake_spawn(root):
+            # Snapshot whether marker still exists at the moment we'd
+            # spawn. After the pre-spawn unlink, it must be gone.
+            marker_seen_at_spawn.append(ready_path.exists())
+
+        from resonance_lattice.memory.daemon import RecallRequest
+
+        # connect-first attempt will fail (no daemon, no real listener
+        # bound to the test address). After failure, the fix should
+        # unlink the stale marker before calling _spawn_daemon.
+        with patch(
+            "resonance_lattice.memory.user_prompt._spawn_daemon",
+            side_effect=_fake_spawn,
+        ):
+            _recall_via_daemon_or_spawn(
+                RecallRequest(query="probe", cwd_hash=None),
+                memory_root,
+            )
+
+    if not marker_seen_at_spawn:
+        print("[memory_v21_hook_inject] FAIL (g): _spawn_daemon was never "
+              "invoked — connect-first attempt didn't reach the spawn path",
+              file=sys.stderr)
+        return 1
+    if marker_seen_at_spawn[0]:
+        print("[memory_v21_hook_inject] FAIL (g): stale marker still present "
+              "at _spawn_daemon call — pre-spawn unlink didn't run",
+              file=sys.stderr)
+        return 1
+    print("[memory_v21_hook_inject] (g) stale ready-marker cleared pre-spawn OK",
+          file=sys.stderr)
+    return 0
 
 
 def run() -> int:
@@ -340,6 +466,8 @@ def run() -> int:
         _check_fail_open,
         _check_recall_cli_body,
         _check_token_budget,
+        _check_diagnostic_logged,
+        _check_stale_ready_marker_cleared_pre_spawn,
     ]:
         rc = check()
         if rc != 0:

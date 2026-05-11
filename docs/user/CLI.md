@@ -8,7 +8,8 @@ The complete v2.0 surface, in dispatch order:
 rlat install-encoder        # one-time: download + convert gte-modernbert-base
 rlat build <sources...>     # build a knowledge model from text sources
 rlat optimise km.rlat       # opt-in: train an in-corpus MRL optimised band
-rlat search km.rlat "..."   # single-shot top-k retrieval
+rlat search km.rlat "..."   # single-shot top-k retrieval (also: fabric://alias/km)
+rlat fabric add ...         # manage `fabric://` aliases for hosted UDFs
 rlat deep-search km.rlat "..."   # multi-hop research loop (Anthropic API key required; the in-session `deep-research` skill is the free equivalent)
 rlat profile km.rlat        # corpus shape / cluster / drift summary
 rlat compare a.rlat b.rlat  # cross-knowledge-model comparison (base band)
@@ -76,7 +77,7 @@ rlat build ./repo/src -o code.rlat --source-root ./repo
 1. Sources are walked recursively, sorted for cross-platform stability.
 2. Each file is decoded as UTF-8 (universal newlines — `\r\n` and `\r` normalised to `\n`); non-UTF-8 files are skipped with a one-line summary at the end.
 3. Each file is chunked via `passage_v1`: paragraph splits → sentence splits → hard splits at `--max-chars`. Chunks below `--min-chars` are merged into adjacent ones.
-4. Passages are encoded by `Alibaba-NLP/gte-modernbert-base` (CLS-pooled, L2-normalised, 768d) on the **torch** runtime — the build path always uses torch via `[build]` extras.
+4. Passages are encoded by `Alibaba-NLP/gte-modernbert-base` (CLS-pooled, L2-normalised, 768d). Runtime auto-resolves: OpenVINO on Intel CPUs, ONNX elsewhere, torch when explicitly requested via `--runtime torch` (requires `[build]` extra).
 5. A FAISS HNSW index is built when N > 5,000 passages (M=32, efConstruction=200, efSearch=128 — see [BENCHMARK_GATE.md](../internal/BENCHMARK_GATE.md)).
 6. If `--store-mode bundled`, source files are zstd-framed and stored under `source/` inside the ZIP.
 7. The `.rlat` is written atomically (tmp + rename).
@@ -172,6 +173,18 @@ By default a one-line banner is printed to **stderr**:
 Single-shot `rlat search --format context` honours the same name-verification check as `rlat skill-context`. When a distinctive proper noun, acronym, or alphanumeric ID from the query does not appear in any retrieved passage, a refusal directive is prepended to the rendered context body. Under `--strict-names`, the same condition exits non-zero (rc=3) so a calling tool can gate.
 
 This addresses the name-aliasing distractor failure mode score-based gating cannot — see `docs/internal/benchmarks/02_distractor_floor_analysis.md`.
+
+### `fabric://` URL form (hosted Fabric UDF)
+
+`rlat search` accepts `fabric://<alias>[/<km>]` as the knowledge-model argument. The alias is resolved against `~/.config/rlat/fabric.toml` (write entries via `rlat fabric add`); the request is POSTed to the UDF endpoint with Microsoft Entra auth (device-code by default; SP env vars when set). All `--top-k` / `--format` / `--mode` / `--verified-only` flags work identically — formatting is client-side.
+
+```bash
+rlat search fabric://team                  # discovery: list available KMs on this UDF
+rlat search fabric://team/team-docs "..."  # search a specific KM
+rlat search fabric://team/team-docs "..." --format context --mode constrain
+```
+
+See [FABRIC.md](FABRIC.md) for the end-to-end setup including the maintainer's UDF publish step.
 
 ---
 
@@ -833,3 +846,25 @@ Multiple `--query` flags emit blocks in submission order. Drifted source prepend
 
 For format contracts (the harness suite enforces 10 of them — including name-check warn + strict), see [SKILL_INTEGRATION.md](../internal/SKILL_INTEGRATION.md).
 
+
+---
+
+## `rlat fabric` *(shipped Phase 9)*
+
+Manage `fabric://<alias>` aliases used by `rlat search fabric://...`. Each alias maps to a Fabric User Data Function endpoint URL. See [FABRIC.md](FABRIC.md) for the maintainer-side UDF setup.
+
+```bash
+rlat fabric add team=https://<udf-endpoint-url>   # register an alias + scaffold the skill
+rlat fabric list                                   # show all registered aliases
+rlat fabric remove team                            # drop an alias
+rlat fabric publish-rlat ./team-docs.rlat \        # maintainer: upload .rlat + update _manifest.json
+    --workspace <ws-id> --lakehouse <lh-id>
+```
+
+Alias storage: `~/.config/rlat/fabric.toml` (override via `RLAT_FABRIC_CONFIG` env var).
+
+`publish-rlat` is the maintainer-side helper that uploads a local `.rlat` to `Files/<km-dir>/<km-name>.rlat` in the named Lakehouse and adds `<km-name>` to `Files/<km-dir>/_manifest.json` (so `rlat search fabric://<alias>` discovery surfaces it). Auth via `DefaultAzureCredential` — picks up `AZURE_CLIENT_ID/SECRET/TENANT_ID` env vars when set, falls back to Azure CLI / device-code otherwise. Idempotent; re-publish overwrites the .rlat and dedupes the manifest entry.
+
+**Skill scaffold.** Each `add`/`remove` rewrites `<cwd>/.claude/skills/rlat-fabric-search/SKILL.md` so Claude Code's skill list reflects the current alias set. The skill body wraps `rlat search fabric://<alias>` so Claude can invoke the UDF natively as a registered skill rather than reaching for raw Bash.
+
+**Auth.** First `rlat search fabric://...` call mints a Microsoft Entra token. Default is device-code flow (URL + code printed to stderr; sign in via browser); set `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID` env vars for silent service-principal auth. Token is cached to the OS keyring.
