@@ -1,0 +1,8 @@
+# Workspace-level Library Management is the recommended install path
+# (Fabric portal → User Data Functions item → Library Management). This
+# file is the project-local fallback for `func host start` emulator runs
+# and for tenants that prefer requirements.txt over Library Management.
+#
+# `fabric-user-data-functions` and `azure-functions` are pre-installed in
+# the Fabric runtime; pinning here is for the local emulator only.
+rlat[fabric,ann]>=2.1.0a13
