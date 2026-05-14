@@ -36,14 +36,15 @@ Once you have a `.rlat`, query-time only needs the base install — `pip install
 
 ### Don't want to build? Try a prebuilt `.rlat` first.
 
-Four launch-day knowledge models live on HuggingFace, ready to query in seconds — no encoder install, no build step. They use **remote storage mode** (passages reference the source repo at a pinned commit; sources are fetched on demand and SHA-verified at query time):
+Five prebuilt knowledge models live on HuggingFace, ready to query in seconds — no encoder install, no build step. The remote-mode rlats pin to the source repo at a commit SHA and fetch source on demand (SHA-verified at query time); the bundled-mode rlat packs source inside the archive:
 
-| Corpus | Source | Files | Passages |
-|---|---|---:|---:|
-| [`tenfingers/powerbi-developer-rlat`](https://huggingface.co/datasets/tenfingers/powerbi-developer-rlat) | [MicrosoftDocs/powerbi-docs](https://github.com/MicrosoftDocs/powerbi-docs) `powerbi-docs/developer` | 176 | 5,684 |
-| [`tenfingers/powershell-docs-rlat`](https://huggingface.co/datasets/tenfingers/powershell-docs-rlat) | [MicrosoftDocs/PowerShell-Docs](https://github.com/MicrosoftDocs/PowerShell-Docs) `reference` | 2,647 | 107,033 |
-| [`tenfingers/python-stdlib-rlat`](https://huggingface.co/datasets/tenfingers/python-stdlib-rlat) | [python/cpython](https://github.com/python/cpython) `Doc` | 617 | 49,179 |
-| [`tenfingers/tsql-docs-rlat`](https://huggingface.co/datasets/tenfingers/tsql-docs-rlat) | [MicrosoftDocs/sql-docs](https://github.com/MicrosoftDocs/sql-docs) `docs/t-sql` | 1,209 | 33,282 |
+| Corpus | Source | Files | Passages | Mode |
+|---|---|---:|---:|---|
+| [`tenfingers/fabric-docs-rlat`](https://huggingface.co/datasets/tenfingers/fabric-docs-rlat) | [MicrosoftDocs/fabric-docs](https://github.com/MicrosoftDocs/fabric-docs) `docs` | 2,435 | 67,503 | bundled + optimised band |
+| [`tenfingers/powerbi-developer-rlat`](https://huggingface.co/datasets/tenfingers/powerbi-developer-rlat) | [MicrosoftDocs/powerbi-docs](https://github.com/MicrosoftDocs/powerbi-docs) `powerbi-docs/developer` | 176 | 5,684 | remote |
+| [`tenfingers/powershell-docs-rlat`](https://huggingface.co/datasets/tenfingers/powershell-docs-rlat) | [MicrosoftDocs/PowerShell-Docs](https://github.com/MicrosoftDocs/PowerShell-Docs) `reference` | 2,647 | 107,033 | remote |
+| [`tenfingers/python-stdlib-rlat`](https://huggingface.co/datasets/tenfingers/python-stdlib-rlat) | [python/cpython](https://github.com/python/cpython) `Doc` | 617 | 49,179 | remote |
+| [`tenfingers/tsql-docs-rlat`](https://huggingface.co/datasets/tenfingers/tsql-docs-rlat) | [MicrosoftDocs/sql-docs](https://github.com/MicrosoftDocs/sql-docs) `docs/t-sql` | 1,209 | 33,282 | remote |
 
 ```bash
 pip install rlat
@@ -51,7 +52,7 @@ huggingface-cli download tenfingers/python-stdlib-rlat python-stdlib.rlat --loca
 rlat search python-stdlib.rlat "asyncio Task cancellation" --top-k 5
 ```
 
-All four are encoded with `gte-modernbert-base` 768d at the pinned revision documented in [`docs/internal/BENCHMARK_GATE.md`](docs/internal/BENCHMARK_GATE.md), so retrieval quality matches anything you build locally with the same recipe.
+All five are encoded with `gte-modernbert-base` 768d at the pinned revision documented in [`docs/internal/BENCHMARK_GATE.md`](docs/internal/BENCHMARK_GATE.md), so retrieval quality matches anything you build locally with the same recipe. The fabric-docs rlat also ships an MRL-trained optimised band (512d) — matched A/B benchmark shows ≈4× hallucination reduction over the base band on the 63-question Fabric test set.
 
 ## A real query, end-to-end
 
