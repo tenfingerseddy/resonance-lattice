@@ -12,22 +12,32 @@ Drift status:
 - "drifted"  — source exists but hash mismatches.
 - "missing"  — source file no longer exists.
 
-Phase 2 deliverable. Ports the v0.11 surface verbatim.
+InsightHit is the sibling type for the lensed-knowledge insight layer. The
+two stay structurally distinct on purpose (trust-contract foundation 5:
+source and insight must be visibly different at every output surface).
+Code that consumes hits dispatches on type / `layer` field.
+
+Phase 2 deliverable. Ports the v0.11 surface verbatim. Day 1 of the
+lensed-knowledge build adds InsightHit + composition.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from .base import DriftStatus, RemoteShaMismatch, Store, compute_hash
+from .insight import InsightCitation, InsightKind, InsightPassage, VerdictState
 from .registry import PassageCoord
 
 __all__ = [
     "DriftStatus",
+    "InsightHit",
     "VerifiedHit",
     "compute_hash",
     "filter_verified",
     "verify_hits",
+    "verify_insight_hits",
 ]
 
 
@@ -41,10 +51,62 @@ class VerifiedHit:
     drift_status: DriftStatus
     score: float
     text: str
+    # Layer discriminator — kept on both hit types so a mixed list of
+    # SourceHit-shaped VerifiedHits and InsightHits can be filtered by
+    # `[h for h in hits if h.layer == "source"]` without isinstance checks.
+    layer: Literal["source"] = "source"
 
 
-def filter_verified(hits: list[VerifiedHit]) -> list[VerifiedHit]:
-    """Drop drifted/missing hits."""
+# Insight verdict_state → display-layer drift_status mapping. Source-only
+# rendering paths can treat InsightHit.drift_status uniformly with VerifiedHit's
+# even though the underlying semantics differ.
+_INSIGHT_STATE_TO_DRIFT: dict[VerdictState, DriftStatus] = {
+    "accepted": "verified",
+    "stale": "drifted",
+    "candidate": "drifted",
+    "rejected": "missing",
+    "rejected_corrected": "missing",
+    "retired": "missing",
+}
+
+
+@dataclass(frozen=True)
+class InsightHit:
+    """One insight-layer retrieval hit. Sibling of VerifiedHit.
+
+    `insight_idx` joins the insight band to the row. `insight_id` is the
+    stable content-derived id (see `store.insight.compute_insight_id`) and
+    serves the same role as `content_hash` does for source hits.
+
+    `verdict_state` is the canonical state; `drift_status` is derived
+    from it via `_INSIGHT_STATE_TO_DRIFT` so callers can apply
+    `filter_verified` uniformly across source and insight hits.
+    """
+    insight_idx: int
+    insight_id: str
+    kind: InsightKind
+    content: str
+    citations: tuple[InsightCitation, ...]
+    source_passage_hashes: tuple[str, ...]
+    verdict_state: VerdictState
+    confidence: float
+    generated_at: str
+    intent_context: str | None
+    score: float
+    layer: Literal["insight"] = "insight"
+
+    @property
+    def drift_status(self) -> DriftStatus:
+        return _INSIGHT_STATE_TO_DRIFT[self.verdict_state]
+
+
+def filter_verified(hits: "list[VerifiedHit] | list[InsightHit] | list") -> list:
+    """Drop drifted/missing hits across either source or insight layers.
+
+    Mixed lists are supported — VerifiedHit and InsightHit both carry
+    `drift_status` (InsightHit's is derived from verdict_state) so the
+    filter is uniform.
+    """
     return [h for h in hits if h.drift_status == "verified"]
 
 
@@ -120,5 +182,50 @@ def verify_hits(
             drift_status=drift_status,
             score=float(score),
             text=text,
+        ))
+    return out
+
+
+def verify_insight_hits(
+    hits: list[tuple[int, float]],
+    insights: list[InsightPassage],
+    *,
+    include_stale: bool = False,
+) -> list[InsightHit]:
+    """Resolve `(insight_idx, score)` hits into `InsightHit`s.
+
+    `verdict_state` drives the derived `drift_status` for uniform rendering:
+    accepted → verified, stale/candidate → drifted, rejected* / retired →
+    missing. `include_stale=False` (the default) filters stale rows out
+    silently — the same way `--verified-only` filters drifted source hits.
+
+    Retired and rejected rows are always excluded regardless of
+    `include_stale` because they're not "fresh-but-stale" — they're final
+    states with no path back into retrieval.
+
+    Raises `IndexError` if any `insight_idx` is out of range — programming
+    error, same as `verify_hits`.
+    """
+    from .insight import FINAL_STATES, PENDING_STATES
+
+    out: list[InsightHit] = []
+    for insight_idx, score in hits:
+        row = insights[insight_idx]
+        if row.verdict_state in FINAL_STATES:
+            continue
+        if row.verdict_state in PENDING_STATES and not include_stale:
+            continue
+        out.append(InsightHit(
+            insight_idx=insight_idx,
+            insight_id=row.insight_id,
+            kind=row.kind,
+            content=row.content,
+            citations=row.citations,
+            source_passage_hashes=row.source_passage_hashes,
+            verdict_state=row.verdict_state,
+            confidence=row.confidence,
+            generated_at=row.generated_at,
+            intent_context=row.intent_context,
+            score=float(score),
         ))
     return out

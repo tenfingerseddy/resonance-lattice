@@ -675,6 +675,202 @@ def _check_dropped_at_distribution() -> int:
     return 0
 
 
+def _check_paired_comparison() -> int:
+    """(n) `paired_comparison(arm_on, arm_off)` joins two scorecard lists
+    index-wise, computes per-session deltas + summary stats. Pass
+    condition: `mean_useful_delta > 0` AND positive sessions > negative.
+
+    Why this exists (not just WindowComparison): four single-arm v4
+    runs of the same 30 prompts produced useful_axis 0.714 → 1.000.
+    Cross-run variance dominates single-arm conclusions. Paired runs
+    cancel the variance by holding the prompt set + run conditions
+    fixed and varying only the substrate's contribution.
+    """
+    from resonance_lattice.state import (
+        SessionScorecard, WindowSpec, paired_comparison,
+    )
+
+    def _card(useful_frac, touches, satisfied, label):
+        # useful_frac = satisfied_weight / total_weight (treating
+        # everything as weight=1.0 for simplicity).
+        c = SessionScorecard(window=WindowSpec(
+            since="", until="", label=label,
+        ))
+        c.intents_satisfied_weight = useful_frac
+        c.intents_total_weight = 1.0
+        c.intents_satisfied_count = satisfied
+        c.intents_total_count = 1
+        c.user_touches = touches
+        return c
+
+    # On-arm clearly better: 3 wins, 1 loss, 1 tie. Mean delta positive.
+    arm_on = [
+        _card(0.9, 4, 1, "s1"),
+        _card(0.8, 5, 1, "s2"),
+        _card(0.7, 3, 1, "s3"),
+        _card(0.5, 8, 1, "s4"),  # loss
+        _card(0.6, 6, 1, "s5"),  # tie
+    ]
+    arm_off = [
+        _card(0.6, 6, 1, "s1"),
+        _card(0.5, 7, 1, "s2"),
+        _card(0.4, 5, 1, "s3"),
+        _card(0.7, 4, 1, "s4"),
+        _card(0.6, 6, 1, "s5"),
+    ]
+    comp = paired_comparison(arm_on, arm_off)
+    if comp.n_sessions != 5:
+        print(f"[state_eval] FAIL (n.1): n={comp.n_sessions}", file=sys.stderr)
+        return 1
+    expected_deltas = [0.3, 0.3, 0.3, -0.2, 0.0]
+    for got, want in zip(comp.per_session_useful_deltas, expected_deltas):
+        if abs(got - want) > 1e-9:
+            print(f"[state_eval] FAIL (n.2): deltas mismatch — "
+                  f"{comp.per_session_useful_deltas!r}", file=sys.stderr)
+            return 1
+    # mean = (0.3+0.3+0.3-0.2+0.0)/5 = 0.14
+    if abs(comp.mean_useful_delta - 0.14) > 1e-9:
+        print(f"[state_eval] FAIL (n.3): mean={comp.mean_useful_delta!r}",
+              file=sys.stderr)
+        return 1
+    if comp.n_useful_positive != 3 or comp.n_useful_negative != 1 \
+       or comp.n_useful_zero != 1:
+        print(f"[state_eval] FAIL (n.4): direction counts "
+              f"+{comp.n_useful_positive} -{comp.n_useful_negative} "
+              f"={comp.n_useful_zero}", file=sys.stderr)
+        return 1
+    if comp.cohen_d_z_useful is None or comp.cohen_d_z_useful <= 0:
+        print(f"[state_eval] FAIL (n.5): cohen_d_z="
+              f"{comp.cohen_d_z_useful!r} (want positive)", file=sys.stderr)
+        return 1
+    if not comp.useful_passed:
+        print("[state_eval] FAIL (n.6): useful should pass — mean +0.14, "
+              "3 wins vs 1 loss", file=sys.stderr)
+        return 1
+    # Mean effortless: on-arm touches lower in 3/5, higher in 1/5, equal
+    # in 1/5; mean delta negative → effortless passes.
+    if comp.mean_effortless_delta >= 0:
+        print(f"[state_eval] FAIL (n.7): mean_effortless_delta="
+              f"{comp.mean_effortless_delta!r} (want < 0)", file=sys.stderr)
+        return 1
+    if not comp.benchmark_passed:
+        print("[state_eval] FAIL (n.8): benchmark should pass", file=sys.stderr)
+        return 1
+
+    # Effortless NaN: zero satisfied in either arm → that session's
+    # effortless delta is NaN and skipped from the mean.
+    arm_on2 = [_card(0.0, 5, 0, "s1"), _card(0.5, 4, 1, "s2")]
+    arm_off2 = [_card(0.0, 5, 0, "s1"), _card(0.3, 6, 1, "s2")]
+    comp2 = paired_comparison(arm_on2, arm_off2)
+    finite = [d for d in comp2.per_session_effortless_deltas if d == d]
+    if len(finite) != 1:
+        print(f"[state_eval] FAIL (n.9): expected 1 finite effortless delta "
+              f"(s1 has zero satisfied → NaN); got "
+              f"{comp2.per_session_effortless_deltas!r}", file=sys.stderr)
+        return 1
+
+    # Length mismatch raises.
+    try:
+        paired_comparison(arm_on, arm_on[:3])
+    except ValueError:
+        pass
+    else:
+        print("[state_eval] FAIL (n.10): length mismatch should raise",
+              file=sys.stderr)
+        return 1
+
+    print("[state_eval] (n) paired_comparison + pass-condition OK",
+          file=sys.stderr)
+    return 0
+
+
+def _check_paired_useful_pass_requires_effect_size() -> int:
+    """(o) `useful_passed` requires `cohen_d_z_useful >= 0.2` in addition
+    to mean>0 + wins>losses.
+
+    Why: v5_paired produced mean useful_delta +0.006 with 4 wins / 3
+    losses / 23 ties on 30 sessions. Under the old (mean > 0 AND wins
+    > losses) condition it nominally "passed useful" but cohen_d_z was
+    0.019 — binomial coin-flip with vanishing magnitude. v5_paired2
+    cleared d_z=0.318 with the same wins-vs-losses ratio shape and
+    mean +0.094, which is "small effect" by conventional thresholds.
+    The d_z gate keeps the pass condition honest.
+    """
+    from resonance_lattice.state import (
+        SessionScorecard, WindowSpec, paired_comparison,
+    )
+
+    def _card(useful_frac, touches, satisfied, label):
+        c = SessionScorecard(window=WindowSpec(
+            since="", until="", label=label,
+        ))
+        c.intents_satisfied_weight = useful_frac
+        c.intents_total_weight = 1.0
+        c.intents_satisfied_count = satisfied
+        c.intents_total_count = 1
+        c.user_touches = touches
+        return c
+
+    # v5_paired shape: +4 wins, -3 losses, 23 ties; tiny mean delta.
+    # Old rule passed useful; new rule must fail.
+    arm_on_low_dz: list[SessionScorecard] = []
+    arm_off_low_dz: list[SessionScorecard] = []
+    # 4 wins at +0.10
+    for i in range(4):
+        arm_on_low_dz.append(_card(1.0, 4, 1, f"s_win_{i}"))
+        arm_off_low_dz.append(_card(0.9, 4, 1, f"s_win_{i}"))
+    # 3 losses at -0.10
+    for i in range(3):
+        arm_on_low_dz.append(_card(0.9, 4, 1, f"s_loss_{i}"))
+        arm_off_low_dz.append(_card(1.0, 4, 1, f"s_loss_{i}"))
+    # 23 ties at 0
+    for i in range(23):
+        arm_on_low_dz.append(_card(1.0, 4, 1, f"s_tie_{i}"))
+        arm_off_low_dz.append(_card(1.0, 4, 1, f"s_tie_{i}"))
+    low_dz = paired_comparison(arm_on_low_dz, arm_off_low_dz)
+    if low_dz.mean_useful_delta <= 0:
+        print(f"[state_eval] FAIL (o.1): fixture should have positive mean "
+              f"useful_delta; got {low_dz.mean_useful_delta!r}",
+              file=sys.stderr)
+        return 1
+    if low_dz.n_useful_positive <= low_dz.n_useful_negative:
+        print(f"[state_eval] FAIL (o.2): fixture should have wins>losses; "
+              f"got +{low_dz.n_useful_positive} -{low_dz.n_useful_negative}",
+              file=sys.stderr)
+        return 1
+    if low_dz.cohen_d_z_useful is None or low_dz.cohen_d_z_useful >= 0.2:
+        print(f"[state_eval] FAIL (o.3): fixture should produce cohen_d_z<0.2 "
+              f"(low effect size); got {low_dz.cohen_d_z_useful!r}",
+              file=sys.stderr)
+        return 1
+    if low_dz.useful_passed:
+        print(f"[state_eval] FAIL (o.4): low-effect-size useful should NOT "
+              f"pass despite mean>0 + wins>losses; "
+              f"cohen_d_z={low_dz.cohen_d_z_useful:.3f}", file=sys.stderr)
+        return 1
+
+    # v5_paired2 shape: clear-effect fixture should pass.
+    arm_on_high_dz: list[SessionScorecard] = []
+    arm_off_high_dz: list[SessionScorecard] = []
+    for i in range(5):
+        arm_on_high_dz.append(_card(1.0, 4, 1, f"s_win_{i}"))
+        arm_off_high_dz.append(_card(0.5, 4, 1, f"s_win_{i}"))
+    arm_on_high_dz.append(_card(0.5, 4, 1, "s_loss"))
+    arm_off_high_dz.append(_card(1.0, 4, 1, "s_loss"))
+    for i in range(24):
+        arm_on_high_dz.append(_card(1.0, 4, 1, f"s_tie_{i}"))
+        arm_off_high_dz.append(_card(1.0, 4, 1, f"s_tie_{i}"))
+    high_dz = paired_comparison(arm_on_high_dz, arm_off_high_dz)
+    if not high_dz.useful_passed:
+        print(f"[state_eval] FAIL (o.5): high-effect-size useful should "
+              f"pass: mean={high_dz.mean_useful_delta:.3f} "
+              f"d_z={high_dz.cohen_d_z_useful!r}", file=sys.stderr)
+        return 1
+    print("[state_eval] (o) useful_passed requires cohen_d_z>=0.2 OK",
+          file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     for check in [
         _check_empty_window,
@@ -690,6 +886,8 @@ def run() -> int:
         _check_session_marker_fallback_when_absent,
         _check_weekly_windows,
         _check_dropped_at_distribution,
+        _check_paired_comparison,
+        _check_paired_useful_pass_requires_effect_size,
     ]:
         rc = check()
         if rc != 0:

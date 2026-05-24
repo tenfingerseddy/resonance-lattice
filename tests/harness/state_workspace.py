@@ -131,6 +131,48 @@ def _check_redeclaration_overwrites() -> int:
     return 0
 
 
+def _check_resolve_state_root_env_override() -> int:
+    """(f) `resolve_state_root` honours the `RLAT_STATE_ROOT` env
+    override — used by paired benches to isolate the intent graph +
+    outcome ledger from the dogfood workspace. Unset → falls back to
+    `<workspace-root>/.rlat-state/`.
+    """
+    import os
+
+    from resonance_lattice.state import (
+        STATE_ROOT_ENV,
+        resolve_state_root,
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        cwd = Path(td) / "proj"
+        cwd.mkdir()
+        override = Path(td) / "isolated-state"
+
+        prior = os.environ.get(STATE_ROOT_ENV)
+        try:
+            os.environ[STATE_ROOT_ENV] = str(override)
+            got = resolve_state_root(cwd)
+            if got != override:
+                print(f"[state_workspace] FAIL (f): override ignored — "
+                      f"got {got!r} want {override!r}", file=sys.stderr)
+                return 1
+            del os.environ[STATE_ROOT_ENV]
+            fallback = resolve_state_root(cwd)
+            if fallback.name != ".rlat-state":
+                print(f"[state_workspace] FAIL (f): fallback not "
+                      f".rlat-state — got {fallback!r}", file=sys.stderr)
+                return 1
+        finally:
+            if prior is not None:
+                os.environ[STATE_ROOT_ENV] = prior
+            else:
+                os.environ.pop(STATE_ROOT_ENV, None)
+    print("[state_workspace] (f) RLAT_STATE_ROOT env override OK",
+          file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     for check in [
         _check_cwd_fallback,
@@ -138,6 +180,7 @@ def run() -> int:
         _check_declaration_no_explicit_id,
         _check_subdir_resolves_to_root,
         _check_redeclaration_overwrites,
+        _check_resolve_state_root_env_override,
     ]:
         rc = check()
         if rc != 0:

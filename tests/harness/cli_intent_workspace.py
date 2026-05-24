@@ -17,6 +17,11 @@ Drives the CLI dispatcher with a temp workspace and exercises:
 
   (f) `rlat intent accept` on an unknown id surfaces a user error.
 
+  (i) `rlat intent capture-plan` writes a proposed task + steps.
+
+  (j) `rlat intent activate <id>` flips a proposed intent to active;
+      an unknown id surfaces a user error.
+
 Hermetic — temp dir + `--cwd`; no encoder, no LLM, no shell.
 """
 
@@ -323,6 +328,46 @@ def _check_capture_plan_writes_proposed() -> int:
     return 0
 
 
+def _check_activate_flips_proposed() -> int:
+    """(j) `rlat intent activate <id>` flips a proposed intent to active;
+    an unknown id surfaces a user error."""
+    from resonance_lattice.cli.app import main
+    from resonance_lattice.state import resolve_state_root
+    from resonance_lattice.state.intent import LiveIntentStore
+
+    with tempfile.TemporaryDirectory() as td:
+        store = LiveIntentStore(resolve_state_root(Path(td)))
+        proposed = store.add_intent(
+            level="task", text="adopt me", stance="do",
+            achievability="medium", success_criteria=[], constraints=[],
+            status="proposed",
+        )
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = main(["intent", "--cwd", td, "activate", proposed.intent_id])
+        if rc != 0 or "active:" not in out.getvalue():
+            print(f"[cli_intent_workspace] FAIL (j): activate rc={rc} "
+                  f"out={out.getvalue()!r} err={err.getvalue()!r}",
+                  file=sys.stderr)
+            return 1
+        live = {i.intent_id: i for i in store.list_active()}
+        if live[proposed.intent_id].status != "active":
+            print(f"[cli_intent_workspace] FAIL (j): status="
+                  f"{live[proposed.intent_id].status!r}", file=sys.stderr)
+            return 1
+
+        out2, err2 = io.StringIO(), io.StringIO()
+        with redirect_stdout(out2), redirect_stderr(err2):
+            rc = main(["intent", "--cwd", td, "activate", "NO_SUCH_ID"])
+        if rc != 1:
+            print(f"[cli_intent_workspace] FAIL (j): unknown-id rc={rc} "
+                  f"(want 1)", file=sys.stderr)
+            return 1
+    print("[cli_intent_workspace] (j) activate flips proposed → active OK",
+          file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     for check in [
         _check_workspace_declare_status,
@@ -333,6 +378,7 @@ def run() -> int:
         _check_path_live_chain,
         _check_path_unknown_id_user_error,
         _check_capture_plan_writes_proposed,
+        _check_activate_flips_proposed,
     ]:
         rc = check()
         if rc != 0:

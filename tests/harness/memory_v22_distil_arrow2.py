@@ -361,6 +361,132 @@ def _check_hedge_phrase_rejected() -> int:
     return 0
 
 
+def _check_cold_start_arrow2_gates() -> int:
+    """(h) `cold_start_arrow2_gates(n_rows)` returns relaxed
+    `(min_attributions=1,)` when memory is sparse, else None. Mirrors
+    `recall.cold_start_gates` and `distil_arrow1.cold_start_arrow1_gates`,
+    using the same `COLD_START_ROW_THRESHOLD` so the "sparse memory"
+    definition stays consistent across recall, arrow1 promotion, and
+    arrow2 promotion.
+
+    Motivation: v5_paired* benches consistently produced 1-2 patterns
+    but 0 learnings because no pattern hit ≥2 outcome attributions.
+    With 5 arc-shaped prompt clusters and 6 sessions per arc, the
+    typical pattern gets surfaced ~1 time when later same-arc prompts
+    fire — borderline against the default min_attributions=2. Cold-start
+    relax lets a single attribution attempt promotion.
+    """
+    from resonance_lattice.memory.distil_arrow2 import cold_start_arrow2_gates
+    from resonance_lattice.memory.recall import COLD_START_ROW_THRESHOLD
+
+    relaxed = cold_start_arrow2_gates(0)
+    if relaxed != (1,):
+        print(f"[memory_v22_distil_arrow2] FAIL (h.1): empty store should "
+              f"return (1,); got {relaxed!r}", file=sys.stderr)
+        return 1
+    if cold_start_arrow2_gates(COLD_START_ROW_THRESHOLD - 1) != (1,):
+        print(f"[memory_v22_distil_arrow2] FAIL (h.2): below threshold "
+              f"should relax", file=sys.stderr)
+        return 1
+    if cold_start_arrow2_gates(COLD_START_ROW_THRESHOLD) is not None:
+        print(f"[memory_v22_distil_arrow2] FAIL (h.3): at threshold should "
+              f"NOT relax (strict <)", file=sys.stderr)
+        return 1
+    print("[memory_v22_distil_arrow2] (h) cold-start arrow2 gates OK",
+          file=sys.stderr)
+    return 0
+
+
+def _check_cold_start_promotes_single_attribution() -> int:
+    """(i) When memory is sparse AND `auto_tune_cold_start=True`,
+    `arrow2_pass` accepts a pattern with exactly 1 outcome attribution
+    that the default threshold (2) would reject.
+
+    This is the v5_paired blocker: patterns formed but no learnings
+    because attribution count was 1 in arcs where patterns existed.
+
+    Inverse check: `auto_tune_cold_start=False` correctly leaves the
+    default trigger in place.
+
+    Explicit caller override check: passing `min_attributions=2` even
+    with auto_tune=True correctly enforces the explicit threshold.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from resonance_lattice.memory.distil_arrow2 import arrow2_pass
+    from resonance_lattice.memory.store import Memory
+
+    with tempfile.TemporaryDirectory() as td:
+        memory = Memory(root=Path(td) / "u", encoder=_AlignedEncoder())
+        # Plant a pattern row with embedding on dim-0 (aligned encoder
+        # outputs unit-on-dim-0 vectors so post-LLM cosine alignment
+        # check passes).
+        memory.add_row(
+            text="pattern about logging tool calls",
+            polarity=["factual"],
+            transcript_hash="distilled:planted",
+            embedding=_unit(1.0),
+            level="pattern",
+            origin="distilled",
+        )
+        rows, _ = memory.read_all()
+        pattern_row_id = rows[0].row_id
+        outcomes = [_outcome(row_id=pattern_row_id, verdict="satisfied")]
+
+        promote_llm = lambda system, msgs, tokens: LLMResponse(
+            json.dumps({
+                "promote": True,
+                "text": "log tool calls when debugging side effects",
+                "polarity": "prefer",
+            }),
+            30, 15,
+        )
+        result = arrow2_pass(
+            memory, outcomes=outcomes, llm=promote_llm,
+            encoder=_AlignedEncoder(), dry_run=True,
+        )
+        if result.candidates_found != 1:
+            print(f"[memory_v22_distil_arrow2] FAIL (i.1): cold-start auto-tune "
+                  f"should find 1 candidate from a single-attribution pattern; "
+                  f"got candidates_found={result.candidates_found}",
+                  file=sys.stderr)
+            return 1
+        if len(result.promoted_row_ids) != 1:
+            print(f"[memory_v22_distil_arrow2] FAIL (i.2): expected 1 promoted "
+                  f"row; got {result.promoted_row_ids!r} rejections="
+                  f"{result.rejections!r}", file=sys.stderr)
+            return 1
+
+        # Auto-tune disabled → default min_attributions=2 → no candidate.
+        result_off = arrow2_pass(
+            memory, outcomes=outcomes, llm=promote_llm,
+            encoder=_AlignedEncoder(), dry_run=True,
+            auto_tune_cold_start=False,
+        )
+        if result_off.candidates_found != 0:
+            print(f"[memory_v22_distil_arrow2] FAIL (i.3): default-gates pass "
+                  f"should find 0 candidates with 1 attribution; got "
+                  f"{result_off.candidates_found}", file=sys.stderr)
+            return 1
+
+        # Explicit caller override wins.
+        result_override = arrow2_pass(
+            memory, outcomes=outcomes, llm=promote_llm,
+            encoder=_AlignedEncoder(), dry_run=True,
+            min_attributions=2,
+        )
+        if result_override.candidates_found != 0:
+            print(f"[memory_v22_distil_arrow2] FAIL (i.4): explicit "
+                  f"min_attributions=2 should override cold-start relax",
+                  file=sys.stderr)
+            return 1
+
+    print("[memory_v22_distil_arrow2] (i) cold-start auto-tune promotes "
+          "single-attribution patterns + override wins OK", file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     for check in [
         _check_candidate_discovery,
@@ -371,6 +497,8 @@ def run() -> int:
         _check_incidental_excluded,
         _check_hedge_phrase_rejected,
         _check_outcome_citations_collected_and_built,
+        _check_cold_start_arrow2_gates,
+        _check_cold_start_promotes_single_attribution,
     ]:
         rc = check()
         if rc != 0:

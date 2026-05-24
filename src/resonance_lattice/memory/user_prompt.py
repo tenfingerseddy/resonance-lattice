@@ -50,8 +50,15 @@ _MAX_INJECTION_CHARS = 6000
 # below: after spawn we poll `daemon_ready_path` until either the
 # marker appears (encoder + snapshot loaded → safe to connect) or
 # `_DAEMON_READY_POLL_BUDGET_S` elapses (give up, fail-open).
+#
+# Cold-spawn retry budget is matched to the first-attempt budget — a
+# fresh hook subprocess on Windows pays ~440-900ms for the named-pipe
+# handshake (see `daemon.DEFAULT_TIMEOUT_MS` comment), and the older
+# 500ms retry budget (=> 300ms connect budget after the 60% fraction)
+# was too tight. v4.1 bench reproduced this: attempt-2 connected to
+# a freshly-bound daemon but timed out before the handshake completed.
 _DAEMON_BOOT_WAIT_S = 0.1
-_DAEMON_RETRY_TIMEOUT_MS = 500
+_DAEMON_RETRY_TIMEOUT_MS = 2000
 _DAEMON_READY_POLL_INTERVAL_S = 0.1
 _DAEMON_READY_POLL_BUDGET_S = 5.0
 
@@ -187,11 +194,9 @@ def _log_diagnostic(
             RecallDiagnosticLog,
             hash_prompt,
             make_turn_id,
-            resolve_workspace,
-            state_root_for,
+            resolve_state_root,
         )
-        identity = resolve_workspace(cwd)
-        state_root = state_root_for(identity.root)
+        state_root = resolve_state_root(cwd)
         if intent_id is _UNSET:
             resolved_intent_id = _resolve_active_intent_id(state_root)
         else:
@@ -382,6 +387,28 @@ def run_hook(
         json.dump({}, stdout)
         return 0
 
+    # Paired-bench arm B: RLAT_DISABLE_HOOK=1 fast-exits with `{}` and
+    # records a `status=disabled` diagnostic so the off-arm can still
+    # account for "how many recalls would have fired here." Narrowly
+    # scoped — this flag suppresses recall INJECTION only; SessionEnd
+    # capture still runs if invoked. Callers wanting an end-to-end
+    # memory-off arm (e.g. Option 1 clean comparison) must also skip
+    # the capture invocation at their layer. Placed AFTER the stdin/
+    # prompt gates so disabled-arm diagnostics carry a real prompt_hash
+    # (lets per-session paired join key off `(arm, prompt_hash)`).
+    if os.environ.get("RLAT_DISABLE_HOOK") == "1":
+        # Pass intent_id=None explicitly so the disabled-arm path skips
+        # `_resolve_active_intent_id`'s LiveIntentStore scan — the
+        # paired-bench off arm doesn't need intent attribution and the
+        # disabled-arm fast-exit should stay cheap.
+        _log_diagnostic(
+            cwd=cwd, prompt=prompt, intent_kind="none",
+            status="disabled", n_hits=0, diagnostic=None,
+            intent_id=None,
+        )
+        json.dump({}, stdout)
+        return 0
+
     # Heavy imports gated behind the fast-exit checks above so bad-stdin
     # / empty-prompt fail-open paths skip the encoder + multiprocessing
     # + portalocker import chain.
@@ -414,10 +441,45 @@ def run_hook(
     # the daemon's manifesto re-rank without touching the 200ms hot-path
     # budget. "none" preserves the v2.1 cosine-only ordering.
     intent_kind = classify_intent_kind(prompt)
+
+    # Session-boundary markers feed rerank's 5-session arm of the
+    # new-principle protection window. Read fail-open: any error →
+    # empty, only the 30-day arm fires. The existence guard keeps the
+    # recall hot path from creating `.rlat-state/ledger/` as a side
+    # effect when the workspace has never written a marker. Markers
+    # older than the protection window can't change any verdict, so
+    # they're dropped here — bounds the IPC payload regardless of how
+    # far the (uncapped) marker ledger has grown.
+    session_markers: tuple[str, ...] = ()
+    try:
+        from datetime import datetime, timedelta, timezone
+
+        from ..state import (
+            SessionMarkerLog,
+            resolve_state_root,
+            sessions_path,
+        )
+        from .rerank import _NEW_PRINCIPLE_PROTECTION_DAYS
+
+        state_root = resolve_state_root(cwd)
+        if sessions_path(state_root).exists():
+            cutoff = (
+                datetime.now(timezone.utc)
+                - timedelta(days=_NEW_PRINCIPLE_PROTECTION_DAYS)
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            session_markers = tuple(
+                m.timestamp
+                for m in SessionMarkerLog(state_root).read_all()
+                if m.timestamp >= cutoff
+            )
+    except Exception as exc:  # noqa: BLE001 — fail-open per §16.5
+        _debug_daemon_log(f"session-marker read failed: {type(exc).__name__}")
+
     request = RecallRequest(
         query=prompt,
         cwd_hash=workspace_hash(str(cwd)),
         intent_kind=intent_kind,
+        session_markers=session_markers,
         # Cold-start auto-relax: when the per-user store has fewer than
         # `recall.COLD_START_ROW_THRESHOLD` rows, the daemon overrides
         # `cosine_floor` and `min_recurrence` to relaxed values so a
@@ -483,11 +545,9 @@ def run_hook(
             RecallHitMetadata,
             hash_prompt,
             make_turn_id,
-            resolve_workspace,
-            state_root_for,
+            resolve_state_root,
         )
-        identity = resolve_workspace(cwd)
-        state_root = state_root_for(identity.root)
+        state_root = resolve_state_root(cwd)
         # Outcome-attributed retrieval (Horizon 4): stamp the recall with
         # the live intent_id when one is active so accept/reject can
         # attribute outcomes to recalls *deterministically* — no timestamp

@@ -8,8 +8,10 @@ Architecture §"Forget" specifies five drop conditions and five protections:
        medium+ confidence pattern parent
     3. Falsified by outcomes — low-confidence row with ≥3 failed primary/
        secondary attributions and ≤1 success
-    4. Stale due to corpus drift — verified row with drifted citations
-       (deferred to Horizon 3 — wires to rlat watch)
+    4. Stale due to corpus drift — high/verified row whose cited passages
+       have drifted; confidence drops to low (stage 1). Not a row drop —
+       the drop-to-low enrols it in mechanism 2's re-verification scan
+       (`confidence.corpus_verification_pass`, stage 2).
     5. Trivial from start — age >7d + recurrence==1 + criticality
        low/normal + never recalled / corroborated / attributed
 
@@ -31,12 +33,16 @@ from __future__ import annotations
 import datetime as _dt
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 from ..state.ledger import OutcomeLedger, Verdict
 from ._common import parse_iso_utc
 from .rerank import strength
-from .store import Memory, Row
+from .store import Confidence, Memory, Row
+
+ForgetCondition = Literal[
+    "decay", "redundant", "falsified", "trivial", "stale_drift", "kept",
+]
 
 # Thresholds — engineering-spec parameters per architecture §"Operations
 # are bounded by depth, not breadth"; tunable without rewriting the spec.
@@ -49,12 +55,19 @@ DEFAULT_FALSIFICATION_SUCCESS_COUNT = 1
 
 @dataclass(frozen=True)
 class ForgetVerdict:
-    """One row's forget decision with reason."""
+    """One row's forget decision with reason.
+
+    `downgrade_to` is set only by condition 4 (stale_drift): the row is
+    not dropped, its confidence is lowered to that level. `drop` and
+    `downgrade_to` are mutually exclusive — a verdict either removes the
+    row or recalibrates it, never both.
+    """
 
     row_id: str
     drop: bool
-    condition: str  # "decay" | "redundant" | "falsified" | "trivial" | "kept"
+    condition: ForgetCondition
     protection: str | None  # name of overriding protection, if any
+    downgrade_to: Confidence | None = None  # condition 4 — new level
 
 
 def _age_days(ts: str, now: _dt.datetime) -> float:
@@ -128,6 +141,7 @@ def evaluate_row(
     confident_parent_lookup: dict[str, list[Row]],
     outcomes: list,
     now: _dt.datetime,
+    drifted_row_ids: frozenset[str] = frozenset(),
     strength_floor: float = DEFAULT_STRENGTH_FLOOR,
     trivial_age_days: int = DEFAULT_TRIVIAL_AGE_DAYS,
     recent_activity_days: int = DEFAULT_RECENT_ACTIVITY_DAYS,
@@ -140,7 +154,20 @@ def evaluate_row(
     patterns/learnings that named it as a parent and have confidence
     >= medium — pre-computed by the caller so this function stays O(1)
     per row.
+
+    `drifted_row_ids` is the set of rows whose cited passages have
+    drifted against the corpus (computed by the caller — `rlat watch`
+    or a corpus-aware pass). It drives condition 4.
     """
+    # Condition 4: stale due to corpus drift. Checked first — decay
+    # would otherwise rank on a stale confidence. Not a row drop:
+    # lowering to `low` enrols the row in mechanism 2's re-verification.
+    # Fires regardless of protections (recalibration, not pruning).
+    if (row.confidence in ("high", "verified")
+            and row.row_id in drifted_row_ids):
+        return ForgetVerdict(row.row_id, drop=False, condition="stale_drift",
+                             protection=None, downgrade_to="low")
+
     protection = _is_protected(
         row,
         referenced_ids=referenced_ids,
@@ -198,19 +225,22 @@ def forget_pass(
     *,
     outcomes: Iterable | None = None,
     now: _dt.datetime | None = None,
+    drifted_row_ids: Iterable[str] | None = None,
     **thresholds,
 ) -> list[ForgetVerdict]:
     """Evaluate every row in `rows`. Returns one verdict per row.
 
-    Caller deletes rows where `verdict.drop` is True; rows where
-    `verdict.protection` is set are kept and the protection name is
-    reported for diagnostics. Pure function — no I/O. The session-end
-    runner (`consolidation_pass`) handles persistence + outcome ledger
-    plumbing.
+    Caller deletes rows where `verdict.drop` is True and lowers
+    confidence on rows where `verdict.downgrade_to` is set (condition 4);
+    rows where `verdict.protection` is set are kept and the protection
+    name is reported for diagnostics. Pure function — no I/O. The
+    session-end runner (`consolidation_pass`) handles persistence,
+    outcome-ledger plumbing, and the downgrade writes.
     """
     if now is None:
         now = _dt.datetime.now(_dt.timezone.utc)
     outcomes_list = list(outcomes) if outcomes is not None else []
+    drifted = frozenset(drifted_row_ids) if drifted_row_ids else frozenset()
     # Pre-compute the parent index once: which row_ids are referenced as
     # parents by other rows, and for each event, which medium+ confidence
     # parents claim it.
@@ -230,6 +260,7 @@ def forget_pass(
             confident_parent_lookup=confident_parent_lookup,
             outcomes=outcomes_list,
             now=now,
+            drifted_row_ids=drifted,
             **thresholds,
         )
         for row in rows
@@ -242,18 +273,23 @@ def apply_forget(
     state_root: Path | None = None,
     outcomes: Iterable | None = None,
     now: _dt.datetime | None = None,
+    drifted_row_ids: Iterable[str] | None = None,
     dry_run: bool = False,
     **thresholds,
 ) -> tuple[int, list[ForgetVerdict]]:
-    """End-to-end: read rows + outcomes, evaluate, drop. Returns
-    (n_dropped, all_verdicts) — verdicts include kept rows for audit.
+    """End-to-end: read rows + outcomes, evaluate, drop + recalibrate.
+    Returns (n_dropped, all_verdicts) — verdicts include kept rows and
+    condition-4 downgrades for audit.
 
     Caller can pass `outcomes` directly (used by `consolidation_pass` to
     share one ledger read across distil + confidence + forget); falls
-    back to reading from `state_root` when not provided.
+    back to reading from `state_root` when not provided. `drifted_row_ids`
+    drives condition 4 — the set of rows whose cited passages have
+    drifted; when omitted, condition 4 never fires.
 
-    `dry_run=True` skips the delete; `n_dropped` then reflects the count
-    that *would* have been dropped."""
+    `dry_run=True` skips both the delete and the condition-4 confidence
+    writes; `n_dropped` then reflects the count that *would* have been
+    dropped."""
     rows, _ = memory.read_all()
     if outcomes is None:
         outcomes = (
@@ -261,9 +297,15 @@ def apply_forget(
             if state_root is not None
             else []
         )
-    verdicts = forget_pass(rows, outcomes=outcomes, now=now, **thresholds)
+    verdicts = forget_pass(
+        rows, outcomes=outcomes, now=now,
+        drifted_row_ids=drifted_row_ids, **thresholds,
+    )
     drop_ids = [v.row_id for v in verdicts if v.drop]
     if dry_run:
         return len(drop_ids), verdicts
+    for v in verdicts:
+        if v.downgrade_to is not None:
+            memory.update_row(v.row_id, confidence=v.downgrade_to)
     n_dropped = memory.delete_rows(drop_ids) if drop_ids else 0
     return n_dropped, verdicts

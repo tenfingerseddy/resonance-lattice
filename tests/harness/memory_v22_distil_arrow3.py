@@ -436,6 +436,119 @@ def _check_hedge_phrase_rejected() -> int:
     return 0
 
 
+def _check_cold_start_arrow3_gates() -> int:
+    """(l) `cold_start_arrow3_gates(n_rows)` returns
+    `(min_distinct_intent_kinds,)` below threshold; None at/above.
+    Mirrors W2/W4 cold-start gate functions."""
+    from resonance_lattice.memory.distil_arrow3 import (
+        cold_start_arrow3_gates,
+    )
+    from resonance_lattice.memory.recall import COLD_START_ROW_THRESHOLD
+
+    relaxed = cold_start_arrow3_gates(0)
+    if relaxed != (1,):
+        print(f"[memory_v22_distil_arrow3] FAIL (l): empty store gates="
+              f"{relaxed!r}", file=sys.stderr)
+        return 1
+    if cold_start_arrow3_gates(COLD_START_ROW_THRESHOLD - 1) != (1,):
+        print("[memory_v22_distil_arrow3] FAIL (l): just-below threshold "
+              "should still relax", file=sys.stderr)
+        return 1
+    if cold_start_arrow3_gates(COLD_START_ROW_THRESHOLD) is not None:
+        print("[memory_v22_distil_arrow3] FAIL (l): at-threshold should "
+              "NOT relax (returns None)", file=sys.stderr)
+        return 1
+    print("[memory_v22_distil_arrow3] (l) cold-start arrow3 gates OK",
+          file=sys.stderr)
+    return 0
+
+
+def _check_cold_start_promotes_single_domain() -> int:
+    """(m) When memory is sparse AND `auto_tune_cold_start=True`,
+    `arrow3_pass` accepts a learning whose successful attributions span
+    exactly 1 intent_kind that the default threshold (2) would reject.
+    Single-domain workloads physically cannot meet the 2-kind bar.
+
+    Inverse check: `auto_tune_cold_start=False` leaves the default
+    trigger in place. Explicit caller override wins.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from resonance_lattice.memory.distil_arrow3 import arrow3_pass
+    from resonance_lattice.memory.store import Memory
+
+    with tempfile.TemporaryDirectory() as td:
+        memory = Memory(root=Path(td) / "u", encoder=_AlignedEncoder())
+        # Plant a learning row with embedding on dim-0 (AlignedEncoder
+        # outputs unit-on-dim-0 vectors so post-LLM cosine alignment
+        # check passes).
+        memory.add_row(
+            text="prefer composition over inheritance for testability",
+            polarity=["prefer"],
+            transcript_hash="distilled:planted",
+            embedding=_unit(1.0),
+            level="learning",
+            origin="distilled",
+        )
+        rows, _ = memory.read_all()
+        learning_row_id = rows[0].row_id
+        # Single-domain success attribution — only 'design'.
+        outcomes = [_outcome(row_id=learning_row_id, intent_kind="design")]
+
+        promote_llm = lambda system, msgs, tokens: LLMResponse(
+            json.dumps({
+                "promote": True,
+                "text": "favour structure that supports change",
+                "polarity": "prefer",
+            }),
+            25, 12,
+        )
+        result = arrow3_pass(
+            memory, outcomes=outcomes, llm=promote_llm,
+            encoder=_AlignedEncoder(), dry_run=True,
+        )
+        if result.candidates_found != 1:
+            print(f"[memory_v22_distil_arrow3] FAIL (m.1): cold-start "
+                  f"auto-tune should find 1 candidate from a single-domain "
+                  f"learning; got candidates_found="
+                  f"{result.candidates_found}", file=sys.stderr)
+            return 1
+        if len(result.promoted_row_ids) != 1:
+            print(f"[memory_v22_distil_arrow3] FAIL (m.2): expected 1 "
+                  f"promoted row; got {result.promoted_row_ids!r} "
+                  f"rejections={result.rejections!r}", file=sys.stderr)
+            return 1
+
+        # Auto-tune disabled → default min_distinct_intent_kinds=2 → no candidate.
+        result_off = arrow3_pass(
+            memory, outcomes=outcomes, llm=promote_llm,
+            encoder=_AlignedEncoder(), dry_run=True,
+            auto_tune_cold_start=False,
+        )
+        if result_off.candidates_found != 0:
+            print(f"[memory_v22_distil_arrow3] FAIL (m.3): default-gates "
+                  f"pass should find 0 candidates with 1 kind; got "
+                  f"{result_off.candidates_found}", file=sys.stderr)
+            return 1
+
+        # Explicit caller override wins.
+        result_override = arrow3_pass(
+            memory, outcomes=outcomes, llm=promote_llm,
+            encoder=_AlignedEncoder(), dry_run=True,
+            min_distinct_intent_kinds=2,
+        )
+        if result_override.candidates_found != 0:
+            print(f"[memory_v22_distil_arrow3] FAIL (m.4): explicit "
+                  f"min_distinct_intent_kinds=2 should override "
+                  f"cold-start relax", file=sys.stderr)
+            return 1
+
+    print("[memory_v22_distil_arrow3] (m) cold-start auto-tune promotes "
+          "single-domain learnings + override wins OK", file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     for check in [
         _check_cross_domain_discovery,
@@ -449,6 +562,8 @@ def run() -> int:
         _check_hedge_phrase_rejected,
         _check_only_satisfied_outcomes_count,
         _check_sessions_arm_expires_protection,
+        _check_cold_start_arrow3_gates,
+        _check_cold_start_promotes_single_domain,
     ]:
         rc = check()
         if rc != 0:

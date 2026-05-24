@@ -21,7 +21,7 @@ from ..expertise import (
     DEFAULT_MAX_MEMORY_ROWS,
     build_expertise_primer,
 )
-from ..state import resolve_workspace, state_root_for
+from ..state import resolve_state_root, resolve_workspace
 from ._errors import EXIT_OK
 from ._memory import _open_user_memory
 
@@ -29,7 +29,7 @@ from ._memory import _open_user_memory
 def cmd_expertise_build(args: argparse.Namespace) -> int:
     cwd = Path(args.cwd) if args.cwd else Path.cwd()
     identity = resolve_workspace(cwd)
-    state_root = state_root_for(identity.root)
+    state_root = resolve_state_root(cwd)
 
     memory = _open_user_memory(args)
     output_path = (

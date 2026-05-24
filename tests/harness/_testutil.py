@@ -267,6 +267,57 @@ def check_guarantee(ok: bool, label: str, prefix: str) -> bool:
     return True
 
 
+def make_insight_passage(
+    idx: int,
+    content: str,
+    source_ids: list[str],
+    source_hashes: list[str] | None = None,
+    *,
+    state: str = "candidate",
+    faithfulness: float = 0.8,
+):
+    """Construct an InsightPassage fixture for harness suites.
+
+    `source_hashes` defaults to source_ids (one-to-one binding by id);
+    pass distinct values when testing the drift cascade. `state` lets
+    suites build candidate / accepted / stale rows for state-machine
+    coverage. `faithfulness` seeds the Beta confidence prior so the
+    fixture carries a valid `(corroboration, falsification)` state.
+
+    Lifted out of per-suite duplication in `insight_layer` and
+    `insight_lifecycle` harnesses.
+    """
+    from resonance_lattice.store import insight
+    from resonance_lattice.store.insight import seed_confidence
+
+    if source_hashes is None:
+        source_hashes = list(source_ids)
+    citations = tuple(
+        insight.InsightCitation(passage_id=pid, char_span=None, confidence=0.9)
+        for pid in source_ids
+    )
+    corroboration, falsification = seed_confidence(faithfulness)
+    return insight.InsightPassage(
+        insight_idx=idx,
+        insight_id=insight.compute_insight_id(content, source_hashes, "model-x"),
+        kind="synthesis",
+        content=content,
+        citations=citations,
+        query="test",
+        generated_at="2026-05-13T10:00:00Z",
+        source_model_hash="model-x",
+        source_passage_hashes=tuple(source_hashes),
+        verdict_state=state,
+        verdict_signals=(),
+        lineage=(),
+        intent_context=None,
+        stale_if_sources_drift=True,
+        encoder_version="gte-mb-768",
+        corroboration=corroboration,
+        falsification=falsification,
+    )
+
+
 def patch_zero_encoder() -> None:
     """Patch `field.encoder.Encoder` to the `ZeroEncoder` stub everywhere.
 
@@ -283,3 +334,45 @@ def patch_zero_encoder() -> None:
 
     _enc.Encoder = ZeroEncoder  # type: ignore[assignment,misc]
     _store.Encoder = ZeroEncoder  # type: ignore[assignment,misc]
+
+
+def unpatch_zero_encoder() -> None:
+    """Restore the real `Encoder` class across every patched module.
+
+    Inverse of `patch_zero_encoder`. Reloads `field.encoder` to recover
+    the original class definition, then re-binds the symbol in every
+    known consumer module that captured `ZeroEncoder` via `from ... import`.
+    Idempotent — safe to call before any test even if no patch was
+    installed.
+
+    Suites that depend on real cosine scoring (insight_layer, viewpoint,
+    audit_trace_cli, llm_free_retrieval) must call this at run() entry
+    to defeat cross-suite contamination from earlier memory suites in
+    an --all / --changed sweep.
+    """
+    import importlib
+
+    import resonance_lattice.field.encoder as _enc
+    importlib.reload(_enc)
+    real_encoder = _enc.Encoder
+
+    # Memory store captures Encoder at import time.
+    import resonance_lattice.memory.store as _store
+    _store.Encoder = real_encoder  # type: ignore[assignment,misc]
+
+    # CLI surfaces and core paths that do `from ..field.encoder import Encoder`.
+    # Adding a new consumer requires extending this list — the harness
+    # contract is documented in this module.
+    for mod_name in (
+        "resonance_lattice.cli.search",
+        "resonance_lattice.cli.deep_search",
+        "resonance_lattice.cli.skill_context",
+        "resonance_lattice.build.pipeline",
+        "resonance_lattice.store.incremental",
+    ):
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError:
+            continue
+        if hasattr(mod, "Encoder"):
+            setattr(mod, "Encoder", real_encoder)

@@ -62,6 +62,23 @@ DEFAULT_POST_VALIDATION_COSINE = 0.45  # looser than Arrow 2 — principles
 DEFAULT_MAX_WORDS = 20  # shorter than learning (≤30); architecture's
                         # "shorter than the learning" rule
 
+# Cold-start: a single-domain workload (e.g. all `intent_kind=design`)
+# physically cannot meet `min_distinct_intent_kinds=2` and arrow3 never
+# fires. Relax the cross-domain bar to 1 distinct kind below
+# COLD_START_ROW_THRESHOLD and let LLM-promote's domain-free constraint
+# + post-validation cosine ≥0.45 refuse non-generalisable candidates.
+COLD_START_MIN_DISTINCT_INTENT_KINDS = 1
+
+
+def cold_start_arrow3_gates(n_rows: int) -> tuple[int] | None:
+    """Return `(min_distinct_intent_kinds,)` relaxed gate when memory
+    is sparse, else None. Mirrors `cold_start_arrow{1,2}_gates`."""
+    from .recall import COLD_START_ROW_THRESHOLD
+
+    if n_rows < COLD_START_ROW_THRESHOLD:
+        return (COLD_START_MIN_DISTINCT_INTENT_KINDS,)
+    return None
+
 
 @dataclass(frozen=True)
 class PrincipleCandidate:
@@ -295,6 +312,7 @@ def arrow3_pass(
     encoder: Encoder | None = None,
     cwd: str | None = None,
     dry_run: bool = False,
+    auto_tune_cold_start: bool = True,
     **thresholds,
 ) -> Arrow3Result:
     """End-to-end pass: discover → promote → write. Sequence after Arrow 2
@@ -302,12 +320,28 @@ def arrow3_pass(
     pass once they've accumulated cross-domain evidence.
 
     `dry_run=True` skips `memory.add_row`; see `arrow1_pass` for the
-    placeholder convention."""
+    placeholder convention.
+
+    `auto_tune_cold_start=True` (default) relaxes
+    `min_distinct_intent_kinds` to 1 when the per-user store is below
+    `recall.COLD_START_ROW_THRESHOLD` rows AND the caller didn't pass
+    `min_distinct_intent_kinds` explicitly. Lets single-domain
+    learnings attempt promotion at fresh-bench scale; the LLM
+    domain-free constraint + post-validation cosine stay the safety
+    net against same-domain duplicates being promoted as principles.
+    """
     rows, band = memory.read_all()
     candidate_thresholds = {
         k: v for k, v in thresholds.items()
         if k in {"min_distinct_intent_kinds", "min_attributions_per_kind"}
     }
+    if auto_tune_cold_start:
+        relaxed = cold_start_arrow3_gates(len(rows))
+        if relaxed is not None:
+            (cold_min_kinds,) = relaxed
+            candidate_thresholds.setdefault(
+                "min_distinct_intent_kinds", cold_min_kinds,
+            )
     promote_thresholds = {
         k: v for k, v in thresholds.items()
         if k in {"post_validation_cosine", "max_words"}
@@ -328,6 +362,12 @@ def arrow3_pass(
         if payload is None:
             result.rejections.append(rejection or "unknown")
             continue
-        new_id = "<dry-run>" if dry_run else memory.add_row(**payload)
+        if dry_run:
+            new_id = "<dry-run>"
+        else:
+            new_id = memory.add_row(
+                **payload,
+                recurrence_count=candidate.learning_row.recurrence_count,
+            )
         result.promoted_row_ids.append(new_id)
     return result

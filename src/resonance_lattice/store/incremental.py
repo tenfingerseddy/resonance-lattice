@@ -290,6 +290,19 @@ def apply_delta(
             new_ann_meta["optimised"] = dict(new_ann_meta.get("base", {}))
         re_projected = True
 
+    # 5b. Pass-through preserve the insight layer. The drift cascade is
+    # applied as a post-pass by cmd_refresh against the rewritten archive
+    # (so this function stays single-concern: source layer delta-apply).
+    # Without this preservation, refresh on an insight-bearing archive
+    # would silently drop the insight band and insight.jsonl.
+    preserved_insights = list(contents.insights)
+    if archive.INSIGHT_BAND_NAME in contents.bands:
+        new_bands[archive.INSIGHT_BAND_NAME] = contents.bands[archive.INSIGHT_BAND_NAME]
+        if archive.INSIGHT_BAND_NAME in contents.ann_blobs:
+            new_ann_blobs[archive.INSIGHT_BAND_NAME] = (
+                contents.ann_blobs[archive.INSIGHT_BAND_NAME]
+            )
+
     # 6. Update metadata: bump passage counts per band, refresh
     # build_config's live counts (passage_count + file_count), preserve
     # everything else (kind, store_mode, backbone, manifest, etc).
@@ -299,7 +312,13 @@ def apply_delta(
     metadata = contents.metadata
     for band_name in new_bands:
         if band_name in metadata.bands:
-            metadata.bands[band_name].passage_count = len(new_registry)
+            # Source-layer bands (base, optimised) count source passages;
+            # insight band counts insight rows and must not be overwritten
+            # by the source registry length.
+            if band_name == archive.INSIGHT_BAND_NAME:
+                metadata.bands[band_name].passage_count = len(preserved_insights)
+            else:
+                metadata.bands[band_name].passage_count = len(new_registry)
     metadata.ann = new_ann_meta
     metadata.build_config["passage_count"] = len(new_registry)
     metadata.build_config["file_count"] = len({c.source_file for c in new_registry})
@@ -314,6 +333,7 @@ def apply_delta(
         projections=new_projections,
         ann_blobs=new_ann_blobs,
         remote_manifest=contents.remote_manifest,
+        insights=preserved_insights,
     )
 
     return ApplyResult(

@@ -41,6 +41,7 @@ from pathlib import Path
 import numpy as np
 
 from . import bands as bands_io
+from . import insight as insight_io
 from . import registry as registry_io
 from .metadata import FORMAT_VERSION, BandInfo, Metadata, from_json, to_json
 
@@ -58,6 +59,12 @@ _ANN_SUFFIX = ".faiss"
 # rather than embedded in metadata.json so a 50K-source-file manifest
 # (~7 MB) doesn't bloat every metadata read.
 _MANIFEST_PATH = "manifest.json"
+# Insight layer (lensed knowledge, additive; absent from pre-v2.1 archives).
+# JSONL file alongside passages.jsonl; band lives under `bands/insight.npz`
+# and is registered as a band named "insight" in metadata.bands so the
+# existing band-loading machinery picks it up without special-casing.
+_INSIGHT_PATH = "insight.jsonl"
+INSIGHT_BAND_NAME = "insight"
 
 
 @dataclass
@@ -84,6 +91,11 @@ class ArchiveContents:
     (bundled mode) are NOT loaded here — Store classes open the ZIP again
     for lazy resolution. `remote_manifest` is the parsed `manifest.json`
     when `metadata.store_mode == "remote"`; empty dict otherwise.
+
+    `insights` is the loaded insight layer (lensed knowledge); empty list
+    when the archive has no insight.jsonl entry (pre-v2.1 or no insight
+    yet promoted). The insight band, when present, lives under the same
+    `bands[INSIGHT_BAND_NAME]` slot as any other band.
     """
     metadata: Metadata
     registry: list[registry_io.PassageCoord]
@@ -91,6 +103,23 @@ class ArchiveContents:
     projections: dict[str, np.ndarray] = field(default_factory=dict)
     ann_blobs: dict[str, bytes] = field(default_factory=dict)
     remote_manifest: dict[str, dict[str, str]] = field(default_factory=dict)
+    insights: list[insight_io.InsightPassage] = field(default_factory=list)
+
+    def insight_band(self) -> BandHandle | None:
+        """Return the insight band's BandHandle, or None if no insight layer.
+
+        Parallel to `select_band` for the source layer. Encapsulates the
+        `bands[INSIGHT_BAND_NAME]` / `ann_blobs.get(INSIGHT_BAND_NAME)`
+        lookup pattern so callers don't reach into the raw dicts.
+        """
+        if INSIGHT_BAND_NAME not in self.bands:
+            return None
+        return BandHandle(
+            name=INSIGHT_BAND_NAME,
+            band=self.bands[INSIGHT_BAND_NAME],
+            projection=self.projections.get(INSIGHT_BAND_NAME),
+            ann_blob=self.ann_blobs.get(INSIGHT_BAND_NAME),
+        )
 
     def select_band(self, prefer: str | None = None) -> BandHandle:
         """Return the band that retrieval should run against.
@@ -188,6 +217,27 @@ def read(path: str | Path) -> ArchiveContents:
                 )
             remote_manifest = json.loads(zf.read(_MANIFEST_PATH).decode("utf-8"))
 
+        # Insight layer (lensed knowledge). Absent in pre-v2.1 archives and
+        # in fresh post-build archives that haven't accumulated any promoted
+        # insight yet. Both cases load as an empty list — no error.
+        insights: list[insight_io.InsightPassage] = []
+        if _INSIGHT_PATH in zf.namelist():
+            insight_text = zf.read(_INSIGHT_PATH).decode("utf-8")
+            if insight_text.strip():
+                insights = insight_io.load_jsonl(insight_text.splitlines())
+        if insights and INSIGHT_BAND_NAME not in bands:
+            raise ValueError(
+                f"{p} has {_INSIGHT_PATH} with {len(insights)} insight rows "
+                f"but no '{INSIGHT_BAND_NAME}' band declared in metadata.bands "
+                f"— archive is half-promoted. Re-run consolidation or remove "
+                f"{_INSIGHT_PATH}."
+            )
+        if insights and len(bands.get(INSIGHT_BAND_NAME, [])) != len(insights):
+            raise ValueError(
+                f"{p} insight band has {len(bands[INSIGHT_BAND_NAME])} rows "
+                f"but insight.jsonl has {len(insights)} — half-written promotion"
+            )
+
     return ArchiveContents(
         metadata=metadata,
         registry=registry,
@@ -195,6 +245,7 @@ def read(path: str | Path) -> ArchiveContents:
         projections=projections,
         ann_blobs=ann_blobs,
         remote_manifest=remote_manifest,
+        insights=insights,
     )
 
 
@@ -207,6 +258,7 @@ def write(
     ann_blobs: dict[str, bytes] | None = None,
     source_files: dict[str, bytes] | None = None,
     remote_manifest: dict[str, dict[str, str]] | None = None,
+    insights: list[insight_io.InsightPassage] | None = None,
 ) -> None:
     """Write a fresh v4 .rlat ZIP atomically.
 
@@ -232,6 +284,7 @@ def write(
     ann_blobs = ann_blobs or {}
     source_files = source_files or {}
     remote_manifest = remote_manifest or {}
+    insights = insights or []
 
     declared = set(metadata.bands.keys())
     provided = set(bands.keys())
@@ -239,6 +292,17 @@ def write(
         raise ValueError(
             f"metadata.bands {sorted(declared)} disagrees with bands payload "
             f"{sorted(provided)}; declare every band in metadata before write"
+        )
+    if insights and INSIGHT_BAND_NAME not in bands:
+        raise ValueError(
+            f"insights provided ({len(insights)} rows) but no "
+            f"'{INSIGHT_BAND_NAME}' band in bands payload — declare the band "
+            f"in metadata.bands and supply its (M, D) array"
+        )
+    if insights and len(bands.get(INSIGHT_BAND_NAME, [])) != len(insights):
+        raise ValueError(
+            f"insight band has {len(bands[INSIGHT_BAND_NAME])} rows but "
+            f"insights list has {len(insights)} — band-row join would break"
         )
     for band_name, info in metadata.bands.items():
         if info.w_shape is not None and band_name not in projections:
@@ -283,11 +347,92 @@ def write(
                     _MANIFEST_PATH,
                     json.dumps(remote_manifest, sort_keys=True, indent=2),
                 )
+
+            if insights:
+                zf.writestr(_INSIGHT_PATH, insight_io.write_jsonl(insights))
     except BaseException:
         # Original (or absence) is already untouched; just clean up the tmp
         # so we don't accumulate orphaned `.tmp` files on disk-full / kill.
         tmp_path.unlink(missing_ok=True)
         raise
+
+    os.replace(tmp_path, p)
+
+
+def write_insight_layer_in_place(
+    path: str | Path,
+    insights: list[insight_io.InsightPassage],
+    insight_band: np.ndarray,
+    ann_blob: bytes | None = None,
+) -> None:
+    """Replace the insight layer (insight.jsonl + bands/insight.npz + optional
+    ann/insight.faiss + metadata band registration) in an existing archive
+    without rewriting unrelated slots.
+
+    Used by the compression-test promotion pipeline (Day 4) every time
+    consolidation graduates synthesis candidates to the corpus insight layer.
+    Atomic via temp file + `os.replace`. Source band, source registry,
+    bundled source files, remote manifest, and any other bands (e.g. the
+    MRL `optimised` band + projection) are copied unchanged.
+
+    Empty `insights` clears the insight layer entirely (insight.jsonl
+    dropped; `INSIGHT_BAND_NAME` removed from metadata.bands; insight band
+    NPZ and ANN files dropped).
+    """
+    if insights and len(insights) != insight_band.shape[0]:
+        raise ValueError(
+            f"insights list has {len(insights)} rows but band has "
+            f"{insight_band.shape[0]} — band-row join would break"
+        )
+
+    p = Path(path)
+    tmp_path = Path(str(p) + ".tmp")
+
+    skipped = {
+        _METADATA_PATH,
+        _INSIGHT_PATH,
+        _band_path(INSIGHT_BAND_NAME),
+        _ann_path(INSIGHT_BAND_NAME),
+    }
+
+    with zipfile.ZipFile(p, "r") as src:
+        meta_text = src.read(_METADATA_PATH).decode("utf-8")
+        metadata = from_json(meta_text)
+        if metadata.format_version != FORMAT_VERSION:
+            raise ValueError(
+                f"refuse to mutate v{metadata.format_version} archive; "
+                f"in-place writer only handles v{FORMAT_VERSION}"
+            )
+
+        if insights:
+            metadata.bands[INSIGHT_BAND_NAME] = BandInfo(
+                role="insight_layer",
+                dim=int(insight_band.shape[1]),
+                l2_norm=True,
+                passage_count=int(insight_band.shape[0]),
+            )
+        else:
+            metadata.bands.pop(INSIGHT_BAND_NAME, None)
+
+        try:
+            with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_STORED) as dst:
+                dst.writestr(_METADATA_PATH, to_json(metadata))
+                for info in src.infolist():
+                    if info.filename in skipped:
+                        continue
+                    with src.open(info.filename, "r") as fsrc, \
+                         dst.open(info, "w", force_zip64=True) as fdst:
+                        shutil.copyfileobj(fsrc, fdst, length=1024 * 1024)
+                if insights:
+                    dst.writestr(_INSIGHT_PATH, insight_io.write_jsonl(insights))
+                    bands_io.write_band(
+                        dst, _band_path(INSIGHT_BAND_NAME), insight_band,
+                    )
+                    if ann_blob is not None:
+                        dst.writestr(_ann_path(INSIGHT_BAND_NAME), ann_blob)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     os.replace(tmp_path, p)
 

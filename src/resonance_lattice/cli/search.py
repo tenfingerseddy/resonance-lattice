@@ -1,14 +1,14 @@
 """`rlat search <knowledge_model.rlat> "<query>" [flags]`
 
-Single retrieval path. Optimised band used if present; base otherwise.
-No --rerank, no --hybrid, no --retrieval-mode, no --cascade.
+Composed retrieval over source + insight layers (lensed knowledge Day 1).
+Source-only path preserves the rlat v2.0 behaviour (the honest baseline,
+foundation 5 of the trust contract); the default path composes the
+insight layer alongside with visible labels.
 
 Output formats:
-  text      one line per hit: "score  source_file:offset  drift_status  preview"
-  json      one JSON object per hit (drift fields included)
+  text      one line per hit, prefixed [SOURCE] or [INSIGHT]
+  json      one JSON object per hit with `layer` discriminator
   context   concatenated passages within a token budget — synthesis-ready
-
-Phase 3 deliverable.
 """
 
 from __future__ import annotations
@@ -16,16 +16,45 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from ..config import MaterialiserConfig
-from ..field import ann, retrieve
+from ..field import ann, retrieve, retrieve_insight
 from ..field.encoder import Encoder
 from ..rql.types import ConfidenceMetrics
-from ..store.verified import filter_verified, verify_hits
+from ..store.verified import (
+    InsightHit,
+    VerifiedHit,
+    filter_verified,
+    verify_hits,
+    verify_insight_hits,
+)
 from . import _grounding, _namecheck
 from ._grounding import Mode
 from ._load import load_or_exit, open_store_or_exit
+
+
+def _layer_tag(hit) -> str:
+    """Visible layer label for trust-contract foundation 5. Source and
+    insight must be distinguishable at every output surface; this is the
+    single source of truth for the prefix string."""
+    return "[INSIGHT]" if hit.layer == "insight" else "[SOURCE] "
+
+
+def _hit_origin(hit) -> str:
+    """Origin slug for the text formatter — source location or insight id.
+    Lets the rendered output stay informative while distinguishing the
+    layer semantics."""
+    if hit.layer == "insight":
+        return f"insight:{hit.insight_id} ({hit.kind})"
+    return f"{hit.source_file}:{hit.char_offset}+{hit.char_length}"
+
+
+def _hit_text(hit) -> str:
+    """Body text for the text/context formatters — insight content for
+    insight hits, source text for source hits."""
+    return hit.content if hit.layer == "insight" else hit.text
 
 
 def _format_text(hits: list, max_preview_chars: int = 100) -> str:
@@ -33,21 +62,47 @@ def _format_text(hits: list, max_preview_chars: int = 100) -> str:
         return "(no hits)"
     lines = []
     for h in hits:
-        preview = h.text.replace("\n", " ").strip()
-        if len(preview) > max_preview_chars:
-            preview = preview[:max_preview_chars - 1] + "…"
+        body = _hit_text(h).replace("\n", " ").strip()
+        if len(body) > max_preview_chars:
+            body = body[:max_preview_chars - 1] + "…"
+        # `drift_status` is uniform across both layers (InsightHit's is
+        # derived from verdict_state via _INSIGHT_STATE_TO_DRIFT).
         lines.append(
-            f"{h.score:.3f}  "
-            f"{h.source_file}:{h.char_offset}+{h.char_length}  "
-            f"[{h.drift_status}]  {preview}"
+            f"{_layer_tag(h)} {h.score:.3f}  {_hit_origin(h)}  "
+            f"[{h.drift_status}]  {body}"
         )
     return "\n".join(lines)
 
 
 def _format_json(hits: list) -> str:
-    return json.dumps(
-        [
-            {
+    out: list[dict] = []
+    for h in hits:
+        if h.layer == "insight":
+            out.append({
+                "layer": "insight",
+                "insight_idx": h.insight_idx,
+                "insight_id": h.insight_id,
+                "kind": h.kind,
+                "verdict_state": h.verdict_state,
+                "confidence": h.confidence,
+                "drift_status": h.drift_status,
+                "score": h.score,
+                "content": h.content,
+                "citations": [
+                    {
+                        "passage_id": c.passage_id,
+                        "char_span": list(c.char_span) if c.char_span else None,
+                        "confidence": c.confidence,
+                    }
+                    for c in h.citations
+                ],
+                "source_passage_hashes": list(h.source_passage_hashes),
+                "generated_at": h.generated_at,
+                "intent_context": h.intent_context,
+            })
+        else:
+            out.append({
+                "layer": "source",
                 "passage_idx": h.passage_idx,
                 "source_file": h.source_file,
                 "char_offset": h.char_offset,
@@ -56,11 +111,8 @@ def _format_json(hits: list) -> str:
                 "drift_status": h.drift_status,
                 "score": h.score,
                 "text": h.text,
-            }
-            for h in hits
-        ],
-        indent=2,
-    )
+            })
+    return json.dumps(out, indent=2)
 
 
 def _format_context(
@@ -68,21 +120,20 @@ def _format_context(
     query: str,
 ) -> tuple[str, list[str]]:
     """Concatenate verified hits up to the token budget. Higher-scored hits
-    win when the budget runs out. The `chars_per_token` heuristic on
-    MaterialiserConfig is a conservative under-estimate so the materialised
-    context fits the consuming model's window with headroom.
+    win when the budget runs out.
 
-    The grounding-mode header is stamped at the top so the consumer LLM
-    knows how to treat the passages. When the mode-gate fires (weak
-    retrieval under `augment` or `knowledge`), the passage body is
-    replaced by a suppression marker — the directive still ships.
+    Insight hits are rendered with an [INSIGHT] header showing kind,
+    verdict_state, and confidence so the consumer LLM treats them
+    appropriately. Source hits keep the v2.0 source-file:offset header.
+    Both layers count against the same token budget; mixed lists are
+    sorted by score descending before budgeting.
 
-    When the query references a distinctive proper noun / acronym / ID
-    not present in any rendered passage, a refusal directive is
-    prepended to the body. Returns `(rendered, missing_name_tokens)` so
-    the caller can gate on `--strict-names`.
+    Confidence metrics for grounding-mode gating are computed against the
+    source hits only — insights are derived, so they don't carry the same
+    band-distribution signal that ConfidenceMetrics expects.
     """
-    metrics = ConfidenceMetrics.from_verified(hits, band_name)
+    source_hits = [h for h in hits if h.layer == "source"]
+    metrics = ConfidenceMetrics.from_verified(source_hits, band_name)
     header = _grounding.format_header(mode)
 
     if _grounding.should_suppress(metrics, mode):
@@ -90,31 +141,36 @@ def _format_context(
 
     char_budget = config.token_budget * config.chars_per_token
     parts: list[str] = []
-    rendered_passage_texts: list[str] = []
+    rendered_texts: list[str] = []
     used = 0
     for h in hits:
-        if h.drift_status == "missing" or not h.text:
+        if h.drift_status == "missing":
             continue
-        block = (
-            f"<!-- {h.source_file}:{h.char_offset}+{h.char_length} "
-            f"score={h.score:.3f} {h.drift_status} -->\n"
-            f"{h.text}\n"
-        )
+        if h.layer == "insight":
+            block = (
+                f"<!-- INSIGHT id={h.insight_id} kind={h.kind} "
+                f"verdict={h.verdict_state} confidence={h.confidence:.2f} "
+                f"score={h.score:.3f} -->\n"
+                f"{h.content}\n"
+            )
+            rendered = h.content
+        else:
+            if not h.text:
+                continue
+            block = (
+                f"<!-- SOURCE {h.source_file}:{h.char_offset}+{h.char_length} "
+                f"score={h.score:.3f} {h.drift_status} -->\n"
+                f"{h.text}\n"
+            )
+            rendered = h.text
         if used + len(block) > char_budget and parts:
             break
         parts.append(block)
-        rendered_passage_texts.append(h.text)
+        rendered_texts.append(rendered)
         used += len(block)
 
     body = "\n".join(parts)
-    # Name-check against the passage text the consumer LLM will actually
-    # see — i.e. the text that survived the token-budget truncation.
-    # Checking the full hits list would falsely pass when the missing
-    # distinctive token only appears in a passage that was budget-
-    # truncated out before reaching the consumer.
-    nc = _namecheck.verify_question_in_passages(
-        query, "\n".join(rendered_passage_texts)
-    )
+    nc = _namecheck.verify_question_in_passages(query, "\n".join(rendered_texts))
     if nc.missing_tokens:
         body = _namecheck.refusal_directive(nc.missing_tokens) + body
     return f"{header}\n\n{body}", nc.missing_tokens
@@ -133,28 +189,81 @@ def cmd_search(args: argparse.Namespace) -> int:
         )
         return 2
 
+    t0 = time.monotonic()
     km_path = Path(args.knowledge_model)
     contents = load_or_exit(km_path)
-    handle = contents.select_band()
-    ann_index = ann.deserialize(handle.ann_blob) if handle.ann_blob else None
 
-    encoder = Encoder()  # auto runtime — query path picks ONNX/OpenVINO
+    # Source retrieval — always runs. This is the honest baseline that the
+    # trust contract's foundation 5 protects: source-only never goes away,
+    # never gets slow, and is always returned with layer labels.
+    source_handle = contents.select_band()
+    source_ann_index = (
+        ann.deserialize(source_handle.ann_blob) if source_handle.ann_blob else None
+    )
+
+    encoder = Encoder()
     query_emb = encoder.encode([args.query])[0]
-    hits = retrieve(query_emb, handle, ann_index, contents.registry, args.top_k)
+    source_hits_raw = retrieve(
+        query_emb, source_handle, source_ann_index, contents.registry, args.top_k,
+    )
 
     store = open_store_or_exit(km_path, contents, args.source_root)
-    verified = verify_hits(hits, store, contents.registry)
+    source_hits: list = list(verify_hits(source_hits_raw, store, contents.registry))
+
+    # Insight retrieval — runs by default if the corpus has an insight band
+    # and the user hasn't asked for source-only. The insight layer is opt-in
+    # *visible* (--source-only opts out), never opt-in *hidden*.
+    insight_hits: list = []
+    insight_handle = contents.insight_band() if contents.insights else None
+    if not args.source_only and insight_handle is not None:
+        insight_ann_index = (
+            ann.deserialize(insight_handle.ann_blob) if insight_handle.ann_blob else None
+        )
+        raw = retrieve_insight(
+            query_emb, insight_handle.band, insight_ann_index, args.top_k,
+        )
+        insight_hits = list(verify_insight_hits(
+            raw, contents.insights, include_stale=args.include_stale,
+        ))
+
     if args.verified_only:
-        verified = filter_verified(verified)
+        source_hits = filter_verified(source_hits)
+        insight_hits = filter_verified(insight_hits)
+
+    # Lens overlay (optional). Re-rank source by trust_weights pattern
+    # matches; re-rank insight by per-insight preferences. The lens is
+    # the user's accumulated way of seeing — it never replaces source
+    # ground truth, just adjusts where attention falls in the top-K.
+    if args.lens and not args.source_only:
+        from dataclasses import replace
+        from ..lens import schema as lens_mod
+        lens = lens_mod.load(Path(args.lens))
+        source_hits = [
+            replace(h, score=h.score * lens.trust_for_source(h.source_file))
+            for h in source_hits
+        ]
+        insight_hits = [
+            replace(h, score=h.score * lens.preference_for_insight(h.insight_id))
+            for h in insight_hits
+        ]
+
+    # Merge layers; sort by score descending. Layer labels travel with
+    # each hit so the user always sees which layer surfaced what.
+    all_hits = source_hits + insight_hits
+    all_hits.sort(key=lambda h: -h.score)
+    # Cap at top_k after the merge — the user asked for top_k results total,
+    # not top_k per layer. (Per-layer top_k retrieval upstream gives the
+    # merge a wider candidate pool to draw from.)
+    all_hits = all_hits[: args.top_k]
 
     missing_names: list[str] = []
     if args.format == "text":
-        print(_format_text(verified))
+        print(_format_text(all_hits))
     elif args.format == "json":
-        print(_format_json(verified))
+        print(_format_json(all_hits))
     elif args.format == "context":
         rendered, missing_names = _format_context(
-            verified, MaterialiserConfig(), Mode(args.mode), handle.name,
+            all_hits, MaterialiserConfig(), Mode(args.mode), source_handle.name,
             args.query,
         )
         print(rendered)
@@ -168,19 +277,41 @@ def cmd_search(args: argparse.Namespace) -> int:
         )
         return 3
 
+    n_source = sum(1 for h in all_hits if h.layer == "source")
+    # Rank-ordered (all_hits is score-sorted) — list position is the rank.
+    insight_ids = [h.insight_id for h in all_hits if h.layer == "insight"]
+    n_insight = len(insight_ids)
+
     if not args.quiet:
         # Banner to stderr so it doesn't pollute json/context stdout consumers.
+        total_insight = len(contents.insights) if contents.insights else 0
         print(
-            f"[search] band={handle.name} ann={'yes' if ann_index else 'no'} "
-            f"hits={len(verified)} "
-            f"({contents.metadata.bands[handle.name].passage_count} passages)",
+            f"[search] band={source_handle.name} "
+            f"ann={'yes' if source_ann_index else 'no'} "
+            f"hits={len(all_hits)} (source={n_source} insight={n_insight}) "
+            f"corpus=(source={contents.metadata.bands[source_handle.name].passage_count} "
+            f"insight={total_insight})",
             file=sys.stderr,
         )
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    lens_id_for_event: str | None = None
+    if args.lens and not args.source_only:
+        # Cheap re-read of just the manifest is unnecessary — we just
+        # surface the file basename for the event.
+        lens_id_for_event = Path(args.lens).stem
+    from . import _dogfood
+    _dogfood.record_event(
+        km_path, args.query, duration_ms=duration_ms, n_source=n_source,
+        insight_ids=insight_ids,
+        faithfulness=None,   # single-shot search runs no faithfulness gate
+        intent_context=None, lens_id=lens_id_for_event,
+    )
     return 0
 
 
 def add_subparser(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("search", help="Top-k retrieval")
+    p = sub.add_parser("search", help="Top-k retrieval over source + insight layers")
     p.add_argument("knowledge_model",
                    help="Path to a .rlat knowledge model, or a fabric://<alias>[/<km>] URL")
     p.add_argument("query", nargs="?", default=None,
@@ -192,12 +323,29 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
         help="Output format (default: text)",
     )
     p.add_argument(
+        "--source-only", action="store_true",
+        help="Bypass the insight layer; return source passages only. The "
+             "honest baseline — always available, always fast.",
+    )
+    p.add_argument(
+        "--lens", default=None,
+        help="Path to a .lens file. Applies trust_weights to source hits and "
+             "insight_preferences to insight hits before the top-K merge. "
+             "Ignored when --source-only is set.",
+    )
+    p.add_argument(
+        "--include-stale", action="store_true",
+        help="Include insight rows whose source has drifted (verdict_state=stale). "
+             "Default: excluded from retrieval until re-verification passes.",
+    )
+    p.add_argument(
         "--source-root", default=None,
         help="Override recorded source_root (local mode only)",
     )
     p.add_argument(
         "--verified-only", action="store_true",
-        help="Drop hits whose source has drifted or gone missing",
+        help="Drop hits whose source has drifted or gone missing (applies to "
+             "both source and insight layers)",
     )
     p.add_argument(
         "--strict-names", action="store_true",

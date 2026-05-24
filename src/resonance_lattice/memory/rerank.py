@@ -21,6 +21,7 @@ manifesto.
 
 from __future__ import annotations
 
+import bisect
 import datetime as _dt
 import math
 from dataclasses import dataclass
@@ -63,13 +64,11 @@ _HALF_LIFE_DAYS: dict[Criticality, float] = {
 _SEVERE_FLOOR = 0.6
 
 # Architecture §"New-principle protection window": newly promoted
-# principles get a bounded grace period (5 sessions or 30 days, whichever
-# first) at confidence_floor=medium regardless of actual confidence.
-# Both arms ship as gates; either expiring drops the row to its actual
-# confidence. The session arm is opt-in via `sessions_since_created` —
-# callers without workspace session-ledger access pass None and only the
-# 30-day clock fires. Threading the count from the recall hook through
-# the daemon is a follow-up.
+# principles get a bounded grace period (5 sessions or 30 days,
+# whichever first) at confidence_floor=medium. Either arm expiring
+# drops the row to its actual confidence. The session arm reads
+# `sessions_since_created`, derived per row from the workspace session
+# ledger; callers without ledger access leave only the 30-day clock.
 _NEW_PRINCIPLE_PROTECTION_DAYS = 30
 _NEW_PRINCIPLE_PROTECTION_SESSIONS = 5
 _PROTECTION_FLOOR_LEVEL = "medium"
@@ -280,12 +279,23 @@ def confidence_floor(
     return _CONFIDENCE_FLOOR[confidence][row.level]  # type: ignore[index]
 
 
+def _sessions_since_created(created_at: str, sorted_markers: list[str]) -> int:
+    """Count session markers stamped strictly after `created_at`.
+
+    `sorted_markers` is ascending ISO-8601; row `created_at` and session
+    markers both come from `utcnow_iso()`, so ISO strings compare
+    chronologically and a `bisect` gives the count without parsing.
+    """
+    return len(sorted_markers) - bisect.bisect_right(sorted_markers, created_at)
+
+
 def score_row(
     row: Row,
     cosine: float,
     *,
     intent_kind: IntentKind = "none",
     now: _dt.datetime | None = None,
+    sessions_since_created: int | None = None,
 ) -> ScoreBreakdown:
     """Full per-row score with breakdown attached.
 
@@ -296,7 +306,9 @@ def score_row(
     s = strength(row, now=now)
     v = valence_match(intent_kind, row)
     lvl = level_match(intent_kind, row)
-    conf = confidence_floor(row, now=now)
+    conf = confidence_floor(
+        row, now=now, sessions_since_created=sessions_since_created,
+    )
     effective = cosine * s * v * lvl * conf
     return ScoreBreakdown(
         cosine=cosine,
@@ -314,6 +326,7 @@ def effective_score(
     *,
     intent_kind: IntentKind = "none",
     now: _dt.datetime | None = None,
+    sessions_since_created: int | None = None,
 ) -> float:
     """Hot-path score — no allocation, just the multiply chain."""
     return (
@@ -321,7 +334,9 @@ def effective_score(
         * strength(row, now=now)
         * valence_match(intent_kind, row)
         * level_match(intent_kind, row)
-        * confidence_floor(row, now=now)
+        * confidence_floor(
+            row, now=now, sessions_since_created=sessions_since_created,
+        )
     )
 
 
@@ -330,6 +345,7 @@ def rerank(
     *,
     intent_kind: IntentKind = "none",
     now: _dt.datetime | None = None,
+    session_markers: list[str] | None = None,
 ) -> list[RecallHit]:
     """Re-order post-gate hits by the manifesto score.
 
@@ -337,11 +353,26 @@ def rerank(
     drops in cosine-tied ties keep stability via the original index).
     The cosine attached to each hit is preserved — re-rank only adjusts
     *order*, not the field surfaced to callers (debug / display).
+
+    `session_markers` (ISO-8601 session-boundary timestamps) drives the
+    5-session arm of the new-principle protection window: each row's
+    `sessions_since_created` count is derived from it. Omitted → only
+    the 30-day arm of the protection window fires.
     """
     if not hits:
         return hits
+    markers = sorted(session_markers) if session_markers else None
     scored = [
-        (effective_score(hit.row, hit.cosine, intent_kind=intent_kind, now=now), idx, hit)
+        (
+            effective_score(
+                hit.row, hit.cosine, intent_kind=intent_kind, now=now,
+                sessions_since_created=(
+                    _sessions_since_created(hit.row.created_at, markers)
+                    if markers is not None else None
+                ),
+            ),
+            idx, hit,
+        )
         for idx, hit in enumerate(hits)
     ]
     scored.sort(key=lambda triple: (-triple[0], triple[1]))

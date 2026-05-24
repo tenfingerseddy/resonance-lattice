@@ -110,6 +110,18 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     if result.re_projected_optimised:
         print(f"[refresh] optimised band re-projected from new base "
               f"(no LLM cost, no GPU)")
+
+    # Drift cascade: any insight whose cited source's content_hash changed
+    # flips to stale. Foundation 5 of the trust contract — derived layer
+    # never claims authority once its evidence has moved.
+    from ..store.insight_lifecycle import apply_drift_cascade_to_archive
+    n_drifted, n_total = apply_drift_cascade_to_archive(result.output_path)
+    if n_total > 0:
+        if n_drifted:
+            print(f"[refresh] insight drift: {n_drifted}/{n_total} insight "
+                  f"row(s) flagged stale (cited source content_hash changed)")
+        else:
+            print(f"[refresh] insight: {n_total} row(s) checked, no drift")
     return 0
 
 

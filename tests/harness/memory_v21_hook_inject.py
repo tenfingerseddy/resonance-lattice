@@ -396,6 +396,72 @@ def _check_diagnostic_logged() -> int:
 # ---------------------------------------------------------------------------
 
 
+def _check_disable_hook_env_var() -> int:
+    """`RLAT_DISABLE_HOOK=1` short-circuits the hook to `{}` rc=0 and
+    writes a `status=disabled` diagnostic entry. Used by the v5 paired
+    bench's off-arm to suppress recall injection while keeping the
+    same prompts / intent flow as the on-arm.
+
+    The fast-exit lives AFTER the stdin/prompt gates so the diagnostic
+    entry carries a real prompt_hash — the paired-eval join key is
+    `(arm, prompt_hash)`, and a missing hash would silently mis-join.
+
+    Side-checks (all required for the off-arm contract):
+      - no daemon spawn (covered indirectly: empty memory_root + rc=0)
+      - diagnostic written with status=disabled, n_hits=0
+      - stdout = `{}` (no injection)
+    """
+    import os
+
+    from resonance_lattice.memory.user_prompt import run_hook
+    from resonance_lattice.state import RecallDiagnosticLog, state_root_for
+
+    with tempfile.TemporaryDirectory() as td:
+        cwd = Path(td)
+        # memory_root EXISTS — so the no-store fast-exit doesn't fire.
+        # The RLAT_DISABLE_HOOK gate must trip before the daemon path.
+        base = cwd / "base"
+        (base / "u").mkdir(parents=True)
+        stdin = io.StringIO(json.dumps({
+            "prompt": "would this prompt normally recall?",
+            "cwd": str(cwd),
+        }))
+        stdout, stderr = io.StringIO(), io.StringIO()
+        prior = os.environ.get("RLAT_DISABLE_HOOK")
+        os.environ["RLAT_DISABLE_HOOK"] = "1"
+        try:
+            rc = run_hook(
+                stdin=stdin, stdout=stdout, stderr=stderr,
+                user_id="u", memory_root_base=base,
+            )
+        finally:
+            if prior is None:
+                os.environ.pop("RLAT_DISABLE_HOOK", None)
+            else:
+                os.environ["RLAT_DISABLE_HOOK"] = prior
+
+        if rc != 0 or stdout.getvalue().strip() != "{}":
+            print(f"[memory_v21_hook_inject] FAIL (h): disabled hook should "
+                  f"emit `{{}}` rc=0; got rc={rc} stdout={stdout.getvalue()!r}",
+                  file=sys.stderr)
+            return 1
+
+        entries = RecallDiagnosticLog(state_root_for(cwd)).read_recent()
+        if len(entries) != 1 or entries[0].status != "disabled":
+            print(f"[memory_v21_hook_inject] FAIL (h): expected one "
+                  f"status=disabled diagnostic; got {entries!r}",
+                  file=sys.stderr)
+            return 1
+        if entries[0].n_hits != 0:
+            print(f"[memory_v21_hook_inject] FAIL (h): disabled entry should "
+                  f"have n_hits=0; got n_hits={entries[0].n_hits}",
+                  file=sys.stderr)
+            return 1
+    print("[memory_v21_hook_inject] (h) RLAT_DISABLE_HOOK=1 short-circuit "
+          "fast-exit + diagnostic OK", file=sys.stderr)
+    return 0
+
+
 def _check_stale_ready_marker_cleared_pre_spawn() -> int:
     """`_recall_via_daemon_or_spawn` must unlink any pre-existing
     `.recall.ready` marker BEFORE invoking `_spawn_daemon`, so the
@@ -467,6 +533,7 @@ def run() -> int:
         _check_recall_cli_body,
         _check_token_budget,
         _check_diagnostic_logged,
+        _check_disable_hook_env_var,
         _check_stale_ready_marker_cleared_pre_spawn,
     ]:
         rc = check()

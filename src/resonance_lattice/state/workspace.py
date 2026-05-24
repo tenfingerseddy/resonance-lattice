@@ -36,6 +36,13 @@ from ..memory._common import atomic_write_json, utcnow_iso, workspace_hash
 STATE_DIR = ".rlat-state"
 WORKSPACE_DECLARATION_FILE = "workspace.json"
 
+# Env override for the live-state root. When set, the intent graph +
+# outcome ledger land at this exact path instead of the workspace-
+# derived `<root>/.rlat-state/`. Mirrors `RLAT_MEMORY_USER` for the
+# memory store — paired benches set both so their intent/ledger writes
+# never pollute the dogfood workspace state.
+STATE_ROOT_ENV = "RLAT_STATE_ROOT"
+
 # How far up the directory tree to walk before giving up. 24 levels covers
 # every realistic project depth (monorepo subpackages typically sit 3–6 levels
 # deep) without scanning the entire filesystem on a misconfigured cwd.
@@ -72,6 +79,24 @@ class WorkspaceIdentity:
 def state_root_for(workspace_root: Path) -> Path:
     """`<workspace-root>/.rlat-state/`."""
     return workspace_root / STATE_DIR
+
+
+def resolve_state_root(cwd: Path | str | None = None) -> Path:
+    """Resolve the live-state root for `cwd`.
+
+    The `RLAT_STATE_ROOT` env override wins when set — the intent graph
+    and outcome ledger land there directly. Otherwise the state root is
+    `<workspace-root>/.rlat-state/`, with the workspace resolved by
+    `resolve_workspace`.
+
+    Every harness call site that needs the state root resolves it
+    through here, so a single env var isolates *all* live-state writes
+    (paired benches set it; the dogfood leaves it unset).
+    """
+    override = os.environ.get(STATE_ROOT_ENV)
+    if override:
+        return Path(override)
+    return state_root_for(resolve_workspace(cwd).root)
 
 
 def workspace_polarity_tag(workspace_id: str) -> str:

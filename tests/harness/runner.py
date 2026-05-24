@@ -81,6 +81,7 @@ SUITES: dict[str, str] = {
     "memory_v22_decompose": "tests.harness.memory_v22_decompose",
     "memory_v22_distil_arrow2": "tests.harness.memory_v22_distil_arrow2",
     "memory_v22_distil_arrow3": "tests.harness.memory_v22_distil_arrow3",
+    "memory_v22_full_chain": "tests.harness.memory_v22_full_chain",
     "memory_v22_api_key": "tests.harness.memory_v22_api_key",
     "state_workspace": "tests.harness.state_workspace",
     "state_intent": "tests.harness.state_intent",
@@ -95,6 +96,19 @@ SUITES: dict[str, str] = {
     "expertise_primer": "tests.harness.expertise_primer",
     "memory_dedup": "tests.harness.memory_dedup",
     "build_pipeline": "tests.harness.build_pipeline",
+    "insight_layer": "tests.harness.insight_layer",
+    "insight_lifecycle": "tests.harness.insight_lifecycle",
+    "lens_io": "tests.harness.lens_io",
+    "promotion": "tests.harness.promotion",
+    "viewpoint": "tests.harness.viewpoint",
+    "audit_trace_cli": "tests.harness.audit_trace_cli",
+    "llm_free_retrieval": "tests.harness.llm_free_retrieval",
+    "search_lens_cli": "tests.harness.search_lens_cli",
+    "dogfood_bench_shape": "tests.harness.dogfood_bench_shape",
+    "reverification": "tests.harness.reverification",
+    "probe_weak_zone": "tests.harness.probe_weak_zone",
+    "faithfulness": "tests.harness.faithfulness",
+    "faithful_promotion": "tests.harness.faithful_promotion",
 }
 
 
@@ -109,9 +123,35 @@ def select(changed: Iterable[str]) -> set[str]:
             # store/incremental.py is the re-projection home for refresh +
             # sync, so any store/* change must exercise optimised_reproject
             # alongside the basic delta-apply + conversion suites.
+            # Insight layer (lensed knowledge) also lives under store/.
             suites |= {"parity", "roundtrip", "drift",
                        "incremental_refresh", "incremental_sync",
-                       "optimised_reproject", "conversion"}
+                       "optimised_reproject", "conversion",
+                       "insight_layer"}
+        if p.startswith("src/resonance_lattice/store/insight") or \
+           p.startswith("src/resonance_lattice/store/verified"):
+            suites |= {"insight_layer", "insight_lifecycle"}
+        if p.startswith("src/resonance_lattice/store/insight_lifecycle"):
+            suites |= {"insight_lifecycle"}
+        if p.startswith("src/resonance_lattice/cli/maintain"):
+            # maintain.cmd_refresh wires the drift cascade post-pass
+            suites |= {"insight_lifecycle"}
+        if p.startswith("src/resonance_lattice/lens/"):
+            suites |= {"lens_io"}
+        if p.startswith("src/resonance_lattice/store/compression_test") or \
+           p.startswith("src/resonance_lattice/store/promotion"):
+            suites |= {"promotion", "faithful_promotion"}
+        if p.startswith("src/resonance_lattice/store/faithfulness") or \
+           p.startswith("src/resonance_lattice/store/reverification") or \
+           p.startswith("src/resonance_lattice/store/_llm"):
+            suites |= {"faithfulness", "reverification", "faithful_promotion"}
+        if p.startswith("src/resonance_lattice/store/audit") or \
+           p.startswith("src/resonance_lattice/cli/audit") or \
+           p.startswith("src/resonance_lattice/cli/trace") or \
+           p.startswith("src/resonance_lattice/cli/lens"):
+            suites |= {"audit_trace_cli", "llm_free_retrieval"}
+        if p.startswith("src/resonance_lattice/viewpoint/"):
+            suites |= {"viewpoint", "llm_free_retrieval"}
         if p.startswith("src/resonance_lattice/optimise/"):
             suites |= {"optimise_roundtrip", "band_parity",
                        "optimised_reproject", "memory_v22_api_key"}
@@ -134,11 +174,13 @@ def select(changed: Iterable[str]) -> set[str]:
         if p.startswith("src/resonance_lattice/cli/_namecheck"):
             suites |= {"name_check", "skill_context"}
         if p.startswith("src/resonance_lattice/cli/search"):
-            suites |= {"name_check", "doc_examples"}
+            suites |= {"name_check", "doc_examples", "insight_layer", "search_lens_cli"}
+        if p.startswith("src/resonance_lattice/lens/"):
+            suites |= {"lens_io", "search_lens_cli"}
         if p.startswith("src/resonance_lattice/deep_search/"):
             suites |= {"deep_search", "name_check"}
         if p.startswith("src/resonance_lattice/cli/deep_search"):
-            suites |= {"deep_search", "doc_examples"}
+            suites |= {"deep_search", "doc_examples", "faithful_promotion"}
         if p.startswith("src/resonance_lattice/cli/watch"):
             suites |= {"watch_loop", "doc_examples"}
         if p.startswith("src/resonance_lattice/memory/"):
@@ -159,7 +201,8 @@ def select(changed: Iterable[str]) -> set[str]:
                 "memory_v22_forget", "memory_v22_distil_arrow1",
                 "memory_v22_confidence", "memory_v22_what_next",
                 "memory_v22_decompose", "memory_v22_distil_arrow2",
-                "memory_v22_distil_arrow3", "memory_v22_api_key",
+                "memory_v22_distil_arrow3", "memory_v22_full_chain",
+                "memory_v22_api_key",
             }
         if p.startswith("src/resonance_lattice/cli/memory"):
             suites |= {"memory_v21_hook", "doc_examples"}

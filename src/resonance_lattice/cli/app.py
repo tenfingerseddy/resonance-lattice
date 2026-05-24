@@ -16,6 +16,7 @@ import sys
 # Phase 3 wires `build`. Other subcommands stay scaffolded; they print a
 # stub message rather than NotImplementedError so `rlat <subcmd> --help`
 # is still useful while the rest of the surface lands.
+from . import audit as audit_cmd
 from . import build as build_cmd
 from . import compare as compare_cmd
 from . import convert as convert_cmd
@@ -25,13 +26,17 @@ from . import fabric as fabric_cmd
 from . import init as init_cmd
 from . import install_encoder as install_encoder_cmd
 from . import intent as intent_cmd
+from . import lens as lens_cmd
 from . import maintain as maintain_cmd
 from . import memory as memory_cmd
 from . import profile as profile_cmd
 from . import search as search_cmd
 from . import skill_context as skill_context_cmd
 from . import optimise as optimise_cmd
+from . import probe as probe_cmd
+from . import reverify as reverify_cmd
 from . import summary as summary_cmd
+from . import trace as trace_cmd
 from . import watch as watch_cmd
 from . import workspace as workspace_cmd
 
@@ -72,6 +77,11 @@ def main(argv: list[str] | None = None) -> int:
     workspace_cmd.add_subparser(sub)
     fabric_cmd.add_subparser(sub)
     expertise_cmd.add_subparser(sub)
+    audit_cmd.add_subparser(sub)
+    trace_cmd.add_subparser(sub)
+    lens_cmd.add_subparser(sub)
+    reverify_cmd.add_subparser(sub)
+    probe_cmd.add_subparser(sub)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

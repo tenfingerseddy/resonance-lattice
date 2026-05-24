@@ -1,6 +1,6 @@
 """deep_search — the multi-hop research loop has the contracts the CLI depends on.
 
-Six guarantees, all measured here:
+Seven guarantees, all measured here:
 
   1. **Plan → search → answer**: the simplest happy path returns the
      refiner's `answer` decision verbatim and stops the loop.
@@ -27,6 +27,14 @@ Six guarantees, all measured here:
      into `result.input_tokens` + `result.output_tokens` + `cost_usd`.
      Used by the CLI to print spend and by the bench harness for
      $/correct comparisons.
+
+  7. **Insight-aware retrieval**: a corpus with a promoted insight
+     layer surfaces accepted insights into each hop's evidence,
+     labelled distinctly from source passages (architecture §10).
+
+  8. **Parse-failure recovery**: when the refiner emits unparseable
+     output, the loop recovers with a synth call over accumulated
+     evidence rather than handing back raw model text.
 
 Phase 7 deliverable. Ships v2.0 launch headline.
 """
@@ -301,6 +309,89 @@ def _check_token_accounting(km: Path) -> int:
     return 0
 
 
+def _check_insight_aware_retrieval(km: Path) -> int:
+    from resonance_lattice.deep_search import deep_search
+    from resonance_lattice.field.encoder import Encoder
+    from resonance_lattice.store import archive
+
+    from ._testutil import make_insight_passage
+
+    # Isolated corpus — promoting an insight mutates the archive.
+    km2 = _build_fixture(km.parent / "insight_aware")
+    c0 = archive.read(km2)
+    src_ids = [c.passage_id for c in c0.registry]
+    src_hashes = [c.content_hash for c in c0.registry]
+    insight = make_insight_passage(
+        0,
+        "MLV refresh is incremental when the source supports it; otherwise "
+        "the materialized lake view performs a full overwrite refresh.",
+        src_ids[:1], src_hashes[:1], state="accepted",
+    )
+    band = Encoder().encode([insight.content]).astype("float32")
+    archive.write_insight_layer_in_place(km2, [insight], band)
+
+    client = _StubClient([
+        "MLV refresh behaviour",
+        '{"action": "answer", "answer": "Incremental when supported."}',
+    ])
+    result = deep_search(
+        km2, "How does MLV refresh work?", client=client,
+        max_hops=4, top_k=5,
+    )
+    search_hops = [h for h in result.hops if h.kind == "search"]
+    if not any((h.n_insights or 0) > 0 for h in search_hops):
+        print(f"[deep_search] FAIL guarantee 7: no insight retrieved "
+              f"(n_insights per hop = {[h.n_insights for h in search_hops]})",
+              file=sys.stderr)
+        return 1
+    # The refiner must have SEEN the insight, labelled as earned insight.
+    refiner_prompts = [user for _system, user in client.calls]
+    if not any("earned insight" in p for p in refiner_prompts):
+        print("[deep_search] FAIL guarantee 7: insight evidence absent from "
+              "the refiner prompt", file=sys.stderr)
+        return 1
+    # The result must carry the engaged insight id (attribution substrate).
+    if insight.insight_id not in result.insight_ids:
+        print(f"[deep_search] FAIL guarantee 7: insight_id not captured in "
+              f"result.insight_ids ({result.insight_ids})", file=sys.stderr)
+        return 1
+    print("[deep_search] guarantee 7 (insight-aware retrieval) OK",
+          file=sys.stderr)
+    return 0
+
+
+def _check_parse_fail_recovery(km: Path) -> int:
+    from resonance_lattice.deep_search import deep_search
+
+    # Refiner emits unparseable output → the loop must recover via a
+    # synth call, not surface raw model text as the answer.
+    client = _StubClient([
+        "MLV default action",                            # planner
+        "this is not valid json at all",                 # refiner hop 2 — unparseable
+        "Synthesised recovery answer about MLV.",         # synth recovery
+    ])
+    result = deep_search(
+        km, "What is the default action of MLV?", client=client,
+        max_hops=4, top_k=3,
+    )
+    if "Synthesised recovery answer" not in result.answer:
+        print(f"[deep_search] FAIL guarantee 8: answer not synth-recovered "
+              f"({result.answer!r})", file=sys.stderr)
+        return 1
+    kinds = [h.kind for h in result.hops]
+    if "parse_failed" not in kinds:
+        print(f"[deep_search] FAIL guarantee 8: parse_failed hop not "
+              f"recorded; kinds={kinds}", file=sys.stderr)
+        return 1
+    if "synth_after_parse_fail" not in kinds:
+        print(f"[deep_search] FAIL guarantee 8: synth_after_parse_fail hop "
+              f"missing; kinds={kinds}", file=sys.stderr)
+        return 1
+    print("[deep_search] guarantee 8 (parse-failure recovery) OK",
+          file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     with tempfile.TemporaryDirectory() as d:
         km = _build_fixture(Path(d))
@@ -311,6 +402,8 @@ def run() -> int:
             _check_max_hops_synth,
             _check_name_check_union,
             _check_token_accounting,
+            _check_insight_aware_retrieval,
+            _check_parse_fail_recovery,
         ):
             if fn(km) != 0:
                 return 1

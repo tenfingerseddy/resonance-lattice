@@ -365,17 +365,30 @@ def _check_exit_codes() -> int:
                       f"deprecation marker; stderr:\n{err}", file=sys.stderr)
                 return 1
 
-        for name in ["distil", "feedback"]:
-            argv = common + [name]
-            rc, _, err = _run_cli(argv)
-            if rc != 3:
-                print(f"[memory_v21_hook] FAIL (i): `{name}` rc={rc} "
-                      f"(want 3 — pending MVP)", file=sys.stderr)
+        # `distil` + `feedback` shipped — no longer rc-3 pending stubs.
+        # `distil` over a manual-only store returns before any LLM call
+        # (rc 0 with a key, rc 1 without); either way it is not rc 3.
+        rc, _, err = _run_cli(common + ["distil"])
+        if rc == 3 or "ships in v2.1 MVP" in err:
+            print(f"[memory_v21_hook] FAIL (i): `distil` still a "
+                  f"pending-MVP stub (rc={rc})\n{err}", file=sys.stderr)
+            return 1
+
+        # `feedback` logs a vote with no LLM dependency — fully
+        # deterministic; verify both verdicts land in feedback.log.
+        from resonance_lattice.memory.feedback import read_feedback
+        from resonance_lattice.memory.store import path_for_user
+        for verdict in ["good", "bad"]:
+            rc, _, err = _run_cli(common + ["feedback", verdict])
+            if rc != 0:
+                print(f"[memory_v21_hook] FAIL (i): `feedback {verdict}` "
+                      f"rc={rc} (want 0)\n{err}", file=sys.stderr)
                 return 1
-            if "ships in v2.1 MVP" not in err:
-                print(f"[memory_v21_hook] FAIL (i): `{name}` banner missing "
-                      f"MVP marker; stderr:\n{err}", file=sys.stderr)
-                return 1
+        votes = read_feedback(path_for_user(user_id="test", root=base))
+        if [v["verdict"] for v in votes] != ["good", "bad"]:
+            print(f"[memory_v21_hook] FAIL (i): feedback.log={votes!r}",
+                  file=sys.stderr)
+            return 1
 
         # `recall <query>` (one-shot) shipped Day 9-10. Empty store
         # returns rc=0 with the "(no rows pass...)" message. Bare

@@ -25,14 +25,18 @@ from .ledger import (
 from .attribution import attribution_from_entries
 from .eval import (
     INTENT_LEVEL_WEIGHTS,
+    PairedComparison,
     SessionScorecard,
     WindowComparison,
     WindowSpec,
     aggregate_windows,
     compute_session_scorecard,
     daily_windows,
+    paired_comparison,
     render_comparison,
+    render_paired_comparison,
     render_summary,
+    scorecard_from_step_eval,
     scorecard_to_dict,
     weekly_windows,
 )
@@ -57,9 +61,11 @@ from .signals import PendingSignal, PendingSignalLog
 from .trajectory import render_trajectory_primer
 from .workspace import (
     STATE_DIR,
+    STATE_ROOT_ENV,
     WORKSPACE_DECLARATION_FILE,
     WorkspaceIdentity,
     declare_workspace,
+    resolve_state_root,
     resolve_workspace,
     state_root_for,
     workspace_polarity_tag,
@@ -67,9 +73,11 @@ from .workspace import (
 
 __all__ = [
     "STATE_DIR",
+    "STATE_ROOT_ENV",
     "WORKSPACE_DECLARATION_FILE",
     "WorkspaceIdentity",
     "declare_workspace",
+    "resolve_state_root",
     "resolve_workspace",
     "state_root_for",
     "workspace_polarity_tag",
@@ -101,6 +109,7 @@ __all__ = [
     "SessionMarkerLog",
     "sessions_path",
     "INTENT_LEVEL_WEIGHTS",
+    "PairedComparison",
     "SessionScorecard",
     "WindowComparison",
     "WindowSpec",
@@ -110,8 +119,11 @@ __all__ = [
     "daily_windows",
     "hash_prompt",
     "make_turn_id",
+    "paired_comparison",
     "render_comparison",
+    "render_paired_comparison",
     "render_summary",
+    "scorecard_from_step_eval",
     "scorecard_to_dict",
     "weekly_windows",
     "render_trajectory_primer",

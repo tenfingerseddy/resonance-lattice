@@ -79,16 +79,12 @@ def _add_rows_with_band(memory, rows_meta: list[dict], dim: int = 768) -> np.nda
             polarity=meta["polarity"],
             transcript_hash=meta.get("transcript_hash", f"hash{i}"),
             embedding=band[i],
+            level=meta.get("level", "event"),
+            recurrence_count=meta.get("recurrence_count", 1),
         )
-        # Apply mutable fields after creation (recurrence + is_bad
-        # default to add_row's `1` and `False`).
-        updates: dict[str, object] = {}
-        if "recurrence_count" in meta:
-            updates["recurrence_count"] = meta["recurrence_count"]
+        # is_bad defaults to add_row's `False`; apply after creation.
         if meta.get("is_bad"):
-            updates["is_bad"] = True
-        if updates:
-            memory.update_row(rid, **updates)
+            memory.update_row(rid, is_bad=True)
     return query
 
 
@@ -223,6 +219,78 @@ def _check_recurrence_gate() -> int:
             return 1
     print("[memory_v21_recall] (c) recurrence gate filters rows below M OK",
           file=sys.stderr)
+    return 0
+
+
+def _check_recall_auto_tune_cold_start() -> int:
+    """(j) `recall(..., auto_tune_cold_start=True)` relaxes the gates on a
+    sparse store, matching what the daemon does for the production hook.
+    A row at cosine 0.6 fails the default floor (0.7) but clears the
+    cold-start floor (0.5) — recall must surface it with auto-tune on,
+    drop it with auto-tune off.
+    """
+    import tempfile
+
+    from resonance_lattice.memory.recall import recall
+
+    with tempfile.TemporaryDirectory() as td:
+        memory = _make_memory(Path(td))
+        query_vec = _add_rows_with_band(memory, [
+            {"text": "mid-cosine row",
+             "polarity": ["prefer", "workspace:test00"],
+             "cosine": 0.6, "recurrence_count": 5},
+        ])
+        cwd_hash = "test00"
+        off = recall("q", store=memory, encoder=FixedEncoder(query_vec),
+                     cwd_hash=cwd_hash, auto_tune_cold_start=False)
+        if off:
+            print(f"[memory_v21_recall] FAIL (j): default gates should drop "
+                  f"a 0.6-cosine row; got {len(off)} hits", file=sys.stderr)
+            return 1
+        on = recall("q", store=memory, encoder=FixedEncoder(query_vec),
+                    cwd_hash=cwd_hash, auto_tune_cold_start=True)
+        if len(on) != 1:
+            print(f"[memory_v21_recall] FAIL (j): cold-start auto-tune should "
+                  f"surface the 0.6-cosine row; got {len(on)} hits",
+                  file=sys.stderr)
+            return 1
+    print("[memory_v21_recall] (j) recall auto_tune_cold_start relaxes gates "
+          "on a sparse store OK", file=sys.stderr)
+    return 0
+
+
+def _check_recurrence_gate_level_aware() -> int:
+    """(i) The recurrence gate is the event-noise filter — it applies to
+    events only. A distilled `pattern` row whose recurrence_count is below
+    M (e.g. a cold-start pattern at recurrence 2, frozen at creation)
+    must still survive a mature-store recall with min_recurrence=3; an
+    `event` row at the same recurrence is correctly dropped.
+    """
+    import tempfile
+
+    from resonance_lattice.memory.recall import rank
+
+    for level, expect_hit in (("pattern", True), ("event", False)):
+        with tempfile.TemporaryDirectory() as td:
+            memory = _make_memory(Path(td))
+            query_vec = _add_rows_with_band(memory, [
+                {"text": f"distilled-or-not {level}",
+                 "polarity": ["prefer", "workspace:test00"],
+                 "cosine": 0.95, "recurrence_count": 2, "level": level},
+            ])
+            rows, band = memory.read_all()
+            hits = rank("q", rows=rows, band=band,
+                        encoder=FixedEncoder(query_vec),
+                        cwd_hash="test00", min_recurrence=3)
+            got_hit = len(hits) == 1
+            if got_hit != expect_hit:
+                print(f"[memory_v21_recall] FAIL (i): level={level} "
+                      f"recurrence=2 min_recurrence=3 — expected "
+                      f"{'hit' if expect_hit else 'no hit'}, got "
+                      f"{len(hits)} hits", file=sys.stderr)
+                return 1
+    print("[memory_v21_recall] (i) recurrence gate is event-only; distilled "
+          "rows bypass OK", file=sys.stderr)
     return 0
 
 
@@ -488,11 +556,13 @@ def _check_rank_diagnostic() -> int:
 
 def _check_cold_start_gates() -> int:
     """Pins `recall.cold_start_gates` — sparse memory returns relaxed
-    `(0.5, 0.0, 1)` gates; dense memory returns None so callers fall
+    `(0.5, 0.0, 2)` gates; dense memory returns None so callers fall
     through to the v1 defaults. The longitudinal benchmark (run #2)
     caught the v1 defaults as a 20-session blackout on diverse-task
     workloads; the run #3 prep probe showed top1_top2_gap also needed
-    relaxing because cold-corpus hits cluster tightly.
+    relaxing because cold-corpus hits cluster tightly; the run #4.2
+    bench surfaced singleton over-surfacing at recurrence=1 so the
+    floor was bumped to 2.
     """
     from resonance_lattice.memory.recall import (
         COLD_START_COSINE_FLOOR,
@@ -526,16 +596,83 @@ def _check_cold_start_gates() -> int:
     return 0
 
 
+def _check_cold_start_rerank_on_intent_none() -> int:
+    """(h) Cold-start triggers the manifesto rerank even when intent_kind
+    is "none" — the v5_paired FINDINGS predicted this matters once
+    arrow1 cold-start (W2) lets patterns form: 6-7 close-cosine hits
+    with cosine-only ordering leaves the rank to noise, but with
+    intent_kind="none" the rerank still factors in strength (recency ×
+    log-recurrence × criticality) and confidence_floor — so a
+    high-confidence pattern ranks above a low-confidence pattern at
+    similar cosine.
+
+    Fixture: two rows at nearly-equal cosine (0.85, 0.83). Without
+    rerank, [A (low-conf), B (high-conf)] is the cosine-sorted order.
+    With cold-start rerank fired even at intent_kind=None, the
+    confidence_floor lift (event-low=0.6 vs event-high=0.95) inverts
+    the order so B ranks first.
+    """
+    import tempfile
+
+    from resonance_lattice.memory.recall import rank_with_diagnostic
+
+    with tempfile.TemporaryDirectory() as td:
+        memory = _make_memory(Path(td))
+        rows_meta = [
+            {"text": "A low-conf",  "polarity": ["prefer", "workspace:test00"],
+             "cosine": 0.85, "recurrence_count": 5},
+            {"text": "B high-conf", "polarity": ["prefer", "workspace:test00"],
+             "cosine": 0.83, "recurrence_count": 5},
+        ]
+        query_vec = _add_rows_with_band(memory, rows_meta)
+        rows, band = memory.read_all()
+        # Plant differing confidences. Memory.add_row defaults to
+        # "medium"; bump A down and B up so the rerank's
+        # confidence_floor factor produces a measurable order flip.
+        memory.update_row(rows[0].row_id, confidence="low")
+        memory.update_row(rows[1].row_id, confidence="high")
+        rows, band = memory.read_all()
+
+        # intent_kind=None (the actual default from the daemon for
+        # bench prompts that classify as "none"). With cold-start
+        # rerank, the high-confidence row should rank first despite
+        # being second by cosine.
+        hits, _ = rank_with_diagnostic(
+            "anything", rows=rows, band=band,
+            encoder=FixedEncoder(query_vec),
+            cwd_hash="test00", top_k=2,
+            top1_top2_gap=0.0,   # don't suppress the near-tie
+            min_recurrence=1,    # admit recurrence=5 trivially
+            intent_kind=None,
+        )
+        if len(hits) != 2:
+            print(f"[memory_v21_recall] FAIL (h.1): expected 2 hits, got "
+                  f"{len(hits)}", file=sys.stderr)
+            return 1
+        if hits[0].row.text != "B high-conf":
+            print(f"[memory_v21_recall] FAIL (h.2): cold-start rerank should "
+                  f"put 'B high-conf' first via confidence_floor lift; "
+                  f"got {[h.row.text for h in hits]!r}", file=sys.stderr)
+            return 1
+
+    print("[memory_v21_recall] (h) cold-start rerank fires at intent_kind=None "
+          "and flips order via confidence_floor OK", file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     patch_zero_encoder()
     for check in [
         _check_descending_sort,
         _check_confidence_gate,
         _check_recurrence_gate,
+        _check_recurrence_gate_level_aware,
+        _check_recall_auto_tune_cold_start,
         _check_top_k_truncation,
         _check_is_bad_excluded,
         _check_workspace_filter,
         _check_cold_start_gates,
+        _check_cold_start_rerank_on_intent_none,
         _check_rank_diagnostic,
     ]:
         rc = check()

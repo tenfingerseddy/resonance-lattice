@@ -25,6 +25,12 @@ factors as a re-rank over the existing gates". Six contracts:
       `last_corroborated_at`, the severe floor keeps the recency factor
       ≥ 0.6 so the row stays surfaceable.
 
+  (g) `effective_score` composition.
+
+  (h) Session-markers protection arm — `rerank(session_markers=...)`
+      derives each row's `sessions_since_created` and the 5-session arm
+      of the new-principle protection window flips ordering.
+
 Hermetic — fixed cosines + ZeroEncoder so we exercise rerank math directly,
 without running the encoder.
 """
@@ -36,6 +42,7 @@ import sys
 
 from resonance_lattice.memory.recall import RecallHit
 from resonance_lattice.memory.rerank import (
+    _sessions_since_created,
     effective_score,
     recency_factor,
     rerank,
@@ -212,6 +219,65 @@ def _check_effective_score_components() -> int:
     return 0
 
 
+def _check_session_markers_protection_arm() -> int:
+    """(h) `rerank(session_markers=...)` derives `sessions_since_created`
+    per row and the 5-session arm of the new-principle protection window
+    decides ordering.
+
+    A low-confidence principle 5 days old (inside the 30-day clock)
+    competes with an old, unprotected low-confidence principle. With few
+    session markers the fresh principle keeps protection (floor lifted
+    to medium) and outranks the old one; once 6 markers post-date its
+    `created_at`, the 5-session arm expires and the order reverts.
+    """
+    now = _dt.datetime(2026, 6, 1, tzinfo=_dt.timezone.utc)
+
+    def _iso(days_ago: float) -> str:
+        return (now - _dt.timedelta(days=days_ago)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+
+    def _principle(row_id: str, *, created_days_ago: float) -> Row:
+        return Row(
+            row_id=row_id, text=row_id,
+            polarity=["factual", "workspace:abc123"],
+            recurrence_count=5,
+            created_at=_iso(created_days_ago),
+            last_corroborated_at=_iso(1),  # equal strength across rows
+            transcript_hash="distilled:x", is_bad=False,
+            level="principle", criticality="normal", confidence="low",
+            origin="distilled",
+        )
+
+    fresh = _principle("fresh", created_days_ago=5)
+    old = _principle("old", created_days_ago=100)
+    # `old` first so a flat tie resolves to `old` — promoting `fresh`
+    # past it must be the protection arm's doing, not input order.
+    hits = [RecallHit(row=old, cosine=0.9), RecallHit(row=fresh, cosine=0.9)]
+
+    # _sessions_since_created — the bisect helper.
+    markers3 = [_iso(4), _iso(3), _iso(2)]
+    if _sessions_since_created(fresh.created_at, sorted(markers3)) != 3:
+        print("[memory_v22_rerank] FAIL (h): sessions_since_created count",
+              file=sys.stderr)
+        return 1
+
+    protected = rerank(hits, now=now, session_markers=markers3)
+    if protected[0].row.row_id != "fresh":
+        print(f"[memory_v22_rerank] FAIL (h): protected order="
+              f"{[h.row.row_id for h in protected]}", file=sys.stderr)
+        return 1
+
+    markers6 = [_iso(d) for d in (4.5, 4, 3.5, 3, 2.5, 2)]
+    expired = rerank(hits, now=now, session_markers=markers6)
+    if expired[0].row.row_id != "old":
+        print(f"[memory_v22_rerank] FAIL (h): expired order="
+              f"{[h.row.row_id for h in expired]}", file=sys.stderr)
+        return 1
+    print("[memory_v22_rerank] (h) session-markers protection arm OK",
+          file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     for check in [
         _check_default_unchanged,
@@ -221,6 +287,7 @@ def run() -> int:
         _check_strength_recurrence,
         _check_severe_floor,
         _check_effective_score_components,
+        _check_session_markers_protection_arm,
     ]:
         rc = check()
         if rc != 0:

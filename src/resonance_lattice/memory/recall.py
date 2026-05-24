@@ -7,7 +7,9 @@ Pipeline (in order, all gates active by default):
        `cwd_hash` workspace tag OR `cross-workspace`.
     3. Confidence gate: keep only if top1 ≥ floor AND
        (top1 - top2) ≥ gap. Empty result if either fails.
-    4. Recurrence gate: keep rows with recurrence_count ≥ M.
+    4. Recurrence gate: keep event rows with recurrence_count ≥ M.
+       Distilled rows (pattern/learning/principle) bypass — they were
+       admitted by distillation, not corroboration count.
     5. Sort by cosine descending; return top_k.
 
 Spec: `.claude/plans/fabric-agent-flat-memory.md` §0.6 + §0.4.
@@ -58,7 +60,15 @@ DEFAULT_TOP_K = 5
 COLD_START_ROW_THRESHOLD = 200
 COLD_START_COSINE_FLOOR = 0.5
 COLD_START_TOP1_TOP2_GAP = 0.0
-COLD_START_MIN_RECURRENCE = 1
+# Bumped from 1 to 2 after v4.2 surfaced arrow1 over-promotion:
+# recurrence=1 let every singleton event promote to a pattern, growing
+# the corpus from 63 to 873 patterns across the same 30-session bench.
+# The over-dense corpus then dropped 27/29 recalls at the confidence-gap
+# gate (top1/top2 cosines too similar). recurrence=2 keeps cold-start
+# unblockable for genuinely-repeated material but prevents singleton
+# promotion. Same change applied symmetrically at arrow1's promotion
+# threshold so the cluster and the recall gate agree.
+COLD_START_MIN_RECURRENCE = 2
 
 
 def cold_start_gates(n_rows: int) -> tuple[float, float, int] | None:
@@ -167,6 +177,7 @@ def rank_with_diagnostic(
     top1_top2_gap: float = DEFAULT_TOP1_TOP2_GAP,
     min_recurrence: int = DEFAULT_MIN_RECURRENCE,
     intent_kind: IntentKind | None = None,
+    session_markers: list[str] | None = None,
 ) -> tuple[list[RecallHit], RankDiagnostic]:
     """Run the §0.6 retrieval pipeline AND emit per-gate diagnostic counts.
 
@@ -259,8 +270,21 @@ def rank_with_diagnostic(
             dropped_at=DROPPED_BELOW_CONFIDENCE_GAP,
         )
 
+    # Step 4: recurrence gate — the event-noise filter. recurrence_count
+    # means "corroboration count" on an event but "inherited evidence
+    # weight" on a distilled row (pattern/learning/principle), and a
+    # binary threshold on the latter creates a cliff: a cold-start
+    # pattern at recurrence 2 goes permanently invisible the moment the
+    # store crosses COLD_START_ROW_THRESHOLD and the gate rises to 3,
+    # with no corroboration path back. A distilled row earns its place
+    # by distillation (cluster size + LLM validation + post-cosine);
+    # that *is* its admission rule. Events earn it by corroboration.
+    # Ordering quality for distilled rows is handled by confidence_floor
+    # in rerank; lifecycle by the forget pass.
     above_recurrence = [
-        (row, cos) for row, cos in eligible if row.recurrence_count >= eff_recurrence
+        (row, cos)
+        for row, cos in eligible
+        if row.level != "event" or row.recurrence_count >= eff_recurrence
     ]
     if not above_recurrence:
         return [], _diag(
@@ -270,9 +294,26 @@ def rank_with_diagnostic(
         )
 
     hits = [RecallHit(row=row, cosine=cos) for row, cos in above_recurrence]
-    if intent_kind is not None and intent_kind != "none":
+    # Cold-start: with 6-7 close-cosine hits and intent_kind="none" (the
+    # classifier defaults for most bench prompts), cosine-only ordering
+    # leaves the rank to noise. Run the manifesto rerank even when
+    # intent_kind is "none"/None — the neutral valence + level
+    # multipliers collapse the score to `cosine × strength ×
+    # confidence_floor`, which still factors in recency, log-recurrence,
+    # criticality, and confidence_floor. v5_paired FINDINGS predicted
+    # this matters once arrow1 cold-start (W2) lets patterns form: with
+    # patterns now in the cold-start store, confidence_floor ranks
+    # confident patterns over low-confidence events on the same query.
+    rerank_intent = intent_kind if (intent_kind is not None) else "none"
+    is_intent_driven_rerank = (
+        intent_kind is not None and intent_kind != "none"
+    )
+    is_cold_start_rerank = len(rows) < COLD_START_ROW_THRESHOLD
+    if is_intent_driven_rerank or is_cold_start_rerank:
         from .rerank import rerank as _rerank
-        hits = _rerank(hits, intent_kind=intent_kind)
+        hits = _rerank(
+            hits, intent_kind=rerank_intent, session_markers=session_markers,
+        )
     hits = hits[:top_k]
     return hits, _diag(
         top1_raw=top1_raw, n_above_floor=n_above_floor,
@@ -294,6 +335,7 @@ def rank(
     top1_top2_gap: float = DEFAULT_TOP1_TOP2_GAP,
     min_recurrence: int = DEFAULT_MIN_RECURRENCE,
     intent_kind: IntentKind | None = None,
+    session_markers: list[str] | None = None,
 ) -> list[RecallHit]:
     """Run the §0.6 retrieval pipeline against an already-loaded snapshot.
 
@@ -315,6 +357,7 @@ def rank(
         query, rows=rows, band=band, encoder=encoder, cwd_hash=cwd_hash,
         top_k=top_k, cosine_floor=cosine_floor, top1_top2_gap=top1_top2_gap,
         min_recurrence=min_recurrence, intent_kind=intent_kind,
+        session_markers=session_markers,
     )
     return hits
 
@@ -330,6 +373,8 @@ def recall(
     top1_top2_gap: float = DEFAULT_TOP1_TOP2_GAP,
     min_recurrence: int = DEFAULT_MIN_RECURRENCE,
     intent_kind: IntentKind | None = None,
+    auto_tune_cold_start: bool = False,
+    session_markers: list[str] | None = None,
 ) -> list[RecallHit]:
     """Run the §0.6 retrieval pipeline against the per-user band.
 
@@ -338,10 +383,27 @@ def recall(
     `store.read_all()` once and invokes `rank()` per request.
 
     `intent_kind` is forwarded to `rank` — opt-in manifesto re-rank.
+
+    `auto_tune_cold_start=True` relaxes the three gates to their
+    cold-start values when the store is below `COLD_START_ROW_THRESHOLD`,
+    exactly as the daemon does for the UserPromptSubmit hook — callers
+    that want recall to match production behaviour on a sparse store
+    opt in. Explicit gate overrides still win (relax only fills the
+    defaults).
     """
     rows, band = store.read_all()
     if encoder is None:
         encoder = store._ensure_encoder()  # type: ignore[attr-defined]
+    if auto_tune_cold_start:
+        relaxed = cold_start_gates(len(rows))
+        if relaxed is not None:
+            cold_floor, cold_gap, cold_recurrence = relaxed
+            if cosine_floor == DEFAULT_COSINE_FLOOR:
+                cosine_floor = cold_floor
+            if top1_top2_gap == DEFAULT_TOP1_TOP2_GAP:
+                top1_top2_gap = cold_gap
+            if min_recurrence == DEFAULT_MIN_RECURRENCE:
+                min_recurrence = cold_recurrence
     return rank(
         query,
         rows=rows,
@@ -353,4 +415,5 @@ def recall(
         top1_top2_gap=top1_top2_gap,
         min_recurrence=min_recurrence,
         intent_kind=intent_kind,
+        session_markers=session_markers,
     )

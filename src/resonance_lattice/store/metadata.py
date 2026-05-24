@@ -28,7 +28,7 @@ class BackboneInfo:
     max_seq_length: int = 8192
 
 
-BandRole = Literal["retrieval_default", "in_corpus_retrieval"]
+BandRole = Literal["retrieval_default", "in_corpus_retrieval", "insight_layer"]
 
 
 @dataclass

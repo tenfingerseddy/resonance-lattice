@@ -13,6 +13,7 @@ HopKind = Literal[
     "decide_search",         # Refiner decided to issue another query.
     "decide_give_up",        # Refiner declared the corpus doesn't cover the question.
     "synth_after_max_hops",  # Hops budget exhausted; synth from accumulated evidence.
+    "synth_after_parse_fail",  # Refiner output unparseable; recovered via synth.
     "search_failed",         # Retrieval errored out (unrecoverable).
     "parse_failed",          # Refiner output didn't match the JSON contract.
 ]
@@ -32,6 +33,7 @@ class DeepSearchHop:
     query: str | None = None
     action: str | None = None
     n_passages: int | None = None
+    n_insights: int | None = None
     error: str | None = None
 
 
@@ -59,6 +61,9 @@ class DeepSearchResult:
     answer: str
     hops: list[DeepSearchHop] = field(default_factory=list)
     evidence_passages: list[dict] = field(default_factory=list)
+    # Insight-layer hits engaged across all hops, deduped + rank-ordered
+    # (best score first) — the raw substrate for attribution.
+    insight_ids: list[str] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0

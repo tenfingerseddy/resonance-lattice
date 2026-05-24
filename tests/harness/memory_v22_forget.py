@@ -22,7 +22,12 @@ Eight contracts:
 
   (h) Recently active protects — corroborated within window stays.
 
-Hermetic — synthetic rows + temp dir; no encoder, no LLM.
+  (i) Stale due to corpus drift (condition 4) — a high/verified row in
+      the drifted set is recalibrated to low, not dropped; a low-
+      confidence row is out of scope; `apply_forget` writes the
+      downgrade.
+
+Hermetic — synthetic rows + temp dir.
 """
 
 from __future__ import annotations
@@ -33,11 +38,14 @@ import tempfile
 from dataclasses import asdict, replace
 from pathlib import Path
 
+import numpy as np
+
 from resonance_lattice.memory.forget import (
     DEFAULT_RECENT_ACTIVITY_DAYS,
+    apply_forget,
     forget_pass,
 )
-from resonance_lattice.memory.store import Row
+from resonance_lattice.memory.store import Memory, Row
 from resonance_lattice.state import (
     Attribution,
     CriterionCheck,
@@ -273,6 +281,58 @@ def _check_recently_active() -> int:
     return 0
 
 
+def _check_stale_drift() -> int:
+    # Condition 4: a high/verified row whose citations drifted is
+    # recalibrated to low (not dropped); confidence gates the scope.
+    high = _row(
+        row_id="01HZ_HIGH", confidence="high", origin="distilled",
+        recurrence_count=5, criticality="high",
+        created_at=_stale(2), last_corroborated_at=_stale(2),
+    )
+    verified = replace(high, row_id="01HZ_VERIFIED", confidence="verified")
+    low = replace(high, row_id="01HZ_LOW", confidence="low")
+    verdicts = forget_pass(
+        [high, verified, low], now=_NOW,
+        drifted_row_ids=["01HZ_HIGH", "01HZ_VERIFIED", "01HZ_LOW"],
+    )
+    for rid in ("01HZ_HIGH", "01HZ_VERIFIED"):
+        v = _verdict_for(rid, verdicts)
+        if v.drop or v.condition != "stale_drift" or v.downgrade_to != "low":
+            print(f"[memory_v22_forget] FAIL (i): {rid} {v!r}",
+                  file=sys.stderr)
+            return 1
+    if _verdict_for("01HZ_LOW", verdicts).condition == "stale_drift":
+        print("[memory_v22_forget] FAIL (i): low-confidence row hit "
+              "condition 4", file=sys.stderr)
+        return 1
+    # A high row absent from the drifted set is untouched by condition 4.
+    clean = forget_pass([high], now=_NOW, drifted_row_ids=[])
+    if _verdict_for("01HZ_HIGH", clean).condition == "stale_drift":
+        print("[memory_v22_forget] FAIL (i): non-drifted row hit "
+              "condition 4", file=sys.stderr)
+        return 1
+
+    # apply_forget writes the downgrade to the store.
+    with tempfile.TemporaryDirectory() as td:
+        memory = Memory(root=Path(td) / "u")
+        rid = memory.add_row(
+            text="a high-confidence drifted claim", polarity=["factual"],
+            transcript_hash="manual",
+            embedding=np.zeros(768, dtype=np.float32),
+            criticality="high", confidence="high",
+        )
+        n_dropped, verdicts = apply_forget(memory, drifted_row_ids=[rid])
+        rows, _ = memory.read_all()
+    if n_dropped != 0 or rows[0].confidence != "low":
+        print(f"[memory_v22_forget] FAIL (i): apply_forget n_dropped="
+              f"{n_dropped} confidence={rows[0].confidence!r}",
+              file=sys.stderr)
+        return 1
+    print("[memory_v22_forget] (i) stale-drift recalibration OK",
+          file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     for check in [
         _check_decay,
@@ -283,6 +343,7 @@ def run() -> int:
         _check_severe_avoid,
         _check_user_declared,
         _check_recently_active,
+        _check_stale_drift,
     ]:
         rc = check()
         if rc != 0:

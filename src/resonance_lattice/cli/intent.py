@@ -29,8 +29,7 @@ from ..state import (
     RecallCache,
     Signal,
     attribution_from_entries,
-    resolve_workspace,
-    state_root_for,
+    resolve_state_root,
 )
 from ..state.ledger import now_iso
 from ._errors import EXIT_OK, EXIT_USER_ERROR, user_error as _user_error
@@ -39,8 +38,7 @@ from ._memory import _open_user_memory, _workspace_polarity_tag
 
 def _state_root(args: argparse.Namespace) -> Path:
     cwd = Path(args.cwd) if args.cwd else Path.cwd()
-    identity = resolve_workspace(cwd)
-    return state_root_for(identity.root)
+    return resolve_state_root(cwd)
 
 
 def _cmd_add(args: argparse.Namespace) -> int:
@@ -229,6 +227,24 @@ def _cmd_reject(args: argparse.Namespace) -> int:
     return _record_user_signal(args, verdict="not_satisfied", new_status="abandoned")
 
 
+def _cmd_activate(args: argparse.Namespace) -> int:
+    """Flip a `proposed` intent (e.g. from `capture-plan`) to `active`.
+
+    The manual half of the proposed→active transition — Claude Code
+    publishes no plan-approval hook to automate it. A lifecycle
+    transition, not an outcome: writes no signal, no ledger record.
+    """
+    store = LiveIntentStore(_state_root(args))
+    try:
+        intent = store.set_status(
+            args.intent_id, "active", reason=args.reason or "",
+        )
+    except KeyError as exc:
+        return _user_error(str(exc))
+    print(f"active: {intent.intent_id}")
+    return EXIT_OK
+
+
 def _maybe_llm_client():
     """Resolve the Anthropic client, or None when no API key is set.
 
@@ -411,10 +427,10 @@ def _cmd_capture_plan(args: argparse.Namespace) -> int:
     plus numbered/bulleted items, and writes them into the live store
     with `status="proposed"`.
 
-    The proposed→active flip is intentionally a follow-up — no published
-    Claude Code hook event signals plan-mode approval today, so the
-    operator either flips status manually or a future Stop-hook
-    heuristic flips it on the next turn.
+    Captured intents enter `proposed`. The proposed→active flip cannot
+    be automatic — Claude Code publishes no plan-approval hook event —
+    so the operator runs `rlat intent activate <intent_id>` once the
+    plan is adopted.
     """
     try:
         payload = json.loads(sys.stdin.read())
@@ -539,6 +555,14 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     reject_p.add_argument("intent_id")
     reject_p.add_argument("--reason", default="")
     reject_p.set_defaults(func=_cmd_reject)
+
+    activate_p = intent_sub.add_parser(
+        "activate",
+        help="flip a proposed intent (e.g. from capture-plan) to active",
+    )
+    activate_p.add_argument("intent_id")
+    activate_p.add_argument("--reason", default="")
+    activate_p.set_defaults(func=_cmd_activate)
 
     what_next_p = intent_sub.add_parser(
         "what-next",

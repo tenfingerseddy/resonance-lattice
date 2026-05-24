@@ -39,6 +39,15 @@ from ..deep_search import deep_search
 from ..deep_search.types import DeepSearchResult
 from . import _namecheck
 
+# A `parse_failed` hop is not a failure: the loop recovers via a synth
+# call (see `synth_after_parse_fail`). Only an errored retrieval leaves
+# the loop with no grounded answer.
+_FAILURE_HOP_KINDS = ("search_failed",)
+
+
+def _has_failure_hop(result: DeepSearchResult) -> bool:
+    return any(h.kind in _FAILURE_HOP_KINDS for h in result.hops)
+
 
 def _format_text(result: DeepSearchResult) -> str:
     """Human-readable rendering for terminal use.
@@ -62,7 +71,11 @@ def _format_text(result: DeepSearchResult) -> str:
         )
     for h in result.hops:
         if h.kind == "search":
-            lines.append(f"  hop {h.n} search {h.query!r} → {h.n_passages} passages")
+            insight_note = f" + {h.n_insights} insight" if h.n_insights else ""
+            lines.append(
+                f"  hop {h.n} search {h.query!r} → {h.n_passages} passages"
+                f"{insight_note}"
+            )
         elif h.kind in ("plan", "decide_search"):
             lines.append(f"  hop {h.n} {h.kind:14s} {h.query!r}")
         elif h.kind == "decide_answer":
@@ -71,10 +84,12 @@ def _format_text(result: DeepSearchResult) -> str:
             lines.append(f"  hop {h.n} give_up (corpus does not cover question)")
         elif h.kind == "synth_after_max_hops":
             lines.append(f"  hop {h.n} synth after max-hops")
+        elif h.kind == "synth_after_parse_fail":
+            lines.append(f"  hop {h.n} synth (recovered from refiner parse failure)")
         elif h.kind == "search_failed":
             lines.append(f"  hop {h.n} search FAILED: {h.error}")
         elif h.kind == "parse_failed":
-            lines.append(f"  hop {h.n} refiner parse FAILED")
+            lines.append(f"  hop {h.n} refiner parse failed (recovering via synth)")
     return "\n".join(lines)
 
 
@@ -126,7 +141,57 @@ def _format_markdown(result: DeepSearchResult) -> str:
     return "\n".join(lines)
 
 
+def _maybe_promote_faithful(km_path, result, client):
+    """Faithfulness-gate the deep-search answer; promote it into the corpus
+    insight layer if it passes. Returns the `FaithfulnessReport` (so the
+    caller can record its score), or None when the gate didn't run.
+
+    The autonomous half of the confidence lifecycle — no user verdict
+    (docs/internal/GROUNDING_MODEL.md). The faithfulness gate replaces the
+    old `/accept` verdict gate; the compression test still gates the write.
+
+    Opt-in via `.rlat-state/ledger/` presence. Skipped on empty answers,
+    refusal-only answers, or failure hops (no grounded answer to promote).
+    """
+    from pathlib import Path
+    if not (Path.cwd() / ".rlat-state" / "ledger").exists():
+        return None
+    if not result.answer or not result.evidence_passages:
+        return None
+    if _has_failure_hop(result):
+        return None
+    if result.answer.startswith("I cannot produce an answer"):
+        return None
+
+    from ..store.promotion import promote_if_faithful
+    try:
+        report, outcomes = promote_if_faithful(
+            km_path, question=result.question, answer=result.answer,
+            evidence_passages=result.evidence_passages, client=client,
+        )
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        print(f"[deep-search] promotion skipped: {e}", file=sys.stderr)
+        return None
+
+    if not report.faithful:
+        print(f"[deep-search] not promoted — faithfulness "
+              f"claim_support={report.claim_support:.2f} "
+              f"question_relevance={report.question_relevance:.2f}: "
+              f"{report.reason}", file=sys.stderr)
+        return report
+    if any(o.promoted for o in outcomes):
+        print(f"[deep-search] promoted 1 insight to {km_path} "
+              f"(faithfulness claim_support={report.claim_support:.2f})")
+    else:
+        reason = outcomes[0].test_result.reason if outcomes else "no candidate"
+        print(f"[deep-search] faithful but not promoted "
+              f"(compression test: {reason})", file=sys.stderr)
+    return report
+
+
 def cmd_deep_search(args: argparse.Namespace) -> int:
+    import time
+    _dogfood_t0 = time.monotonic()
     try:
         import anthropic
     except ImportError:
@@ -171,12 +236,27 @@ def cmd_deep_search(args: argparse.Namespace) -> int:
     elif args.format == "markdown":
         print(_format_markdown(result))
 
+    duration_ms = int((time.monotonic() - _dogfood_t0) * 1000)
+    n_source = sum(h.n_passages or 0 for h in result.hops)
+    failed = _has_failure_hop(result)
+    # Promote first — the faithfulness gate runs here, and its score is
+    # the dogfood quality axis.
+    report = _maybe_promote_faithful(km_path, result, client)
+    succeeded = bool(result.answer) and not failed
+    from . import _dogfood
+    _dogfood.record_event(
+        km_path, args.question, duration_ms=duration_ms, n_source=n_source,
+        insight_ids=result.insight_ids,
+        faithfulness=(report.score if report is not None else None),
+        intent_context=("deep-search" if succeeded else "deep-search-failed"),
+        lens_id=None,
+    )
+
     if args.strict_names and result.strict_names_aborted:
         return 3
-    # Empty-answer paths (search_failed, unknown refiner action, parse_failed
-    # without raw text) return rc=2 so a shell caller can distinguish a
-    # principled refusal from a loop that didn't produce one.
-    if any(h.kind in ("search_failed", "parse_failed") for h in result.hops):
+    # An errored retrieval leaves the loop with no grounded answer; rc=2
+    # lets a shell caller distinguish that from a principled refusal.
+    if failed:
         return 2
     return 0
 

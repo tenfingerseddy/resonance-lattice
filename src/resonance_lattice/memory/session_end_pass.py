@@ -59,6 +59,7 @@ def consolidation_pass(
     state_root: Path | None = None,
     cwd: str | None = None,
     now: _dt.datetime | None = None,
+    drifted_row_ids: list[str] | None = None,
     dry_run: bool = False,
 ) -> ConsolidationResult:
     """Run the per-session-end pass: distil arrows → confidence → forget.
@@ -72,6 +73,10 @@ def consolidation_pass(
 
     `llm=None` skips all arrows. `state_root=None` skips Arrow 2 + 3
     (no outcome ledger), confidence raising, and forget condition 3.
+
+    `drifted_row_ids` drives forget condition 4 (stale-due-to-corpus-
+    drift) — the set of rows whose cited passages a corpus-aware caller
+    (`rlat watch`) found drifted. Omitted → condition 4 never fires.
 
     `dry_run=True` runs every stage to completion but suppresses every
     write (`add_row` / `update_row` / `delete_rows`). The returned
@@ -108,7 +113,8 @@ def consolidation_pass(
             memory, outcomes=outcomes, dry_run=dry_run,
         )
     n_dropped, verdicts = apply_forget(
-        memory, outcomes=outcomes, now=now, dry_run=dry_run,
+        memory, outcomes=outcomes, now=now,
+        drifted_row_ids=drifted_row_ids, dry_run=dry_run,
     )
     return ConsolidationResult(
         arrow1=arrow1,

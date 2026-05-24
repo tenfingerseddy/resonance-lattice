@@ -42,6 +42,7 @@ supply explicit `(since, until)` pairs when they want richer slicing.
 from __future__ import annotations
 
 import datetime as _dt
+import statistics
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -59,6 +60,15 @@ INTENT_LEVEL_WEIGHTS: dict[str, float] = {
     "goal": 10.0,
     "direction": 30.0,
 }
+
+# Minimum effect size for a paired-bench useful axis to count as
+# passing. Conventional Cohen's-d thresholds: small=0.2, medium=0.5,
+# large=0.8. Anything below 0.2 is noise even when the directional
+# count is correct — v5_paired had +4/-3 wins with cohen_d_z=0.019
+# (mean useful delta +0.006); nominally "passes" mean>0 + wins>losses
+# but the effect is binomial coin-flip. v5_paired2 cleared this bar
+# at d_z=0.318 (mean +0.094, 5/1 wins) — measurable signal above noise.
+MIN_USEFUL_COHEN_D_Z = 0.2
 
 
 @dataclass(frozen=True)
@@ -124,6 +134,186 @@ class SessionScorecard:
             self.secondary_recall_hits_with_context
             / self.secondary_recall_hits_total
         )
+
+
+@dataclass(frozen=True)
+class PairedComparison:
+    """Per-session paired comparison — arm_on vs arm_off on the same prompts.
+
+    Single-arm comparisons (`WindowComparison`) are dominated by
+    cross-run variance: repeated single-arm runs of the SAME prompt
+    set produced different verdicts purely from sampling noise. Paired
+    runs cancel that variance — the same Sonnet randomness, intent
+    ordering, and live state appear in both arms, so the per-session
+    delta is the substrate's measured contribution to that session.
+
+    Pass condition: `mean_useful_delta > 0` AND `n_useful_positive >
+    n_useful_negative` AND `cohen_d_z_useful >= MIN_USEFUL_COHEN_D_Z`.
+    The mean is the magnitude; the directional count is the second-
+    order check that the mean isn't driven by one or two outliers;
+    the effect-size gate prevents nominal "passes" on +1 vs -0
+    coin-flips with vanishing mean delta.
+
+    `cohen_d_z` is the effect size for a paired design: `mean(deltas) /
+    stdev(deltas)`. df-free so callers don't need a critical-value
+    table; conventional thresholds are 0.2 / 0.5 / 0.8 (small / medium
+    / large).
+
+    Only the two raw delta lists are stored; everything else is derived
+    on access so the dataclass can't drift out of sync with its inputs.
+    """
+
+    per_session_useful_deltas: list[float]
+    per_session_effortless_deltas: list[float]
+
+    @property
+    def n_sessions(self) -> int:
+        return len(self.per_session_useful_deltas)
+
+    @property
+    def mean_useful_delta(self) -> float:
+        return (
+            sum(self.per_session_useful_deltas) / self.n_sessions
+            if self.n_sessions else 0.0
+        )
+
+    @property
+    def mean_effortless_delta(self) -> float:
+        finite = [d for d in self.per_session_effortless_deltas if d == d]
+        return sum(finite) / len(finite) if finite else 0.0
+
+    @property
+    def n_useful_positive(self) -> int:
+        return sum(1 for d in self.per_session_useful_deltas if d > 0)
+
+    @property
+    def n_useful_negative(self) -> int:
+        return sum(1 for d in self.per_session_useful_deltas if d < 0)
+
+    @property
+    def n_useful_zero(self) -> int:
+        return sum(1 for d in self.per_session_useful_deltas if d == 0)
+
+    @property
+    def cohen_d_z_useful(self) -> float | None:
+        if self.n_sessions < 2:
+            return None
+        sd = statistics.pstdev(self.per_session_useful_deltas)
+        return self.mean_useful_delta / sd if sd > 0 else None
+
+    @property
+    def useful_passed(self) -> bool:
+        d_z = self.cohen_d_z_useful
+        return (
+            self.mean_useful_delta > 0
+            and self.n_useful_positive > self.n_useful_negative
+            and d_z is not None
+            and d_z >= MIN_USEFUL_COHEN_D_Z
+        )
+
+    @property
+    def effortless_passed(self) -> bool:
+        # Lower effortless is better; positive delta = on arm had MORE
+        # touches per satisfied intent than off (worse). So pass = mean
+        # delta < 0.
+        return self.mean_effortless_delta < 0
+
+    @property
+    def benchmark_passed(self) -> bool:
+        return self.useful_passed and self.effortless_passed
+
+
+def paired_comparison(
+    arm_on: list[SessionScorecard], arm_off: list[SessionScorecard],
+) -> PairedComparison:
+    """Join two arms by index, compute per-session deltas.
+
+    Both lists MUST be in the same session order (session 1 first, then
+    2, …). Length mismatch raises ValueError — the paired design demands
+    same-N. Sessions where either arm has `effortless_axis = inf` (zero
+    satisfied intents) contribute NaN to the effortless delta list and
+    are skipped in the effortless mean — they carry no friction signal.
+    """
+    if len(arm_on) != len(arm_off):
+        raise ValueError(
+            f"paired arms must have same length; "
+            f"on={len(arm_on)} off={len(arm_off)}"
+        )
+    useful_deltas = [
+        on.useful_axis - off.useful_axis
+        for on, off in zip(arm_on, arm_off)
+    ]
+    effortless_deltas: list[float] = []
+    for on, off in zip(arm_on, arm_off):
+        if on.effortless_axis == float("inf") or off.effortless_axis == float("inf"):
+            effortless_deltas.append(float("nan"))
+        else:
+            effortless_deltas.append(on.effortless_axis - off.effortless_axis)
+    return PairedComparison(
+        per_session_useful_deltas=useful_deltas,
+        per_session_effortless_deltas=effortless_deltas,
+    )
+
+
+def scorecard_from_step_eval(
+    *,
+    n_satisfied_steps: int,
+    n_total_steps: int,
+    task_satisfied: bool,
+    label: str = "",
+) -> SessionScorecard:
+    """Build a one-session SessionScorecard from a task+steps eval shape.
+
+    The longitudinal bench's `s{N}_eval_steps.json` carries one task +
+    N steps per session; this helper applies INTENT_LEVEL_WEIGHTS so
+    bench callers don't reach into SessionScorecard internals and so
+    the weighting stays colocated with the rest of the eval module.
+
+    `user_touches` is approximated as `1 + n_total_steps` — one claude
+    -p call + one accept/reject per step. Consistent across both arms
+    so paired effortless deltas remain meaningful (the absolute value
+    differs from the full closed-loop touches metric, but the delta
+    cancels the offset).
+    """
+    task_weight = INTENT_LEVEL_WEIGHTS["task"]
+    step_weight = INTENT_LEVEL_WEIGHTS["step"]
+    total_weight = task_weight + step_weight * n_total_steps
+    satisfied_weight = (
+        (task_weight if task_satisfied else 0.0)
+        + step_weight * n_satisfied_steps
+    )
+    return SessionScorecard(
+        window=WindowSpec(since="", until="", label=label),
+        intents_satisfied_count=(1 if task_satisfied else 0) + n_satisfied_steps,
+        intents_total_count=1 + n_total_steps,
+        intents_satisfied_weight=satisfied_weight,
+        intents_total_weight=total_weight,
+        user_touches=1 + n_total_steps,
+    )
+
+
+def render_paired_comparison(comparison: PairedComparison) -> str:
+    """Human-readable paired comparison block."""
+    d_z_str = (
+        f"{comparison.cohen_d_z_useful:.3f}"
+        if comparison.cohen_d_z_useful is not None
+        else "n/a"
+    )
+    lines = [
+        f"PairedComparison (n={comparison.n_sessions})",
+        f"  useful_delta_mean     {comparison.mean_useful_delta:+.4f} "
+        f"(cohen_d_z={d_z_str})",
+        f"  useful_direction      "
+        f"+{comparison.n_useful_positive} / "
+        f"-{comparison.n_useful_negative} / "
+        f"={comparison.n_useful_zero}",
+        f"  effortless_delta_mean {comparison.mean_effortless_delta:+.4f} "
+        f"(lower-is-better; <0 means on-arm easier)",
+        f"  useful     {'PASS' if comparison.useful_passed else 'FAIL'}",
+        f"  effortless {'PASS' if comparison.effortless_passed else 'FAIL'}",
+        f"  benchmark  {'PASS' if comparison.benchmark_passed else 'FAIL'}",
+    ]
+    return "\n".join(lines)
 
 
 @dataclass

@@ -52,6 +52,36 @@ DEFAULT_MIN_DISTINCT_VERDICTS = 1  # 1 = same-verdict is fine; 2 = needs both
 DEFAULT_POST_VALIDATION_COSINE = 0.50
 DEFAULT_MAX_WORDS = 30
 
+# Cold-start auto-relaxation, symmetric with W2 (arrow1) and recall.
+# v5_paired* benches consistently produced 1-2 patterns but 0 learnings
+# because no pattern accumulated ≥2 outcome attributions across 30
+# sessions. With 5 arc-shaped prompt clusters and 6 sessions per arc,
+# a pattern formed from cluster-N events typically gets surfaced only
+# 1-2 times when later cluster-N prompts re-fire — borderline against
+# the default min_attributions=2 trigger.
+#
+# Relax min_attributions to 1 in sparse-memory mode so a single
+# successful surfacing can attempt promotion. The LLM validation
+# (post-LLM cosine alignment + hedge filter + min_distinct_verdicts)
+# stays the safety net against over-promotion — same pattern W2 uses.
+COLD_START_MIN_ATTRIBUTIONS = 1
+
+
+def cold_start_arrow2_gates(n_rows: int) -> tuple[int] | None:
+    """Return `(min_attributions,)` relaxed gate when memory is sparse,
+    else None. Mirrors `recall.cold_start_gates` /
+    `distil_arrow1.cold_start_arrow1_gates`:
+
+        relaxed = cold_start_arrow2_gates(len(rows))
+        if relaxed is not None:
+            (min_attributions,) = relaxed
+    """
+    from .recall import COLD_START_ROW_THRESHOLD
+
+    if n_rows < COLD_START_ROW_THRESHOLD:
+        return (COLD_START_MIN_ATTRIBUTIONS,)
+    return None
+
 
 _MAX_CITATIONS_PER_VERDICT = 3
 """How many success / failure outcomes to cite in the LLM prompt body.
@@ -308,6 +338,7 @@ def arrow2_pass(
     encoder: Encoder | None = None,
     cwd: str | None = None,
     dry_run: bool = False,
+    auto_tune_cold_start: bool = True,
     **thresholds,
 ) -> Arrow2Result:
     """End-to-end pass: discover → promote → write. Sequence between Arrow 1
@@ -316,12 +347,24 @@ def arrow2_pass(
 
     `dry_run=True` skips `memory.add_row`; see `arrow1_pass` for the
     placeholder convention.
+
+    `auto_tune_cold_start=True` (default) relaxes `min_attributions`
+    to 1 when the per-user store is below
+    `recall.COLD_START_ROW_THRESHOLD` rows AND the caller didn't pass
+    `min_attributions` explicitly. Lets a singleton outcome attribution
+    attempt promotion in fresh-bench scale; LLM validation + hedge
+    filter stay the safety net.
     """
     rows, band = memory.read_all()
     candidate_thresholds = {
         k: v for k, v in thresholds.items()
         if k in {"min_attributions", "min_distinct_verdicts"}
     }
+    if auto_tune_cold_start:
+        relaxed = cold_start_arrow2_gates(len(rows))
+        if relaxed is not None:
+            (cold_min_att,) = relaxed
+            candidate_thresholds.setdefault("min_attributions", cold_min_att)
     promote_thresholds = {
         k: v for k, v in thresholds.items()
         if k in {"post_validation_cosine", "max_words"}
@@ -342,6 +385,12 @@ def arrow2_pass(
         if payload is None:
             result.rejections.append(rejection or "unknown")
             continue
-        new_id = "<dry-run>" if dry_run else memory.add_row(**payload)
+        if dry_run:
+            new_id = "<dry-run>"
+        else:
+            new_id = memory.add_row(
+                **payload,
+                recurrence_count=candidate.pattern_row.recurrence_count,
+            )
         result.promoted_row_ids.append(new_id)
     return result

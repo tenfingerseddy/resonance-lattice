@@ -23,10 +23,10 @@ import numpy as np
 
 from .._pricing import SONNET_MODEL, cost_usd
 from ..cli import _namecheck
-from ..field import ann, retrieve
+from ..field import ann, retrieve, retrieve_insight
 from ..field.encoder import Encoder
 from ..store import archive, open_store
-from ..store.verified import VerifiedHit, verify_hits
+from ..store.verified import InsightHit, VerifiedHit, verify_hits, verify_insight_hits
 from .prompts import (
     GIVE_UP_ANSWER,
     NAME_MISMATCH_ANSWER,
@@ -37,37 +37,65 @@ from .prompts import (
 from .types import DeepSearchHop, DeepSearchResult
 
 
-def _render_evidence_block(query: str, hits: list[VerifiedHit]) -> str:
-    """Format a hop's verified hits the way the refiner expects.
+def _render_evidence_block(
+    query: str,
+    source_hits: list[VerifiedHit],
+    insight_hits: list[InsightHit],
+) -> str:
+    """Format a hop's hits the way the refiner expects.
 
-    Mirrors the bench-harness rendering — drift-tagged anchor + score +
-    blockquoted text — minus the per-block grounding header (the
-    refiner sees a sequence of evidence blocks, the directive is in the
-    refiner's own system prompt).
+    Source passages and earned insights render under distinct labels so
+    the refiner weighs a verified primary source differently from a
+    derived synthesis — trust contract: the two layers stay visibly
+    distinct at every output surface.
     """
-    if not hits:
-        return f"--- Search query: {query!r} ---\n(no hits)"
     parts = [f"--- Search query: {query!r} ---"]
-    for h in hits:
+    rendered = False
+    for h in source_hits:
         if h.drift_status == "missing" or not h.text:
             continue
         anchor = f"{h.source_file}:{h.char_offset}+{h.char_length}"
         parts.append(
-            f"[{anchor}] (score {h.score:.3f}) {h.text.strip()}"
+            f"[source {anchor}] (score {h.score:.3f}) {h.text.strip()}"
         )
+        rendered = True
+    for h in insight_hits:
+        if not h.content:
+            continue
+        parts.append(
+            f"[earned insight {h.insight_id} · verdict={h.verdict_state} "
+            f"· confidence {h.confidence:.2f}] (score {h.score:.3f}) "
+            f"{h.content.strip()}"
+        )
+        rendered = True
+    if not rendered:
+        parts.append("(no hits)")
     return "\n".join(parts)
 
 
 def _retrieve_hop(
     *, encoder: Encoder, query: str, handle: Any, ann_index: Any,
-    contents: Any, store: Any, top_k: int,
-) -> list[VerifiedHit]:
-    """One in-process retrieve-and-verify call."""
-    q_emb = encoder.encode([query])[0]
-    hits = retrieve(
-        np.asarray(q_emb), handle, ann_index, contents.registry, top_k
-    )
-    return verify_hits(hits, store, contents.registry)
+    insight_handle: Any, insight_ann: Any, contents: Any, store: Any,
+    top_k: int,
+) -> tuple[list[VerifiedHit], list[InsightHit]]:
+    """One in-process retrieve-and-verify call across source + insight layers.
+
+    Insight retrieval is filtered to `accepted` rows (the
+    `verify_insight_hits` default) — deep-search builds on earned
+    synthesis, never on stale or candidate insights. A corpus with no
+    insight layer takes the source-only path unchanged.
+    """
+    q_emb = np.asarray(encoder.encode([query])[0])
+    src_raw = retrieve(q_emb, handle, ann_index, contents.registry, top_k)
+    source_hits = verify_hits(src_raw, store, contents.registry)
+
+    insight_hits: list[InsightHit] = []
+    if insight_handle is not None:
+        ins_raw = retrieve_insight(
+            q_emb, insight_handle.band, insight_ann, top_k,
+        )
+        insight_hits = verify_insight_hits(ins_raw, contents.insights)
+    return source_hits, insight_hits
 
 
 def _llm_call(client: Any, system: str, user: str, max_tokens: int) -> tuple[str, int, int]:
@@ -84,18 +112,55 @@ def _llm_call(client: Any, system: str, user: str, max_tokens: int) -> tuple[str
 
 
 def _parse_refiner_action(raw: str) -> dict | None:
-    """Extract the JSON action object from the refiner's output. None on parse fail."""
-    m = re.search(r'\{[^{}]*"action"[^{}]*\}', raw)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
+    """First `{...}` action object embedded in the refiner's output. None on parse fail.
+
+    `JSONDecoder.raw_decode` honours strings + escapes, so the `answer`
+    field can legitimately contain `{` / `}` (code placeholders, set
+    literals) without truncating the match — unlike a flat regex.
+    """
+    decoder = json.JSONDecoder()
+    i = raw.find("{")
+    while i != -1:
+        try:
+            obj, _ = decoder.raw_decode(raw, i)
+        except json.JSONDecodeError:
+            i = raw.find("{", i + 1)
+            continue
+        if isinstance(obj, dict) and "action" in obj:
+            return obj
+        i = raw.find("{", i + 1)
+    return None
 
 
-def _dedupe_passages(verified: list[VerifiedHit]) -> list[dict]:
-    """Project verified hits to citation-ready dicts, deduped on (source_file, char_offset)."""
+def _synthesize_from_evidence(
+    client: Any, question: str, evidence_blocks: list[str],
+) -> tuple[str, int, int]:
+    """One synthesizer call over accumulated evidence.
+
+    Used both when the hop budget exhausts without an `answer` decision
+    and when the refiner's output fails to parse — either way the loop
+    still owes the caller a grounded answer, not raw model output.
+    """
+    evidence = "\n\n".join(evidence_blocks)[:10000]
+    synth_prompt = (
+        f"Question: {question}\n\n"
+        f"All evidence collected:\n\n{evidence}\n\n"
+        f"Provide a concise answer based ONLY on the evidence above. "
+        f"If the evidence doesn't cover the question, say so."
+    )
+    return _llm_call(client, SYNTHESIZER_SYSTEM, synth_prompt, max_tokens=1000)
+
+
+def _dedupe_passages(
+    verified: list[VerifiedHit], registry=None,
+) -> list[dict]:
+    """Project verified hits to citation-ready dicts, deduped on (source_file, char_offset).
+
+    `registry` (optional `list[PassageCoord]`) lets the projection carry
+    the stable `passage_id` + `content_hash` for each hit — needed by
+    the lensed-knowledge synthesis_candidate writeback path. When `None`
+    (legacy callers), those fields are omitted.
+    """
     seen: set[tuple[str, int]] = set()
     out: list[dict] = []
     for h in verified:
@@ -103,14 +168,19 @@ def _dedupe_passages(verified: list[VerifiedHit]) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        out.append({
+        entry = {
             "source_file": h.source_file,
             "char_offset": h.char_offset,
             "char_length": h.char_length,
             "score": h.score,
             "drift_status": h.drift_status,
             "text": h.text,
-        })
+        }
+        if registry is not None and h.passage_idx < len(registry):
+            coord = registry[h.passage_idx]
+            entry["passage_id"] = coord.passage_id
+            entry["content_hash"] = coord.content_hash
+        out.append(entry)
     return out
 
 
@@ -150,6 +220,16 @@ def deep_search(
     ann_index = ann.deserialize(handle.ann_blob) if handle.ann_blob else None
     store = open_store(km_path, contents, source_root)
 
+    # Insight layer — retrieved alongside source per architecture §10
+    # (the canonical promotion loop's T0). Handle + ANN resolved once;
+    # None when the corpus has no insight layer (source-only path).
+    insight_handle = contents.insight_band() if contents.insights else None
+    insight_ann = (
+        ann.deserialize(insight_handle.ann_blob)
+        if insight_handle is not None and insight_handle.ann_blob
+        else None
+    )
+
     encoder = Encoder()
     result = DeepSearchResult(question=question, answer="")
 
@@ -163,6 +243,7 @@ def deep_search(
     result.hops.append(DeepSearchHop(n=1, kind="plan", query=current_query))
 
     all_verified: list[VerifiedHit] = []
+    all_insight_hits: list[InsightHit] = []
     evidence_blocks: list[str] = []
     # Passage-text-only mirror of evidence_blocks. Used for name-check so
     # the check matches what the LLM saw FROM THE CORPUS, not what the
@@ -178,9 +259,10 @@ def deep_search(
 
     for hop_n in range(2, max_hops + 1):
         try:
-            verified = _retrieve_hop(
+            source_hits, insight_hits = _retrieve_hop(
                 encoder=encoder, query=current_query, handle=handle,
-                ann_index=ann_index, contents=contents, store=store,
+                ann_index=ann_index, insight_handle=insight_handle,
+                insight_ann=insight_ann, contents=contents, store=store,
                 top_k=top_k,
             )
         except Exception as e:
@@ -191,15 +273,21 @@ def deep_search(
             break
 
         queries_tried.append(current_query)
-        all_verified.extend(verified)
-        evidence_blocks.append(_render_evidence_block(current_query, verified))
+        # name-check + candidate citations stay source-anchored: insights
+        # are derived, so they neither satisfy a name-check nor become a
+        # new candidate's provenance binding.
+        all_verified.extend(source_hits)
+        all_insight_hits.extend(insight_hits)
+        evidence_blocks.append(
+            _render_evidence_block(current_query, source_hits, insight_hits)
+        )
         passage_blocks.append("\n".join(
-            v.text for v in verified
+            v.text for v in source_hits
             if v.drift_status != "missing" and v.text
         ))
         result.hops.append(DeepSearchHop(
             n=hop_n, kind="search", query=current_query,
-            n_passages=len(verified),
+            n_passages=len(source_hits), n_insights=len(insight_hits),
         ))
 
         # Refiner decides next action.
@@ -212,18 +300,31 @@ def deep_search(
             f"{evidence_for_llm}\n\n"
             f"What's your next action? (answer / search / give_up)"
         )
+        # 400 was tight for `answer` actions whose JSON carries the full
+        # synthesis; truncation mid-string bust parses.
         raw, in_t, out_t = _llm_call(
-            client, REFINER_SYSTEM, prompt, max_tokens=400,
+            client, REFINER_SYSTEM, prompt, max_tokens=1000,
         )
         result.input_tokens += in_t
         result.output_tokens += out_t
 
         action = _parse_refiner_action(raw)
         if action is None:
+            # The refiner's output wasn't parseable JSON (commonly an
+            # `answer` value with unescaped quotes). Recover with a synth
+            # call rather than handing back raw model text.
             result.hops.append(DeepSearchHop(
                 n=hop_n, kind="parse_failed", error=raw[:300],
             ))
-            result.answer = raw
+            synth_text, in_t, out_t = _synthesize_from_evidence(
+                client, question, evidence_blocks,
+            )
+            result.input_tokens += in_t
+            result.output_tokens += out_t
+            result.answer = synth_text
+            result.hops.append(DeepSearchHop(
+                n=hop_n + 1, kind="synth_after_parse_fail",
+            ))
             break
 
         kind = action.get("action")
@@ -250,17 +351,9 @@ def deep_search(
         break
     else:
         # Hops exhausted without `answer`. Synthesise from accumulated evidence.
-        evidence = "\n\n".join(evidence_blocks)
-        evidence_for_llm = evidence[:10000]
         passages_seen_by_llm = "\n\n".join(passage_blocks)[:10000]
-        synth_prompt = (
-            f"Question: {question}\n\n"
-            f"All evidence collected:\n\n{evidence_for_llm}\n\n"
-            f"Provide a concise answer based ONLY on the evidence above. "
-            f"If the evidence doesn't cover the question, say so."
-        )
-        synth_text, in_t, out_t = _llm_call(
-            client, SYNTHESIZER_SYSTEM, synth_prompt, max_tokens=500,
+        synth_text, in_t, out_t = _synthesize_from_evidence(
+            client, question, evidence_blocks,
         )
         result.input_tokens += in_t
         result.output_tokens += out_t
@@ -269,7 +362,18 @@ def deep_search(
             n=max_hops + 1, kind="synth_after_max_hops",
         ))
 
-    result.evidence_passages = _dedupe_passages(all_verified)
+    result.evidence_passages = _dedupe_passages(all_verified, contents.registry)
+    # Insight ids engaged across all hops, deduped on best score, rank-ordered.
+    best_insight_score: dict[str, float] = {}
+    for ih in all_insight_hits:
+        if (ih.insight_id not in best_insight_score
+                or ih.score > best_insight_score[ih.insight_id]):
+            best_insight_score[ih.insight_id] = ih.score
+    result.insight_ids = [
+        iid for iid, _ in sorted(
+            best_insight_score.items(), key=lambda kv: -kv[1],
+        )
+    ]
 
     # Empty-answer paths (search_failed, unknown action) shouldn't return
     # CLI rc=0 with a silent empty string. Surface it as a refusal so the

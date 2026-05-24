@@ -495,6 +495,7 @@ class Memory:
         status: Status | None = None,
         success_criteria: list[Criterion] | None = None,
         constraints: list[str] | None = None,
+        recurrence_count: int = 1,
     ) -> str:
         """Append a row. Returns the new row_id (ULID).
 
@@ -535,7 +536,7 @@ class Memory:
             row_id=_ulid(),
             text=text,
             polarity=list(polarity),
-            recurrence_count=1,
+            recurrence_count=recurrence_count,
             created_at=now,
             last_corroborated_at=now,
             transcript_hash=transcript_hash,
@@ -623,7 +624,7 @@ class Memory:
                 row_id=_ulid(),
                 text=r["text"],
                 polarity=list(r["polarity"]),
-                recurrence_count=1,
+                recurrence_count=r.get("recurrence_count", 1),
                 created_at=now,
                 last_corroborated_at=now,
                 transcript_hash=r["transcript_hash"],

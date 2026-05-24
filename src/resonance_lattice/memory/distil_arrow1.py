@@ -57,6 +57,37 @@ DEFAULT_MIN_TOTAL_RECURRENCE = 5
 DEFAULT_MIN_CRITICALITY_RANK = 1  # normal=1, high=2, severe=3 (low=0)
 _CRITICALITY_RANK = {"low": 0, "normal": 1, "high": 2, "severe": 3}
 
+# Cold-start auto-relaxation, symmetric with recall.COLD_START_ROW_THRESHOLD.
+# A 30-session fresh bench (v5_paired, FINDINGS) accumulated 27 events but
+# 0 patterns because the (min_size=3, min_total_recurrence=5) thresholds
+# can't be met when each topic has 2-3 captured events with recurrence=1
+# each. Without any pattern formation the recall path only ever surfaces
+# event rows — and the v5_paired paired test showed event-only injection
+# produces no measurable benefit (cohen_d_z 0.019). Patterns are where the
+# manifesto's value lives, so we need them to form in a fresh bench.
+#
+# Cluster cosine stays at 0.85 — relaxing that would invite spurious
+# clusters of unrelated events. Only size + total recurrence relax.
+# Sourced from recall.COLD_START_ROW_THRESHOLD via local import to keep
+# the "sparse memory" definition in one place.
+COLD_START_MIN_CLUSTER_SIZE = 2
+COLD_START_MIN_TOTAL_RECURRENCE = 2
+
+
+def cold_start_arrow1_gates(n_rows: int) -> tuple[int, int] | None:
+    """Return `(min_size, min_total_recurrence)` relaxed gates when
+    memory is sparse, else None. Mirrors `recall.cold_start_gates`:
+
+        relaxed = cold_start_arrow1_gates(len(rows))
+        if relaxed is not None:
+            min_size, min_total_recurrence = relaxed
+    """
+    from .recall import COLD_START_ROW_THRESHOLD
+
+    if n_rows < COLD_START_ROW_THRESHOLD:
+        return (COLD_START_MIN_CLUSTER_SIZE, COLD_START_MIN_TOTAL_RECURRENCE)
+    return None
+
 # Post-LLM cosine alignment floor. The pattern's embedding must align
 # with the parent cluster's centroid to at least this cosine — otherwise
 # the LLM hallucinated. Looser than DEFAULT_CLUSTER_COSINE because the
@@ -161,11 +192,17 @@ def find_promotion_candidates(
     if len(eligible_idx) < min_size:
         return []
 
-    # Skip events already promoted (parent of a confident pattern).
+    # Skip events already promoted (parent of any pattern). The confidence
+    # gate was previously {medium, high, verified}, but new patterns enter
+    # at "low" until mechanism-1 corroboration lifts them — leaving the
+    # same parent events eligible to re-cluster into NEW patterns on every
+    # consolidate. v4.2 bench: 144 events promoted into 873 patterns (6×
+    # density). Locking at any confidence stops the duplication; if a low
+    # pattern is later forgotten (forget condition 4), its parent_ids row
+    # disappears too and re-clustering becomes available again.
     already_promoted: set[str] = set()
     for parent in rows:
-        if (parent.level == "pattern"
-                and parent.confidence in ("medium", "high", "verified")):
+        if parent.level == "pattern":
             already_promoted.update(parent.parent_ids)
     eligible_idx = [
         i for i in eligible_idx if rows[i].row_id not in already_promoted
@@ -350,6 +387,7 @@ def arrow1_pass(
     encoder: Encoder | None = None,
     cwd: str | None = None,
     dry_run: bool = False,
+    auto_tune_cold_start: bool = True,
     **thresholds,
 ) -> Arrow1Result:
     """End-to-end pass: discover → promote → write. Returns a result
@@ -360,6 +398,13 @@ def arrow1_pass(
     `dry_run=True` skips `memory.add_row` and appends the synthetic
     placeholder `<dry-run>` to `promoted_row_ids` so `len(...)` reflects
     the would-promote count.
+
+    `auto_tune_cold_start=True` (default) relaxes `min_size` /
+    `min_total_recurrence` when the per-user store is below
+    `recall.COLD_START_ROW_THRESHOLD` rows AND the caller didn't pass
+    those thresholds explicitly. Lets pattern formation start in a
+    fresh bench instead of waiting for ~50+ events. Explicit caller
+    overrides always win.
     """
     rows, band = memory.read_all()
     candidate_thresholds = {
@@ -367,6 +412,14 @@ def arrow1_pass(
         if k in {"cluster_cosine", "min_size", "min_total_recurrence",
                  "min_criticality_rank"}
     }
+    if auto_tune_cold_start:
+        relaxed = cold_start_arrow1_gates(len(rows))
+        if relaxed is not None:
+            cold_min_size, cold_min_recur = relaxed
+            candidate_thresholds.setdefault("min_size", cold_min_size)
+            candidate_thresholds.setdefault(
+                "min_total_recurrence", cold_min_recur,
+            )
     promote_thresholds = {
         k: v for k, v in thresholds.items()
         if k in {"post_validation_cosine", "max_words"}
@@ -385,6 +438,14 @@ def arrow1_pass(
         if payload is None:
             result.rejections.append(rejection or "unknown")
             continue
-        new_id = "<dry-run>" if dry_run else memory.add_row(**payload)
+        # Pass recurrence_count so the pattern inherits the cluster's
+        # multi-observation evidence weight. Without it, defaults to 1
+        # and gets filtered at recall's cold-start min_recurrence=2 gate.
+        if dry_run:
+            new_id = "<dry-run>"
+        else:
+            new_id = memory.add_row(
+                **payload, recurrence_count=candidate.total_recurrence,
+            )
         result.promoted_row_ids.append(new_id)
     return result

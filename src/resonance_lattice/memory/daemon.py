@@ -84,6 +84,11 @@ class RecallRequest:
     # exact wire shape every test pins; the UserPromptSubmit hook opts
     # in so a fresh workspace surfaces something rather than nothing.
     auto_tune_cold_start: bool = False
+    # Session-boundary ISO timestamps from the workspace ledger, shipped
+    # by the recall hook. Drives the 5-session arm of rerank's
+    # new-principle protection window. Empty () → only the 30-day arm
+    # fires; the daemon has no state-root access of its own.
+    session_markers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -382,6 +387,7 @@ class DaemonServer:
                 top1_top2_gap=top1_top2_gap,
                 min_recurrence=min_recurrence,
                 intent_kind=req.intent_kind,  # type: ignore[arg-type]
+                session_markers=list(req.session_markers),
             )
         except Exception as exc:
             conn.send(asdict(RecallReply(

@@ -6,11 +6,11 @@ The Sub-MVP slice of the §0.7 surface:
   list   — tabular view of the sidecar with optional polarity / recurrence filters
   gc     — manual escape hatch (§0.5); never automatic
 
-Subcommands shipping in MVP — `recall`, `distil`, `train`, `feedback`,
-`doctor`, `migrate` — are stubbed here as banner-only entries so users
-discover them via `rlat memory --help`. v2.0 names that have no v2.1
-successor (`consolidate`, `primer`) print a deprecation banner pointing
-at the migration path.
+The full §0.7 surface ships: add / list / recall / distil / train /
+feedback / verify / consolidate / gc / doctor / migrate, plus the
+eval / rollup / dedup / session-mark / corroborate / capture / hook
+entry points. v2.0 names with no v2.1 successor (`primer`) print a
+deprecation banner.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 from ..memory._common import workspace_tag_for_cwd
+from ..memory.feedback import FEEDBACK_VERDICTS
 from ..memory.store import (
     MANUAL_TRANSCRIPT_HASH,
     PRIMARY_POLARITY,
@@ -37,7 +38,8 @@ PRIMARY_CHOICES: list[str] = sorted(PRIMARY_POLARITY)
 #   0 — success (EXIT_OK, imported)
 #   1 — user input error (EXIT_USER_ERROR, imported)
 #   2 — deprecated subcommand: removed permanently in v2.1
-#   3 — pending: subcommand ships in MVP, body not yet implemented
+#   3 — slash-command surface: the operation runs as a Claude Code slash
+#       command, not a CLI body (currently `train <task>` → /rlat-train)
 EXIT_DEPRECATED = 2
 EXIT_PENDING_MVP = 3
 
@@ -86,14 +88,6 @@ def _deprecation_banner(old: str, replacement: str) -> int:
         f"  → use `{replacement}` instead.\n"
         f"  See .claude/plans/fabric-agent-flat-memory.md §15 for the full deletion list.",
         code=EXIT_DEPRECATED,
-    )
-
-
-def _pending_banner(name: str) -> int:
-    return _print_banner(
-        f"[rlat memory] `{name}` ships in v2.1 MVP (not Sub-MVP).\n"
-        f"  Tracking issue: https://github.com/tenfingerseddy/resonance-lattice/issues/88",
-        code=EXIT_PENDING_MVP,
     )
 
 
@@ -192,7 +186,15 @@ def _run_recall_oneshot(args: argparse.Namespace) -> int:
     from ..memory.recall import recall
 
     memory = _open_memory(args)
-    hits = recall(args.query, store=memory, top_k=args.top_k)
+    # Match the production hook: it recalls via the daemon with
+    # auto_tune_cold_start=True, so a sparse store surfaces hits under
+    # the relaxed gates. Without this the inspection CLI would show a
+    # blackout the live hook doesn't — the tool would disagree with
+    # what it's meant to inspect.
+    hits = recall(
+        args.query, store=memory, top_k=args.top_k,
+        auto_tune_cold_start=True,
+    )
     if args.polarity is not None:
         hits = [h for h in hits if args.polarity in h.row.polarity]
 
@@ -331,14 +333,12 @@ def cmd_memory_eval(args: argparse.Namespace) -> int:
         daily_windows,
         render_comparison,
         render_summary,
-        resolve_workspace,
+        resolve_state_root,
         scorecard_to_dict,
-        state_root_for,
     )
 
     cwd = Path(args.cwd) if args.cwd else Path.cwd()
-    identity = resolve_workspace(cwd)
-    state_root = state_root_for(identity.root)
+    state_root = resolve_state_root(cwd)
     memory = _open_memory(args)
 
     # Read ledger + cache + memory depth once and reuse across all
@@ -445,15 +445,13 @@ def cmd_memory_rollup(args: argparse.Namespace) -> int:
         aggregate_windows,
         compute_session_scorecard,
         render_comparison,
-        resolve_workspace,
+        resolve_state_root,
         scorecard_to_dict,
-        state_root_for,
         weekly_windows,
     )
 
     cwd = Path(args.cwd) if args.cwd else Path.cwd()
-    identity = resolve_workspace(cwd)
-    state_root = state_root_for(identity.root)
+    state_root = resolve_state_root(cwd)
     memory = _open_memory(args)
 
     if args.weeks < 2:
@@ -527,18 +525,179 @@ def cmd_memory_session_mark(args: argparse.Namespace) -> int:
     calendar day. Sessions that span midnight stay coherent; multiple
     sessions in one day each get their own scorecard.
     """
-    from ..state import (
-        SessionMarkerLog,
-        resolve_workspace,
-        state_root_for,
-    )
+    from ..state import SessionMarkerLog, resolve_state_root
 
     cwd = Path(args.cwd) if args.cwd else Path.cwd()
-    identity = resolve_workspace(cwd)
-    state_root = state_root_for(identity.root)
+    state_root = resolve_state_root(cwd)
     marker = SessionMarkerLog(state_root).write()
     print(
         f"[rlat memory] session-mark {marker.session_id} at {marker.timestamp}",
+        file=sys.stderr,
+    )
+    return EXIT_OK
+
+
+def cmd_memory_corroborate(args: argparse.Namespace) -> int:
+    """`rlat memory corroborate <row_id>` — calibration mechanism 4.
+
+    The user explicitly confirms a row is trustworthy; its confidence
+    raises one step immediately (low→medium→high→verified). A no-op
+    when the row is already `verified`.
+    """
+    from ..memory.confidence import corroborate_row
+
+    memory = _open_memory(args)
+    change = corroborate_row(memory, args.row_id)
+    if change is None:
+        rows, _ = memory.read_all()
+        if not any(r.row_id == args.row_id for r in rows):
+            return _user_error(f"no row with id {args.row_id!r}")
+        print(f"[rlat memory] {args.row_id} already at verified — no change",
+              file=sys.stderr)
+        return EXIT_OK
+    print(f"[rlat memory] corroborated {change.row_id}: "
+          f"{change.from_confidence} → {change.to_confidence}",
+          file=sys.stderr)
+    return EXIT_OK
+
+
+def cmd_memory_distil(args: argparse.Namespace) -> int:
+    """`rlat memory distil` — §7 LLM lesson extraction over captured rows.
+
+    Reads the recently-captured side of the per-user store, runs the
+    distil prompt against an Anthropic model, and writes the resulting
+    prefer/avoid/factual lessons back — corroborating near-duplicates
+    instead of writing new rows. Needs an Anthropic API key; a store
+    with no fresh capture rows is a no-op that returns before any LLM
+    call. `--dry-run` reports candidates without writing.
+    """
+    from ..memory.distil import distil
+    from ..memory.redaction import Redactor
+    from .intent import _maybe_llm_client
+
+    llm = _maybe_llm_client()
+    if llm is None:
+        return _user_error(
+            "distil needs an Anthropic API key "
+            "(set CLAUDE_API_2 / CLAUDE_API / ANTHROPIC_API_KEY)."
+        )
+    memory = _open_memory(args)
+    redactor = Redactor(audit_log_path=memory.root / "redaction.log")
+    result = distil(
+        store=memory, redactor=redactor, client=llm,
+        user_id=args.user or "user",
+        since=args.since, all_rows=args.all, session=args.session,
+        dry_run=args.dry_run, max_lessons=args.max_lessons,
+    )
+    verb = "would write" if args.dry_run else "wrote"
+    print(
+        f"[rlat memory] distil: processed {result.processed_count} capture "
+        f"row(s) — {verb} {len(result.written_row_ids)}, corroborated "
+        f"{len(result.corroborated_row_ids)}, skipped {result.skipped_count}",
+        file=sys.stderr,
+    )
+    for note in result.notes:
+        print(f"  note: {note}", file=sys.stderr)
+    return EXIT_OK
+
+
+def cmd_memory_feedback(args: argparse.Namespace) -> int:
+    """`rlat memory feedback <good|bad>` — §9.5 vote on the most recent
+    recall injection.
+
+    Appends a `{verdict, timestamp}` line to `<memory-root>/feedback.log`.
+    Logged, not acted on automatically — the weekly review reads it.
+    """
+    from ..memory.feedback import log_feedback
+
+    memory = _open_memory(args)
+    try:
+        entry = log_feedback(memory.root, args.verdict)
+    except ValueError as exc:
+        return _user_error(str(exc))
+    print(
+        f"[rlat memory] feedback logged: {entry['verdict']} at "
+        f"{entry['timestamp']}",
+        file=sys.stderr,
+    )
+    return EXIT_OK
+
+
+def _make_corpus_retriever(km_path: Path, source_root: str | None):
+    """Build a `(query, top_k) -> [passage_text]` retriever over a
+    knowledge model — the corpus seam for `corpus_verification_pass`.
+
+    Loads the archive + encoder once; the returned closure runs one
+    encode + dense retrieve per call. Drifted / missing passages carry
+    empty text from `verify_hits` and are dropped."""
+    from ..field import ann, retrieve
+    from ..field.encoder import Encoder
+    from ..store.verified import verify_hits
+    from ._load import load_or_exit, open_store_or_exit
+
+    contents = load_or_exit(km_path)
+    handle = contents.select_band()
+    ann_index = ann.deserialize(handle.ann_blob) if handle.ann_blob else None
+    store = open_store_or_exit(km_path, contents, source_root)
+    encoder = Encoder()
+
+    def _retrieve(query: str, top_k: int) -> list[str]:
+        emb = encoder.encode([query])[0]
+        raw = retrieve(emb, handle, ann_index, contents.registry, top_k)
+        return [
+            h.text
+            for h in verify_hits(raw, store, contents.registry)
+            if h.text
+        ]
+
+    return _retrieve
+
+
+def cmd_memory_verify(args: argparse.Namespace) -> int:
+    """`rlat memory verify <corpus.rlat>` — calibration mechanism 2.
+
+    The corpus-verification scan. Checks every high-criticality row at
+    `low` or `verified` confidence against the supplied knowledge model:
+    a confirmed row goes to `verified`, a contradicted one drops to
+    `low` (the corpus-drift response for a row the source no longer
+    supports), a silent one is unchanged.
+
+    Needs an Anthropic API key for the judge calls.
+    """
+    from ..memory.confidence import corpus_verification_pass
+
+    km_path = Path(args.corpus)
+    if not km_path.is_file():
+        return _user_error(f"corpus knowledge model not found: {km_path}")
+
+    from .intent import _maybe_llm_client
+    llm = _maybe_llm_client()
+    if llm is None:
+        return _user_error(
+            "corpus verification needs an Anthropic API key "
+            "(set CLAUDE_API_2 / CLAUDE_API / ANTHROPIC_API_KEY)."
+        )
+
+    memory = _open_memory(args)
+    retriever = _make_corpus_retriever(km_path, args.source_root)
+    results = corpus_verification_pass(
+        memory, corpus=retriever, llm=llm,
+        top_k=args.top_k, dry_run=args.dry_run,
+    )
+    if not results:
+        print("(no high-criticality low/verified rows to verify)",
+              file=sys.stderr)
+        return EXIT_OK
+
+    tally = {"confirmed": 0, "contradicted": 0, "unverifiable": 0}
+    for r in results:
+        tally[r.verdict] += 1
+        print(f"  {r.verdict:13s} {r.row_id}  {r.reason}")
+    suffix = " (dry-run — no writes)" if args.dry_run else ""
+    print(
+        f"\n[rlat memory] verify: {tally['confirmed']} confirmed, "
+        f"{tally['contradicted']} contradicted, "
+        f"{tally['unverifiable']} unverifiable{suffix}",
         file=sys.stderr,
     )
     return EXIT_OK
@@ -555,11 +714,10 @@ def cmd_memory_consolidate(args: argparse.Namespace) -> int:
     counts then describe what *would* have changed.
     """
     from ..memory.session_end_pass import consolidation_pass
-    from ..state import resolve_workspace, state_root_for
+    from ..state import resolve_state_root
 
     cwd = Path(args.cwd) if args.cwd else Path.cwd()
-    identity = resolve_workspace(cwd)
-    state_root = state_root_for(identity.root)
+    state_root = resolve_state_root(cwd)
     memory = _open_memory(args)
     llm = None
     if not args.no_llm:
@@ -728,11 +886,6 @@ def cmd_memory_gc(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-# Each tuple: (subcommand name, kind). `kind` drives both the help text
-# rendered at parse time and the runtime banner.
-_PENDING_MVP_SUBCOMMANDS: tuple[str, ...] = (
-    "distil", "feedback",
-)
 # `(removed_name, v2.1 successor or guidance)`. v2.2 reclaims `consolidate`
 # for the agent-harness session-end pass (distil → confidence → forget) —
 # the v0.11 `consolidate` redirect to `distil` shipped through v2.0/v2.1
@@ -741,12 +894,6 @@ _DEPRECATED_SUBCOMMANDS: tuple[tuple[str, str], ...] = (
     ("primer",
      "the per-prompt UserPromptSubmit hook (no static primer in v2.1; see §17.3)"),
 )
-
-
-def _make_pending_handler(name: str):
-    def handler(_args: argparse.Namespace) -> int:
-        return _pending_banner(name)
-    return handler
 
 
 def _make_deprecation_handler(name: str, replacement: str):
@@ -886,6 +1033,38 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     )
     p_session_mark.set_defaults(func=cmd_memory_session_mark)
 
+    p_corroborate = sub_mem.add_parser(
+        "corroborate",
+        help="Calibration mechanism 4 — user corroboration. Raise a row's "
+             "confidence one step (low→medium→high→verified).",
+    )
+    p_corroborate.add_argument("row_id", help="The row id to corroborate.")
+    p_corroborate.set_defaults(func=cmd_memory_corroborate)
+
+    p_verify = sub_mem.add_parser(
+        "verify",
+        help="Calibration mechanism 2 — corpus verification. Check "
+             "high-criticality low/verified rows against a knowledge "
+             "model; confirm raises to verified, contradict drops to low.",
+    )
+    p_verify.add_argument(
+        "corpus", help="Path to the .rlat knowledge model to check against.",
+    )
+    p_verify.add_argument(
+        "--top-k", type=int, default=5,
+        help="Corpus passages retrieved per row (default: 5).",
+    )
+    p_verify.add_argument(
+        "--source-root", default=None,
+        help="Override the knowledge model's recorded source_root "
+             "(local mode).",
+    )
+    p_verify.add_argument(
+        "--dry-run", action="store_true",
+        help="Run the judge but skip the confidence write.",
+    )
+    p_verify.set_defaults(func=cmd_memory_verify)
+
     p_rollup = sub_mem.add_parser(
         "rollup",
         help="Weekly digest: this-week-vs-prior-week comparison on the "
@@ -916,6 +1095,45 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
         help="report what would collapse; do not touch disk",
     )
     p_dedup.set_defaults(func=cmd_memory_dedup)
+
+    p_distil = sub_mem.add_parser(
+        "distil",
+        help="Run §7 LLM lesson extraction over recently-captured rows; "
+             "writes prefer/avoid/factual lessons back to the store.",
+    )
+    p_distil.add_argument(
+        "--since", default=None,
+        help="Only distil capture rows created after this ISO-8601 "
+             "timestamp (overrides the saved watermark).",
+    )
+    p_distil.add_argument(
+        "--all", action="store_true",
+        help="Distil every capture row, ignoring the watermark.",
+    )
+    p_distil.add_argument(
+        "--session", default=None,
+        help="Distil only the capture rows of one transcript hash.",
+    )
+    p_distil.add_argument(
+        "--max-lessons", type=int, default=2,
+        help="Cap on lessons written per invocation (default: 2).",
+    )
+    p_distil.add_argument(
+        "--dry-run", action="store_true",
+        help="Report the candidate lessons without writing.",
+    )
+    p_distil.set_defaults(func=cmd_memory_distil)
+
+    p_feedback = sub_mem.add_parser(
+        "feedback",
+        help="Log a good/bad vote on the most recent recall injection "
+             "(§9.5) to <memory-root>/feedback.log.",
+    )
+    p_feedback.add_argument(
+        "verdict", choices=list(FEEDBACK_VERDICTS),
+        help="`good` if the injection helped, `bad` if it was noise.",
+    )
+    p_feedback.set_defaults(func=cmd_memory_feedback)
 
     p_consolidate = sub_mem.add_parser(
         "consolidate",
@@ -991,14 +1209,6 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     p_gc.add_argument("--dry-run", action="store_true",
                       help="Print what would go; don't write.")
     p_gc.set_defaults(func=cmd_memory_gc)
-
-    # Pending MVP subcommands — banner stubs so `rlat memory --help`
-    # documents the full §0.7 surface even though the bodies don't ship
-    # until #88.
-    for name in _PENDING_MVP_SUBCOMMANDS:
-        sp = sub_mem.add_parser(name, help=f"(MVP) {name} — ships in v2.1 MVP.")
-        sp.add_argument("args", nargs="*", help=argparse.SUPPRESS)
-        sp.set_defaults(func=_make_pending_handler(name))
 
     # v2.0 names with no v2.1 successor — banner-only.
     for name, replacement in _DEPRECATED_SUBCOMMANDS:
