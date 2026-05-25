@@ -5,4 +5,4 @@
 #
 # `fabric-user-data-functions` and `azure-functions` are pre-installed in
 # the Fabric runtime; pinning here is for the local emulator only.
-rlat[fabric,ann]>=2.1.0a13
+rlat[fabric,ann]>=2.1.0a15

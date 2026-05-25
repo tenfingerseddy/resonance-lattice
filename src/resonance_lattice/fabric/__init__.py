@@ -12,6 +12,12 @@ Public surface:
 - `search_with_state(state, query, top_k, verified_only, *, cold=False)` —
   runs retrieval using a state tuple from `bootstrap()`. Returns the
   JSON-serialisable `{band, cold, hits}` shape.
+- `embed_query(lakehouse, query)` — returns the 768-d L2-normalised CLS
+  embedding as a Python list of floats. Called by Fabric SQL DB's
+  `dbo.rlat_search` stored procedure via `sp_invoke_external_rest_endpoint`.
+  Reuses any warm `Encoder` from `_STATE`; falls back to a revision-keyed
+  encoder cache populated by peeking the first deployed `.rlat`'s
+  `metadata.json` (no full archive read).
 - `list_kms_for(lakehouse)` — globs `Files/rlat/*.rlat` and returns
   `[{kmName, n_passages, created_utc, encoder_revision}, ...]`. Powers the
   KM-discovery endpoint.
@@ -29,7 +35,7 @@ The encoder is fetched from HuggingFace at the revision pinned by the
 `.rlat`'s `metadata.backbone.revision` — no per-workspace tarball staging.
 """
 
-from ._runtime import bootstrap, list_kms_for, search_with_state
+from ._runtime import bootstrap, embed_query, list_kms_for, search_with_state
 from .errors import FabricSetupError
 from .onelake_store import OneLakeStore
 
@@ -37,6 +43,7 @@ __all__ = [
     "FabricSetupError",
     "OneLakeStore",
     "bootstrap",
+    "embed_query",
     "list_kms_for",
     "search_with_state",
 ]

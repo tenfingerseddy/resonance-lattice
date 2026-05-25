@@ -1,6 +1,6 @@
 """fabric_bootstrap — UDF runtime helper contract.
 
-Nine guarantees:
+Eleven guarantees:
 
   1. Cold bootstrap downloads the .rlat, fetches the encoder by the
      revision pinned in metadata.backbone.revision, opens the store,
@@ -19,6 +19,13 @@ Nine guarantees:
   9. OneLakeStore reads source bytes via the bound lakehouse client,
      reports FileNotFoundError on missing files, and rejects non-Fabric
      source_root paths with FabricSetupError.
+ 10. embed_query returns a 768-element float list; reuses a warm
+     Encoder from _STATE when present; falls back to a revision-keyed
+     cache populated from the first deployed .rlat's metadata.
+ 11. Encoder cache self-heals across OneLake: on first cold-start the
+     populated local cache is uploaded to Files/.rlat-cache/rlat/
+     encoders/<rev>/; on a subsequent fresh worker the seed function
+     re-populates the local cache from OneLake before HF is consulted.
 
 The pre-2.1.0a13 build path (OneLakeSourceWalker + udf_build/udf_refresh)
 moved out of the UDF entirely — the encoder weights resident in memory
@@ -151,6 +158,7 @@ def _patch_bootstrap_module(km_cache: Path):
 
     bs._KM_CACHE_DIR = km_cache
     bs._STATE.clear()
+    bs._ENCODER_CACHE.clear()
     bs.Encoder = ZeroEncoder  # type: ignore[assignment]
     bs.fetch_encoder_from_hf = lambda revision: km_cache  # type: ignore[assignment]
     return bs
@@ -388,6 +396,122 @@ def run() -> int:
 
         passed_g9 = read_ok and missing_ok and bad_root_ok
         failures += not _check(passed_g9, "guarantee 9 (OneLakeStore reads)")
+
+        # ---- Guarantee 10: embed_query — warm-state reuse + cold fallback ----
+        # 10.a — with a warm encoder in _STATE (any KM bootstrapped), embed
+        #        reuses the SAME encoder object (no list_km_paths, no fetch).
+        bs._STATE.clear()
+        bs._ENCODER_CACHE.clear()
+        # Use km_g8 (already in mock lakehouse from guarantee 8).
+        state_g8, _cold = bs.bootstrap(lakehouse, "g8")
+        _, _, enc_in_state = state_g8
+        v_warm = bs.embed_query(lakehouse, "what is auth")
+        # Identity-equal proves the warm path actually reused the existing
+        # encoder, not silently fell through to the fallback.
+        expected_warm = enc_in_state.encode(["what is auth"])[0].tolist()
+        passed_g10a = (
+            isinstance(v_warm, list)
+            and len(v_warm) == 768
+            and all(isinstance(x, float) for x in v_warm)
+            and v_warm == expected_warm
+        )
+
+        # 10.b — clear _STATE; embed must fall back to revision-keyed cache,
+        #        peek the first listed .rlat for its revision, and populate
+        #        _ENCODER_CACHE. Re-uses the guarantee-5 REST mock so
+        #        list_km_paths returns the test fixture KMs.
+        bs._STATE.clear()
+        bs._ENCODER_CACHE.clear()
+        _ll._list_via_onelake_rest = _fake_rest
+        try:
+            v_cold = bs.embed_query(lakehouse, "what is auth")
+            cold_path_ok = (
+                isinstance(v_cold, list)
+                and len(v_cold) == 768
+                and len(bs._ENCODER_CACHE) == 1
+            )
+            # Second call hits _ENCODER_CACHE; same instance, no growth.
+            enc_cached = next(iter(bs._ENCODER_CACHE.values()))
+            v_cold2 = bs.embed_query(lakehouse, "again")
+            cached_hit_ok = (
+                len(v_cold2) == 768
+                and len(bs._ENCODER_CACHE) == 1
+                and next(iter(bs._ENCODER_CACHE.values())) is enc_cached
+            )
+        finally:
+            _ll._list_via_onelake_rest = _orig_rest
+
+        passed_g10 = passed_g10a and cold_path_ok and cached_hit_ok
+        failures += not _check(passed_g10, "guarantee 10 (embed_query)")
+
+        # ---- Guarantee 11: encoder cache self-heals across OneLake ----
+        # Sequence:
+        #   1. Clear all caches. With OneLake empty, _load_encoder falls
+        #      through to fetch_encoder_from_hf, then uploads the cache
+        #      to Files/.rlat-cache/rlat/encoders/<rev>/.
+        #   2. Clear in-process caches AND wipe the local disk cache to
+        #      simulate a fresh worker. _load_encoder should now seed
+        #      from OneLake (skipping HF) and return the same revision.
+        from resonance_lattice.install.encoder import cache_dir as _enc_cache_dir
+        import shutil as _shutil
+
+        bs._STATE.clear()
+        bs._ENCODER_CACHE.clear()
+        # Pre-populate the local cache so fetch_encoder_from_hf is a no-op
+        # (it's mocked to do nothing in the harness; we manually drop
+        # model.onnx + a sibling into cache_dir(rev) to mirror what HF
+        # would have done).
+        rev_a = "rev-self-heal-aaaa"
+        local_a = _enc_cache_dir(rev_a)
+        local_a.mkdir(parents=True, exist_ok=True)
+        (local_a / "model.onnx").write_bytes(b"FAKE-ONNX-BYTES")
+        (local_a / "tokenizer.json").write_bytes(b'{"version":"1.0"}')
+
+        # Drive the upload by calling _load_encoder with no OneLake cache.
+        # The mock REST returns [] so seed fails, then upload populates.
+        def _empty_rest(sub):  # noqa: ARG001
+            return []
+        _ll._list_via_onelake_rest = _empty_rest
+        try:
+            bs._load_encoder(rev_a, lakehouse=lakehouse)
+        finally:
+            _ll._list_via_onelake_rest = _orig_rest
+
+        # Inspect: did the upload land in the mock lakehouse?
+        from resonance_lattice.fabric._runtime import _ONELAKE_ENCODER_PREFIX
+        expected_onnx_key = f"{_ONELAKE_ENCODER_PREFIX}/{rev_a}/model.onnx"
+        expected_tok_key = f"{_ONELAKE_ENCODER_PREFIX}/{rev_a}/tokenizer.json"
+        upload_ok = (
+            expected_onnx_key in lakehouse._dir._files
+            and expected_tok_key in lakehouse._dir._files
+            and lakehouse._dir._files[expected_onnx_key][0] == b"FAKE-ONNX-BYTES"
+        )
+
+        # Now simulate a fresh worker: wipe local cache + in-process state.
+        bs._STATE.clear()
+        bs._ENCODER_CACHE.clear()
+        _shutil.rmtree(local_a, ignore_errors=True)
+        assert not local_a.exists()
+
+        # REST mock must return the uploaded paths so _seed_encoder_cache
+        # can discover them.
+        def _seed_rest(sub):  # noqa: ARG001
+            prefix = f"{_ONELAKE_ENCODER_PREFIX}/{rev_a}/"
+            return [f"<lh>/Files/{k}" for k in lakehouse._dir._files if k.startswith(prefix)]
+        _ll._list_via_onelake_rest = _seed_rest
+        try:
+            bs._load_encoder(rev_a, lakehouse=lakehouse)
+        finally:
+            _ll._list_via_onelake_rest = _orig_rest
+
+        # The seed should have re-populated the local cache from OneLake.
+        seed_ok = (
+            (local_a / "model.onnx").exists()
+            and (local_a / "model.onnx").read_bytes() == b"FAKE-ONNX-BYTES"
+        )
+
+        passed_g11 = upload_ok and seed_ok
+        failures += not _check(passed_g11, "guarantee 11 (encoder cache self-heals via OneLake)")
 
     if failures:
         print(f"[fabric_bootstrap] {failures} guarantee(s) failed", file=sys.stderr)

@@ -8,35 +8,42 @@ This walks you through the first build and the first query in under 15 minutes. 
 
 ```bash
 pip install rlat[build]
+# or, if you're on uv:
+uv pip install 'rlat[build]'
 ```
 
 The `[build]` extra pulls in `transformers`, `torch`, and `onnxscript`. Once you have a `.rlat`, query-time only needs the base install — you can `pip install rlat` (no extras) on a different machine and search a knowledge model someone else built.
 
 > If you only ever search and never build, use the base install and have someone else build the `.rlat` for you.
 
+### What `rlat` reads
+
+Plain-text files only: source code (`.py`, `.ts`, `.go`, `.rs`, …), markup (`.md`, `.rst`, `.txt`, `.html`, `.tex`), config (`.json`, `.yaml`, `.toml`, `.sql`). PDF, DOCX, XLSX, and other binary formats are **not** read — convert them first (`pandoc`, `markitdown`, or copy/paste into markdown). Full extension list is in `build/walker.py:DEFAULT_TEXT_EXTENSIONS`; you can override with `rlat build --ext .foo --ext .bar` if you need a custom set.
+
 ## Don't want to build yet? Try a prebuilt `.rlat`
 
-Four launch-day knowledge models live on HuggingFace, ready to query without any encoder install or build step. They use **remote storage mode** — the .rlat itself only contains embeddings + source coordinates + a SHA-pinned URL manifest; the source files are fetched on demand from `raw.githubusercontent.com` at the pinned commit and SHA-verified locally.
+Five launch-day knowledge models live on HuggingFace, ready to query without any encoder install or build step. Four use **remote storage mode** (the `.rlat` itself only contains embeddings + source coordinates + a SHA-pinned URL manifest; the source files are fetched on demand from `raw.githubusercontent.com` at the pinned commit and SHA-verified locally); the fifth (`fabric-docs-bundled`) packs source inside the archive and ships with an MRL-trained optimised band.
 
-| Dataset | Source repo | Files | Passages | Size |
-|---|---|---:|---:|---:|
-| [`tenfingers/powerbi-developer-rlat`](https://huggingface.co/datasets/tenfingers/powerbi-developer-rlat) | [MicrosoftDocs/powerbi-docs](https://github.com/MicrosoftDocs/powerbi-docs) `powerbi-docs/developer` | 176 | 5,684 | 34 MB |
-| [`tenfingers/powershell-docs-rlat`](https://huggingface.co/datasets/tenfingers/powershell-docs-rlat) | [MicrosoftDocs/PowerShell-Docs](https://github.com/MicrosoftDocs/PowerShell-Docs) `reference` | 2,647 | 107,033 | 640 MB |
-| [`tenfingers/python-stdlib-rlat`](https://huggingface.co/datasets/tenfingers/python-stdlib-rlat) | [python/cpython](https://github.com/python/cpython) `Doc` | 617 | 49,179 | 293 MB |
-| [`tenfingers/tsql-docs-rlat`](https://huggingface.co/datasets/tenfingers/tsql-docs-rlat) | [MicrosoftDocs/sql-docs](https://github.com/MicrosoftDocs/sql-docs) `docs/t-sql` | 1,209 | 33,282 | 198 MB |
+| Dataset | Source repo | Files | Passages | Filename | Mode |
+|---|---|---:|---:|---|---|
+| [`tenfingers/fabric-docs-rlat`](https://huggingface.co/datasets/tenfingers/fabric-docs-rlat) | [MicrosoftDocs/fabric-docs](https://github.com/MicrosoftDocs/fabric-docs) `docs` | 2,435 | 67,503 | `fabric-docs-bundled.rlat` | bundled + optimised |
+| [`tenfingers/powerbi-developer-rlat`](https://huggingface.co/datasets/tenfingers/powerbi-developer-rlat) | [MicrosoftDocs/powerbi-docs](https://github.com/MicrosoftDocs/powerbi-docs) `powerbi-docs/developer` | 176 | 5,684 | `powerbi-developer.rlat` | remote |
+| [`tenfingers/powershell-docs-rlat`](https://huggingface.co/datasets/tenfingers/powershell-docs-rlat) | [MicrosoftDocs/PowerShell-Docs](https://github.com/MicrosoftDocs/PowerShell-Docs) `reference` | 2,647 | 107,033 | `powershell-docs.rlat` | remote |
+| [`tenfingers/python-stdlib-rlat`](https://huggingface.co/datasets/tenfingers/python-stdlib-rlat) | [python/cpython](https://github.com/python/cpython) `Doc` | 617 | 49,179 | `python-stdlib.rlat` | remote |
+| [`tenfingers/tsql-docs-rlat`](https://huggingface.co/datasets/tenfingers/tsql-docs-rlat) | [MicrosoftDocs/sql-docs](https://github.com/MicrosoftDocs/sql-docs) `docs/t-sql` | 1,209 | 33,282 | `tsql-docs.rlat` | remote |
 
 ```bash
 # pip install rlat (base install is enough — no [build] extras needed for query)
 pip install rlat huggingface_hub
 
 # Pick the corpus that fits your work
-huggingface-cli download tenfingers/python-stdlib-rlat python-stdlib.rlat --local-dir .
+hf download tenfingers/python-stdlib-rlat python-stdlib.rlat --local-dir .
 
 # Query it — first hit caches the cited source files locally; subsequent queries are sub-20ms warm
-rlat search python-stdlib.rlat "asyncio Task cancellation" --top-k 5
+rlat search python-stdlib.rlat "asyncio Task cancellation" --top-k 5 --format context
 ```
 
-All four are encoded with the same `gte-modernbert-base` 768d recipe documented in [BENCHMARK_GATE.md](../internal/BENCHMARK_GATE.md), so retrieval quality is identical to what you'd get building locally. The `.rlat` archive itself is the source of truth for the source-repo SHA — the README on each HuggingFace repo records it and the build date.
+All five are encoded with the same `gte-modernbert-base` 768d recipe documented in [BENCHMARK_GATE.md](../internal/BENCHMARK_GATE.md), so retrieval quality is identical to what you'd get building locally. The `.rlat` archive itself is the source of truth for the source-repo SHA — the README on each HuggingFace repo records it and the build date.
 
 If you outgrow the prebuilt set or want to index your own project, keep reading.
 
@@ -86,32 +93,50 @@ rlat build ./docs ./src -o my-project.rlat \
   --kind corpus
 ```
 
+> **Relative paths are resolved against your current shell directory.** `./docs` means "the `docs/` folder inside wherever you are now" — not "the rlat package's docs/". If you run this from the wrong directory, the build will silently index the wrong folder. When in doubt, pass absolute paths: `rlat build /abs/path/to/docs -o my-project.rlat`. `rlat init-project` is the safer entrypoint — it always builds from the project root it's invoked in.
+
 Three storage modes (`local` is the default) — see [STORAGE_MODES.md](./STORAGE_MODES.md) for the trade-offs.
 
 > **Big corpus, no local GPU?** CPU-only encoding of `gte-modernbert-base` runs at ~80-150 passages/sec; corpora over ~10K passages take an unpleasant amount of time. The [`rlat-build-on-kaggle`](../../.claude/skills/rlat-build-on-kaggle/SKILL.md) Claude skill walks through using Kaggle's free T4 GPU instead — account setup, kernel push, polling, and pulling the `.rlat` back. Just ask "can we build this on Kaggle?" inside Claude Code.
 
 ## Run your first query
 
+The everyday call — output is LLM-ready markdown you pipe straight into Claude / Cursor / your assistant:
+
 ```bash
-rlat search my-project.rlat "how does retrieval work"
+rlat search my-project.rlat "how does retrieval work" --format context --top-k 5
 ```
 
 Output:
 
+```markdown
+<!-- rlat-mode: augment -->
+> **Grounding mode: augment.** Use the passages below as primary context …
+
+<!-- docs/architecture.md:84+12 score=0.836 verified -->
+## Indexing
+
+<!-- docs/architecture.md:12+73 score=0.820 verified -->
+This project does dense retrieval with cosine similarity over unit-norm embeddings.
+
+<!-- src/retrieval.py:0+50 score=0.805 verified -->
+def build_index(passages):  return faiss.HNSW(passages)
+```
+
+The comment lines are stable citation anchors — your assistant can preserve them in its answer. The `<!-- rlat-mode: augment -->` directive at the top tells the consumer LLM how to weight the passages (see `--mode augment|knowledge|constrain`).
+
+Without `--format context` you get the plain inspector view:
+
 ```
 0.836  docs/architecture.md:84+12  [verified]  ## Indexing
-0.820  docs/architecture.md:12+73  [verified]  This project does dense retrieval with cosine similarity over unit-norm embeddings.
-0.805  src/retrieval.py:0+50  [verified]  def build_index(passages):  return faiss.HNSW(passages)
-...
+0.820  docs/architecture.md:12+73  [verified]  This project does dense retrieval …
+0.805  src/retrieval.py:0+50       [verified]  def build_index(passages):  return faiss.HNSW(passages)
 ```
 
-Three columns: cosine score, source coordinate, drift status, preview. The status is per-passage — if you edit `architecture.md`, that file's hits will show `drifted` until you `rlat refresh`.
-
-For machine-readable JSON or LLM-ready context blocks:
+Four columns: cosine score, source coordinate (`path:offset+length`), drift status, preview. The status is per-passage — if you edit `architecture.md`, that file's hits will show `drifted` until you `rlat refresh`. Other formats:
 
 ```bash
-rlat search my-project.rlat "..." --format json
-rlat search my-project.rlat "..." --format context --top-k 5
+rlat search my-project.rlat "..." --format json     # machine-readable, for scripts
 ```
 
 ## Hand the corpus to your assistant

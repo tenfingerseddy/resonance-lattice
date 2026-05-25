@@ -33,10 +33,21 @@ class _OnnxHandle:
 def load(model_path: Path) -> _OnnxHandle:
     common.require_asset(model_path, "ONNX model")
     ort = common.require_module("onnxruntime", _INSTALL_HINT)
+    # Memory-pattern reuse keys on the first input shape. The encoder's batch
+    # and seq_len axes are both dynamic, so the last batch of a non-divisible
+    # encode_batched run can crash ORT's attention allocator with a shape
+    # mismatch on some Linux builds. Disable it — small per-call alloc cost,
+    # no shape-related crashes.
+    sess_options = ort.SessionOptions()
+    sess_options.enable_mem_pattern = False
     # Auto-discover providers — `[gpu]` extra installs onnxruntime-gpu, which
     # exposes CUDAExecutionProvider; the build path benefits from CUDA when
     # available. Query path on CPU-only installs gets only CPUExecutionProvider.
-    session = ort.InferenceSession(str(model_path), providers=ort.get_available_providers())
+    session = ort.InferenceSession(
+        str(model_path),
+        sess_options=sess_options,
+        providers=ort.get_available_providers(),
+    )
     declared = {i.name for i in session.get_inputs()}
     expected = {_INPUT_IDS, _ATTENTION_MASK}
     missing = expected - declared

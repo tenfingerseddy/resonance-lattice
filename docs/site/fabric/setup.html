@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup walkthrough — Resonance Lattice on Microsoft Fabric</title>
+  <link rel="stylesheet" href="../rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="../index.html"><img src="../assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+    <nav class="site">
+      <a href="../index.html">Home</a>
+      <a href="../getting-started.html">Getting started</a>
+      <a href="../memory.html">Memory</a>
+      <a href="../lens.html">Lens</a>
+      <a href="index.html">Fabric</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="tagline">Resonance Lattice · Microsoft Fabric</div>
+  <h1>Setup walkthrough</h1>
+  <p class="lede">
+    From a clean Fabric workspace to a data agent answering grounded
+    questions, in about thirty minutes on a small demo corpus. Everything
+    runs inside your Fabric tenant — both the storage and the query-time
+    embedding model. No Azure OpenAI, no third-party vector database.
+  </p>
+
+  <h2>What you're setting up, in one paragraph</h2>
+  <p>
+    A <strong>knowledge model</strong> (a <code>.rlat</code> file) is a
+    pre-computed semantic index of a folder of source files — your team
+    docs, an API reference, whatever. It stores text chunks
+    (<em>passages</em>) together with the numeric vector
+    (<em>embedding</em>) each one maps to under a fixed embedding model.
+    The deploy step in this walkthrough takes the <code>.rlat</code>
+    out of OneLake storage and into a Fabric Eventhouse KQL database —
+    the storage shape that the query-time search function will read
+    from. Deploy alone doesn't make the corpus answerable yet: the
+    search function (Step 3) and the data agent (Step 4) ride on top
+    and land in later phases. Once all five steps are in place, a
+    Fabric data agent or external LLM client can ask "what does this
+    corpus say about X?", get back the relevant passages with citations
+    into the source files, and answer from those passages rather than
+    guessing.
+  </p>
+
+  <div class="callout callout-note">
+    <span class="callout-tag">Phase 1 build</span>
+    <p>This guide is built up phase by phase as the integration ships.
+    Step&nbsp;2 (Deploy the knowledge model) is the live content;
+    Step&nbsp;1 (build a <code>.rlat</code>) and Steps&nbsp;3–5
+    (search function, data agent, external assistants) land as their
+    phases ship. If you don't already have a <code>.rlat</code> in
+    OneLake, you can't complete this walkthrough yet — Step&nbsp;1 is
+    coming. Track progress at
+    <a href="https://github.com/tenfingerseddy/resonance-lattice">tenfingerseddy/resonance-lattice</a>.</p>
+  </div>
+
+  <h2>Before you start</h2>
+  <ul>
+    <li><strong>A Microsoft Fabric workspace</strong> at F2 capacity or
+      higher. F2 is enough for the deploy step on a small demo corpus
+      (~100 to ~1,000 passages). Step 3 (the sandbox embedding function,
+      coming in a later phase) uses the Eventhouse Python plugin —
+      capacity-policy permitting on F2 — and may need an SKU bump for
+      production loads. We'll re-state the SKU guidance when Step 3
+      lands.</li>
+    <li><strong>Workspace permissions:</strong> you (or the service
+      principal you'll use) need <em>Admin</em> or <em>Member</em> on
+      the workspace. Service principal setup is covered in
+      <a href="https://learn.microsoft.com/en-us/fabric/admin/metadata-scanning-enable-read-only-apis#prerequisites">Microsoft's
+      Fabric API SP guide</a>; the SP needs the workspace role plus
+      <em>Fabric API</em> tenant-setting access enabled by your Fabric
+      admin.</li>
+    <li><strong>A default lakehouse</strong> in the workspace. The
+      data-agent integration reuses your existing lakehouse — no need to
+      create a new one.</li>
+    <li><strong>A local checkout</strong> of the public
+      <code>resonance-lattice-cli</code> repository if you want to run the
+      one-shot provisioning script from your laptop. Otherwise the same
+      steps are doable in the Fabric portal.</li>
+  </ul>
+
+  <p>
+    Your workspace ID is the GUID in the portal URL when you're inside
+    a workspace
+    (<code>https://app.fabric.microsoft.com/groups/&lt;workspace-id&gt;/&hellip;</code>),
+    or in <em>Workspace settings → About</em>.
+  </p>
+
+  <h2>Step 1 — Build a knowledge model</h2>
+  <p class="muted-block">
+    Coming in a later phase. For now use the existing
+    <code>fabric_build.ipynb</code> notebook (in your workspace's
+    <code>notebooks/examples/</code>) to build a <code>.rlat</code> from a
+    folder of source files. The notebook writes the result to
+    <code>Files/rlat/&lt;your-corpus-name&gt;.rlat</code> inside your
+    default lakehouse.
+  </p>
+
+  <h2>Step 2 — Deploy the knowledge model</h2>
+  <p>
+    "Deploy" means taking your <code>.rlat</code> file out of OneLake
+    storage and ingesting its passages + embeddings into a queryable
+    <strong>KQL database</strong> table. The data agent (Step 4) talks
+    only to KQL; nothing else reads the <code>.rlat</code> at query time.
+  </p>
+
+  <h3>What gets created</h3>
+  <p>
+    One <strong>Eventhouse</strong> item and its default <strong>KQL
+    database</strong>, both called <code>rlat-data-agent</code>, alongside
+    whatever else lives in your workspace. Inside that database:
+  </p>
+  <ul>
+    <li><code>passages_raw</code> — an append-only table holding one row
+      per passage with text, source location, content hash, and the
+      768-dimensional embedding. The vector column is stored under
+      Fabric's <code>Vector16</code> encoding policy (compact
+      half-precision storage, accelerated cosine similarity).</li>
+    <li><code>passages</code> — a <strong>materialised view</strong>
+      over <code>passages_raw</code> that keeps only the most recent
+      row per <code>content_hash</code>. This is the queryable surface
+      the data agent reads. The view is incrementally maintained — new
+      rows in <code>_raw</code> are folded in automatically; you don't
+      run anything to refresh it.</li>
+  </ul>
+
+  <p>
+    Why two objects instead of one? KQL has no row-level
+    <em>upsert</em> (update-or-insert). The append-only base plus
+    most-recent-wins materialised view is the standard idiom: every
+    deploy unconditionally appends to <code>passages_raw</code>, and the
+    view dedupes lazily on <code>content_hash</code>. Re-deploying the
+    same corpus is safe — the queryable row count stays at the number
+    of distinct passages no matter how many times you run the deploy.
+  </p>
+
+  <h3>2a — Provision the Eventhouse and KQL database</h3>
+  <p>
+    One-time setup per workspace. Two options:
+  </p>
+
+  <h4 class="muted">Option A — from a local checkout</h4>
+  <p>
+    Set three environment variables for your service principal (the
+    project uses <code>FABRIC_*</code> names rather than
+    <code>AZURE_*</code>):
+  </p>
+
+  <pre class="code-block"><code>FABRIC_TENANT  = your tenant id
+FABRIC_CLIENT  = service principal app id
+FABRIC_SECRET  = service principal secret</code></pre>
+
+  <p>Then from the repo root:</p>
+
+  <pre class="code-block"><code>python scripts/fabric_e2e_provision_eventhouse.py \
+    --workspace &lt;your-workspace-id&gt;</code></pre>
+
+  <p>
+    The script is idempotent — re-running prints the existing item ids
+    without recreating. Copy the four values it prints
+    (<code>kqlDatabaseId</code>, <code>kqlDatabaseName</code>,
+    <code>queryServiceUri</code>, <code>ingestionServiceUri</code>) — you
+    need them in Step 2b.
+  </p>
+
+  <h4 class="muted">Option B — from the Fabric portal</h4>
+  <ol>
+    <li>In your workspace, click <em>+ New item</em> →
+      <em>Eventhouse</em>.</li>
+    <li>Name it <code>rlat-data-agent</code>; click <em>Create</em>.</li>
+    <li>Open the Eventhouse → the default KQL database appears in the
+      left pane (same name).</li>
+    <li>In the database's <em>Database details</em> pane copy
+      <em>Query URI</em> (this is the <code>CLUSTER_URI</code> parameter
+      in the next step) and <em>Data ingestion URI</em> (the
+      <code>INGEST_URI</code> parameter).</li>
+  </ol>
+
+  <h3>2b — Run the deploy notebook</h3>
+  <p>
+    The deploy notebook (<code>fabric_deploy.ipynb</code>) reads your
+    <code>.rlat</code> from OneLake and ingests it into
+    <code>passages_raw</code>. The materialised view rebuilds itself in
+    the background; the whole thing is one notebook, runnable any time
+    you want to refresh.
+  </p>
+
+  <p>
+    Get the notebook into your workspace one of two ways:
+  </p>
+  <ul>
+    <li><strong>From a local checkout:</strong> from the repo root,
+      <code>python scripts/fabric_e2e_run_deploy_notebook.py --workspace
+      &lt;your-workspace-id&gt;</code> uploads the notebook
+      and triggers a run with parameters set automatically.</li>
+    <li><strong>From the portal:</strong> click <em>+ New item</em> →
+      <em>Notebook</em>, then <em>Import notebook</em>, and upload
+      <code>notebooks/examples/fabric_deploy.ipynb</code> from a local
+      checkout of the repo. Open the new notebook in the workspace and
+      use it directly.</li>
+  </ul>
+
+  <ol>
+    <li>Open the notebook in the workspace.</li>
+    <li>In the <em>Parameters</em> cell, set:
+      <ul>
+        <li><code>KM_NAME</code> — the basename of your <code>.rlat</code>
+          (e.g. <code>"team-docs"</code> if the file is
+          <code>Files/rlat/team-docs.rlat</code>).</li>
+        <li><code>KQL_DATABASE_NAME</code> — defaults to
+          <code>"rlat-data-agent"</code>.</li>
+        <li><code>CLUSTER_URI</code> and <code>INGEST_URI</code> — paste
+          the values from Step 2a (or 2b's <em>Query URI</em> and
+          <em>Data ingestion URI</em>).</li>
+      </ul>
+    </li>
+    <li>Run all cells. On a 100-passage corpus the whole notebook takes
+      about a minute; first ingest becomes queryable within ~30 seconds
+      of the queued upload.</li>
+  </ol>
+
+  <p>
+    The final cell prints a summary like:
+  </p>
+
+  <pre class="code-block"><code>{
+  "km_name":                   "team-docs",
+  "kql_database":              "rlat-data-agent",
+  "rows_ingested":             97,
+  "passages_raw_before":       0,
+  "passages_raw_after":        97,
+  "passages_view_count":       97,
+  "ingest_to_visible_seconds": 32.4,
+  "ingest_source_id":          "08d54ac0-c0aa-4676-940d-00f4d1549caf"
+}</code></pre>
+
+  <p>
+    If <code>passages_view_count</code> equals the passage count in your
+    <code>.rlat</code>, deploy worked.
+  </p>
+
+  <h3>How to verify in the portal</h3>
+  <ol>
+    <li>Open your Eventhouse → click into the
+      <code>rlat-data-agent</code> KQL database.</li>
+    <li>In the <em>Explore your data</em> query window, run:
+      <pre class="code-block"><code>passages
+| count</code></pre>
+      The number you see is the count of distinct passages from the
+      latest deploy.
+    </li>
+    <li>Run <code>passages | take 5</code> to spot-check a few rows.</li>
+  </ol>
+
+  <h3>Refreshing</h3>
+  <p>
+    Re-run the deploy notebook any time the underlying corpus changes.
+    Re-deploys append to <code>passages_raw</code>; the materialised view
+    keeps the count at the distinct-passage total. Capacity cost on a
+    refresh that ingests the full corpus again is dominated by the
+    initial queued ingest — under 50 CU-seconds for a 100-passage
+    corpus, scaling roughly linearly with passage count.
+  </p>
+
+  <div class="callout callout-note">
+    <span class="callout-tag">If it doesn't work</span>
+    <p>The deploy notebook's per-cell errors are visible in the
+    portal: open the notebook, switch to <em>Run history</em>, click
+    the failed run, click the failed cell. The Fabric REST API does
+    not (yet) surface per-cell errors, so this portal step is the only
+    way to read the underlying exception.</p>
+    <p>Top three things that go wrong:</p>
+    <ul>
+      <li><strong>"Database not found" / 401 on the first DDL call</strong>
+        — the SP doesn't have permissions on the KQL database. Open
+        the database in the portal, <em>Manage permissions →
+        Add</em>, give your SP <em>Database Admin</em>.</li>
+      <li><strong>Ingest queued but
+        <code>passages_raw_after</code> stays at 0</strong> — Fabric's
+        queued-ingest batching window is up to a few minutes on a cold
+        Eventhouse. Wait, then run <code>passages_raw | count</code>
+        in the KQL portal. If still zero after 5 minutes, check
+        <code>.show ingestion failures</code> for the table.</li>
+      <li><strong><code>FileNotFoundError</code> on <code>Files/rlat/&hellip;</code></strong>
+        — the <code>KM_NAME</code> parameter doesn't match a
+        <code>.rlat</code> file in your default lakehouse's
+        <code>Files/rlat/</code> folder. Browse the lakehouse in the
+        portal, copy the exact basename, retry.</li>
+    </ul>
+  </div>
+
+  <h2>Step 3 — Create the rlat_search() function</h2>
+  <p class="muted-block">
+    Coming in a later phase. This step adds a KQL stored function that
+    the data agent calls per question: it embeds the user's query in the
+    sandbox, cosines it against <code>passages.vector</code>, and returns
+    the top-k passages with their source citations.
+  </p>
+
+  <h2>Step 4 — Create the data agent</h2>
+  <p class="muted-block">
+    Coming in a later phase. A Fabric data agent backed by the KQL
+    database from Step 2, configured to call
+    <code>rlat_search()</code> for any conceptual or definitional
+    question and cite its sources.
+  </p>
+
+  <h2>Step 5 — External assistants (Claude Code, Cursor, &hellip;)</h2>
+  <p class="muted-block">
+    Coming in a later phase. Point an external LLM client at the same
+    knowledge model via the existing <code>rlat search fabric://</code>
+    path — same corpus, two surfaces.
+  </p>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice on Microsoft Fabric · Setup · current as of build phase P1.</p>
+  </div>
+</footer>
+
+</body>
+</html>

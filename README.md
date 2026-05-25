@@ -27,29 +27,57 @@
 
 ```bash
 pip install rlat[build]                 # base + transformers/torch for first build
+# or: uv pip install 'rlat[build]'      # if you're on uv
 rlat install-encoder                    # one-time, ~2 min on CPU
+cd my-project/                          # the project whose docs/src/ you want indexed
 rlat init-project                       # auto-detects docs/ + src/, builds + writes a primer
-rlat search myproject.rlat "how does auth work?"
+rlat search my-project.rlat "how does auth work?" --format context
 ```
 
-Once you have a `.rlat`, query-time only needs the base install — `pip install rlat` (no extras) on a different machine is enough to search a knowledge model someone else built. Full walkthrough: [docs/user/GETTING_STARTED.md](docs/user/GETTING_STARTED.md). Full CLI reference: [docs/user/CLI.md](docs/user/CLI.md).
+`rlat init-project` resolves source paths relative to your current shell directory — run it from the project root so it indexes the right `docs/`. `--format context` prints LLM-ready markdown with citations and a grounding directive; drop the flag for the plain `score / coordinate / drift_status / preview` table.
+
+**Inputs are plain text** (`.md`, `.txt`, `.py`, `.sql`, source code, prose). PDF, DOCX, XLSX aren't read — convert to markdown first (`pandoc`, `markitdown`, or copy-paste).
+
+Once you have a `.rlat`, query-time only needs the base install — `pip install rlat` (no extras) on a different machine is enough to search a knowledge model someone else built.
+
+**Next:**
+
+- **New here?** [docs/user/GETTING_STARTED.md](docs/user/GETTING_STARTED.md) — first build → first query, with output explained and "where things go wrong".
+- **Fabric / Power BI team?** [docs/user/FABRIC.md](docs/user/FABRIC.md) — one `.rlat` in OneLake, queried by everyone via a User Data Function, telemetry to Delta tables, optional Direct Lake semantic model.
+- **Full command reference:** [docs/user/CLI.md](docs/user/CLI.md).
+
+## How it works (plain English)
+
+`rlat` reads your files, breaks them into passages, and converts each passage into a list of numbers that captures its meaning. It stores those numbers — plus every coordinate needed to cite the source back — in one portable `.rlat` file. When you search, it finds the passages whose meaning is closest to your question (mathematically — cosine over unit-norm embeddings) and hands them back with provenance. Your AI assistant does the answering; `rlat`'s job is to give it the right ground truth, citably.
+
+## When does rlat help?
+
+If your project's docs fit in your assistant's context window, `cat docs/*.md | claude` works fine and is usually richer. `rlat` earns its keep when:
+
+- the corpus is too big to paste whole (hundreds of files, tens of MB);
+- you want **stable citations** so an answer points back to a specific line, not a hallucinated paraphrase;
+- you want **drift detection** so a stale source surfaces as `drifted` instead of silently returning outdated text;
+- you want a **team-shared** knowledge model (a single `.rlat` on a share or in OneLake, queryable from anywhere — no per-user index, no API key);
+- you want a **portable, inspectable** artefact (open it with `unzip`, audit with `jq` — no hosted vector DB, no vendor lock-in).
+
+For a 4-file repo: skip `rlat`, just `cat`. For a 4,000-file repo or a team library: `rlat`.
 
 ### Don't want to build? Try a prebuilt `.rlat` first.
 
 Five prebuilt knowledge models live on HuggingFace, ready to query in seconds — no encoder install, no build step. The remote-mode rlats pin to the source repo at a commit SHA and fetch source on demand (SHA-verified at query time); the bundled-mode rlat packs source inside the archive:
 
-| Corpus | Source | Files | Passages | Mode |
-|---|---|---:|---:|---|
-| [`tenfingers/fabric-docs-rlat`](https://huggingface.co/datasets/tenfingers/fabric-docs-rlat) | [MicrosoftDocs/fabric-docs](https://github.com/MicrosoftDocs/fabric-docs) `docs` | 2,435 | 67,503 | bundled + optimised band |
-| [`tenfingers/powerbi-developer-rlat`](https://huggingface.co/datasets/tenfingers/powerbi-developer-rlat) | [MicrosoftDocs/powerbi-docs](https://github.com/MicrosoftDocs/powerbi-docs) `powerbi-docs/developer` | 176 | 5,684 | remote |
-| [`tenfingers/powershell-docs-rlat`](https://huggingface.co/datasets/tenfingers/powershell-docs-rlat) | [MicrosoftDocs/PowerShell-Docs](https://github.com/MicrosoftDocs/PowerShell-Docs) `reference` | 2,647 | 107,033 | remote |
-| [`tenfingers/python-stdlib-rlat`](https://huggingface.co/datasets/tenfingers/python-stdlib-rlat) | [python/cpython](https://github.com/python/cpython) `Doc` | 617 | 49,179 | remote |
-| [`tenfingers/tsql-docs-rlat`](https://huggingface.co/datasets/tenfingers/tsql-docs-rlat) | [MicrosoftDocs/sql-docs](https://github.com/MicrosoftDocs/sql-docs) `docs/t-sql` | 1,209 | 33,282 | remote |
+| Corpus | Source | Files | Passages | Filename | Mode |
+|---|---|---:|---:|---|---|
+| [`tenfingers/fabric-docs-rlat`](https://huggingface.co/datasets/tenfingers/fabric-docs-rlat) | [MicrosoftDocs/fabric-docs](https://github.com/MicrosoftDocs/fabric-docs) `docs` | 2,435 | 67,503 | `fabric-docs-bundled.rlat` | bundled + optimised band |
+| [`tenfingers/powerbi-developer-rlat`](https://huggingface.co/datasets/tenfingers/powerbi-developer-rlat) | [MicrosoftDocs/powerbi-docs](https://github.com/MicrosoftDocs/powerbi-docs) `powerbi-docs/developer` | 176 | 5,684 | `powerbi-developer.rlat` | remote |
+| [`tenfingers/powershell-docs-rlat`](https://huggingface.co/datasets/tenfingers/powershell-docs-rlat) | [MicrosoftDocs/PowerShell-Docs](https://github.com/MicrosoftDocs/PowerShell-Docs) `reference` | 2,647 | 107,033 | `powershell-docs.rlat` | remote |
+| [`tenfingers/python-stdlib-rlat`](https://huggingface.co/datasets/tenfingers/python-stdlib-rlat) | [python/cpython](https://github.com/python/cpython) `Doc` | 617 | 49,179 | `python-stdlib.rlat` | remote |
+| [`tenfingers/tsql-docs-rlat`](https://huggingface.co/datasets/tenfingers/tsql-docs-rlat) | [MicrosoftDocs/sql-docs](https://github.com/MicrosoftDocs/sql-docs) `docs/t-sql` | 1,209 | 33,282 | `tsql-docs.rlat` | remote |
 
 ```bash
-pip install rlat
-huggingface-cli download tenfingers/python-stdlib-rlat python-stdlib.rlat --local-dir .
-rlat search python-stdlib.rlat "asyncio Task cancellation" --top-k 5
+pip install rlat huggingface_hub
+hf download tenfingers/python-stdlib-rlat python-stdlib.rlat --local-dir .
+rlat search python-stdlib.rlat "asyncio Task cancellation" --top-k 5 --format context
 ```
 
 All five are encoded with `gte-modernbert-base` 768d at the pinned revision documented in [`docs/internal/BENCHMARK_GATE.md`](docs/internal/BENCHMARK_GATE.md), so retrieval quality matches anything you build locally with the same recipe. The fabric-docs rlat also ships an MRL-trained optimised band (512d) — matched A/B benchmark shows ≈4× hallucination reduction over the base band on the 63-question Fabric test set.

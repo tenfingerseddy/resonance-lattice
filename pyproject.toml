@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rlat"
-version = "2.1.0a13"
+version = "2.1.0a15"
 description = "Knowledge-model retrieval for AI assistants — base-first, dense-only, three storage modes"
 readme = "README.md"
 license = {file = "LICENSE.md"}

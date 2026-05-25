@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Getting started — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="getting-started.html" aria-current="page">Getting started</a>
+      <a href="memory.html">Memory</a>
+      <a href="lens.html">Lens</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>Getting started</h1>
+  <p class="lede">
+    From a fresh install to your first query in under fifteen minutes. By the
+    end you will have a <code>.rlat</code> <em>knowledge model</em> of your
+    project and a context primer an AI assistant can read.
+  </p>
+
+  <div class="figure">
+    <svg viewBox="0 0 620 250" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="The install, build, query flow">
+      <defs>
+        <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3"
+                 orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#5b6770"/></marker>
+        <marker id="ahl" markerWidth="9" markerHeight="9" refX="7" refY="3"
+                 orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#3a6b6b"/></marker>
+      </defs>
+
+      <!-- main flow: install -> build -> search -->
+      <rect x="14"  y="26" width="176" height="46" rx="4" fill="#fff" stroke="#5b6770" stroke-width="1.5"/>
+      <rect x="222" y="26" width="176" height="46" rx="4" fill="#fff" stroke="#5b6770" stroke-width="1.5"/>
+      <rect x="430" y="26" width="176" height="46" rx="4" fill="#fff" stroke="#5b6770" stroke-width="1.5"/>
+
+      <text x="102" y="44" text-anchor="middle" class="svg-label-bold" fill="#5b6770">INSTALL</text>
+      <text x="102" y="60" text-anchor="middle" class="svg-mono" fill="#6b6b66">pip install rlat[build]</text>
+      <text x="310" y="44" text-anchor="middle" class="svg-label-bold" fill="#5b6770">BUILD</text>
+      <text x="310" y="60" text-anchor="middle" class="svg-mono" fill="#6b6b66">rlat build / init-project</text>
+      <text x="518" y="44" text-anchor="middle" class="svg-label-bold" fill="#5b6770">QUERY</text>
+      <text x="518" y="60" text-anchor="middle" class="svg-mono" fill="#6b6b66">rlat search</text>
+
+      <line x1="192" y1="49" x2="218" y2="49" stroke="#5b6770" stroke-width="1.5" marker-end="url(#ah)"/>
+      <line x1="400" y1="49" x2="426" y2="49" stroke="#5b6770" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- artifact -->
+      <path d="M270 120 h62 l12 12 v44 h-74 Z" fill="#fdf6ea" stroke="#c89456" stroke-width="1.5"/>
+      <path d="M332 120 v12 h12 Z" fill="#fff" stroke="#c89456" stroke-width="1.5"/>
+      <text x="307" y="152" text-anchor="middle" class="svg-label" fill="#1a1a1a">project</text>
+      <text x="307" y="166" text-anchor="middle" class="svg-mono" fill="#c89456">.rlat</text>
+      <line x1="310" y1="74"  x2="310" y2="116" stroke="#5b6770" stroke-width="1.5" marker-end="url(#ah)"/>
+      <path d="M345 138 C 400 138, 460 110, 500 76" fill="none" stroke="#5b6770" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- prebuilt shortcut -->
+      <rect x="14" y="186" width="210" height="44" rx="4" fill="#fff" stroke="#5b6770" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <text x="119" y="204" text-anchor="middle" class="svg-label-bold" fill="#5b6770">PREBUILT .RLAT</text>
+      <text x="119" y="219" text-anchor="middle" class="svg-label-small">download from HuggingFace</text>
+      <path d="M224 200 C 320 195, 430 150, 488 76" fill="none" stroke="#5b6770"
+            stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ah)"/>
+      <text x="300" y="225" class="svg-label-small">skips install + build</text>
+
+      <!-- refresh loop -->
+      <path d="M470 70 C 430 150, 380 196, 312 196" fill="none" stroke="#3a6b6b"
+            stroke-width="1.5" stroke-dasharray="2 3" marker-end="url(#ahl)"/>
+      <text x="468" y="186" text-anchor="end" class="svg-label-small" fill="#3a6b6b">edit a file &#8594; rlat refresh</text>
+    </svg>
+    <div class="figure-caption">
+      Install once, build a knowledge model from your files, then query it.
+      A prebuilt <code>.rlat</code> skips the first two steps. When source
+      files change, <code>rlat refresh</code> brings the model back in sync.
+    </div>
+  </div>
+
+  <section id="install">
+    <div class="section-num">01 — Install</div>
+    <h2>Install rlat</h2>
+    <p>
+      rlat requires <strong>Python 3.11 or newer</strong>. The base install is
+      small (~250&nbsp;MB) and CPU-only — only the build path needs the heavier
+      machine-learning extras.
+    </p>
+    <pre><code>pip install rlat[build]
+# or, if you're on uv:
+uv pip install 'rlat[build]'</code></pre>
+    <p>
+      The <code>[build]</code> extra pulls in <code>transformers</code>,
+      <code>torch</code>, and <code>onnxscript</code>. Once you have a
+      <code>.rlat</code>, querying it needs only the base install — run
+      <code>pip install rlat</code> (no extras) on another machine and you can
+      search a knowledge model someone else built.
+    </p>
+    <div class="callout callout-tip">
+      <span class="callout-tag">Tip</span>
+      <p>If you only ever search and never build, use the base install and let
+      someone else build the <code>.rlat</code> for you.</p>
+    </div>
+    <div class="callout callout-tip">
+      <span class="callout-tag">Inputs</span>
+      <p>rlat reads <strong>plain-text files only</strong>: source code
+      (<code>.py</code>, <code>.ts</code>, <code>.go</code>, &hellip;), markup
+      (<code>.md</code>, <code>.rst</code>, <code>.txt</code>,
+      <code>.html</code>, <code>.tex</code>), config (<code>.json</code>,
+      <code>.yaml</code>, <code>.toml</code>, <code>.sql</code>). PDF, DOCX,
+      XLSX are not read &mdash; convert with <code>pandoc</code> or
+      <code>markitdown</code> first.</p>
+    </div>
+  </section>
+
+  <section id="prebuilt">
+    <div class="section-num">02 — Optional shortcut</div>
+    <h2>Try a prebuilt knowledge model</h2>
+    <p>
+      Five prebuilt knowledge models live on HuggingFace, ready to query in
+      seconds — no encoder install, no build step. The remote-mode models pin to
+      their source repository at a commit SHA and fetch source on demand
+      (SHA-verified at query time); the bundled-mode model packs its source
+      inside the archive.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Corpus</th><th>Source</th><th>Files</th><th>Passages</th><th>Filename</th><th>Mode</th></tr></thead>
+      <tbody>
+        <tr><td><code>tenfingers/fabric-docs-rlat</code></td><td>MicrosoftDocs/fabric-docs</td><td>2,435</td><td>67,503</td><td><code>fabric-docs-bundled.rlat</code></td><td>bundled + optimised</td></tr>
+        <tr><td><code>tenfingers/powerbi-developer-rlat</code></td><td>MicrosoftDocs/powerbi-docs</td><td>176</td><td>5,684</td><td><code>powerbi-developer.rlat</code></td><td>remote</td></tr>
+        <tr><td><code>tenfingers/powershell-docs-rlat</code></td><td>MicrosoftDocs/PowerShell-Docs</td><td>2,647</td><td>107,033</td><td><code>powershell-docs.rlat</code></td><td>remote</td></tr>
+        <tr><td><code>tenfingers/python-stdlib-rlat</code></td><td>python/cpython</td><td>617</td><td>49,179</td><td><code>python-stdlib.rlat</code></td><td>remote</td></tr>
+        <tr><td><code>tenfingers/tsql-docs-rlat</code></td><td>MicrosoftDocs/sql-docs</td><td>1,209</td><td>33,282</td><td><code>tsql-docs.rlat</code></td><td>remote</td></tr>
+      </tbody>
+    </table>
+    <pre><code># base install is enough — no [build] extras needed to query
+pip install rlat huggingface_hub
+
+# pick the corpus that fits your work
+hf download tenfingers/python-stdlib-rlat python-stdlib.rlat --local-dir .
+
+# query it — the first hit caches cited source files locally; warm queries are sub-20ms
+rlat search python-stdlib.rlat "asyncio Task cancellation" --top-k 5 --format context</code></pre>
+    <p>
+      All five are encoded with the same <code>gte-modernbert-base</code> 768d
+      recipe, so retrieval quality matches anything you build locally. To index
+      your own project instead, keep reading.
+    </p>
+  </section>
+
+  <section id="encoder">
+    <div class="section-num">03 — One-time setup</div>
+    <h2>Stage the encoder</h2>
+    <p>
+      The first <code>rlat build</code> stages the encoder automatically. To
+      pre-stage it (for offline builds or CI):
+    </p>
+    <pre><code>rlat install-encoder</code></pre>
+    <p>
+      This downloads <code>Alibaba-NLP/gte-modernbert-base</code> from Hugging
+      Face, exports it to ONNX, and — on Intel CPUs — converts it to OpenVINO.
+      The cache lives at <code>~/.cache/rlat/encoders/&lt;revision&gt;/</code>.
+    </p>
+  </section>
+
+  <section id="build">
+    <div class="section-num">04 — Build</div>
+    <h2>Build your first knowledge model</h2>
+    <p>Two ways. Pick one.</p>
+
+    <h3>Option A — <code>rlat init-project</code></h3>
+    <p>Run this in the root of a project that has <code>docs/</code>,
+    <code>src/</code>, or top-level Markdown files:</p>
+    <pre><code>cd my-project/
+rlat init-project</code></pre>
+    <p>
+      It auto-detects sources, builds <code>&lt;cwd-name&gt;.rlat</code> in the
+      current directory, and writes a context primer to
+      <code>.claude/resonance-context.md</code> for AI-assistant integration.
+    </p>
+    <pre><code>[init] detected sources:
+  - docs
+  - src
+  - README.md
+[init] output: my-project.rlat
+[build] 14 files; chunking …
+[build] 39 passages; encoding (runtime=torch, batch=32) …
+[build] wrote my-project.rlat (1.20 MB, 39 passages from 14 files)
+[summary] wrote .claude/resonance-context.md (1856 chars, ~464 tokens)</code></pre>
+
+    <h3>Option B — <code>rlat build</code> (full control)</h3>
+    <pre><code>rlat build ./docs ./src -o my-project.rlat \
+  --store-mode local \
+  --kind corpus</code></pre>
+    <p>
+      There are three storage modes; <code>local</code> is the default. The CLI
+      reference covers the trade-offs.
+    </p>
+    <div class="callout callout-note">
+      <span class="callout-tag">Relative paths</span>
+      <p><code>./docs</code> resolves against your current shell directory &mdash;
+      run this from your project root, or pass absolute paths
+      (<code>rlat build /abs/path/to/docs -o my-project.rlat</code>) to avoid
+      silently indexing the wrong folder. <code>rlat init-project</code> is the
+      safer entrypoint when you're not sure.</p>
+    </div>
+    <div class="callout callout-note">
+      <span class="callout-tag">Big corpus, no local GPU?</span>
+      <p>CPU encoding of <code>gte-modernbert-base</code> runs at ~80–150
+      passages/sec; corpora over ~10K passages take an unpleasant amount of
+      time. Ask Claude Code &ldquo;can we build this on Kaggle?&rdquo; — the
+      <code>rlat-build-on-kaggle</code> skill walks through using a free T4 GPU
+      instead.</p>
+    </div>
+  </section>
+
+  <section id="query">
+    <div class="section-num">05 — Query</div>
+    <h2>Run your first query</h2>
+    <p>The everyday call — output is LLM-ready markdown you pipe into Claude / Cursor / your assistant:</p>
+    <pre><code>rlat search my-project.rlat "how does retrieval work" --format context --top-k 5</code></pre>
+    <pre><code>&lt;!-- rlat-mode: augment --&gt;
+&gt; <strong>Grounding mode: augment.</strong> Use the passages below as primary context …
+
+&lt;!-- docs/architecture.md:84+12 score=0.836 verified --&gt;
+## Indexing
+
+&lt;!-- docs/architecture.md:12+73 score=0.820 verified --&gt;
+This project does dense retrieval with cosine similarity over unit-norm embeddings.
+
+&lt;!-- src/retrieval.py:0+50 score=0.805 verified --&gt;
+def build_index(passages):  return faiss.HNSW(passages)</code></pre>
+    <p>
+      The comment lines are stable citation anchors — your assistant can
+      preserve them in its answer. The <code>rlat-mode</code> directive at the
+      top tells the consumer LLM how to weight the passages
+      (<code>augment</code> / <code>knowledge</code> / <code>constrain</code>).
+    </p>
+    <p>Without <code>--format context</code> you get the plain inspector view:</p>
+    <pre><code>0.836  docs/architecture.md:84+12  [verified]  ## Indexing
+0.820  docs/architecture.md:12+73  [verified]  This project does dense retrieval …
+0.805  src/retrieval.py:0+50       [verified]  def build_index(passages): …</code></pre>
+    <p>
+      Four columns: cosine score, source coordinate, drift status, preview. The
+      status is per passage — if you edit <code>architecture.md</code>, that
+      file's hits show <code>drifted</code> until you run
+      <code>rlat refresh</code>.
+    </p>
+    <p>
+      <code>rlat search</code> retrieves over two layers: the <strong>source
+      layer</strong> (the raw passages from your files) and the
+      <strong>insight layer</strong> (earned, cited summaries — see the
+      <a href="lens.html">Lens</a> page). Every hit is labelled with the layer
+      it came from. To restrict a query to source passages only, pass
+      <code>--source-only</code>; to apply a saved perspective, pass
+      <code>--lens &lt;file&gt;</code>.
+    </p>
+    <p>For machine-readable JSON:</p>
+    <pre><code>rlat search my-project.rlat "..." --format json</code></pre>
+  </section>
+
+  <section id="assistant">
+    <div class="section-num">06 — Hand it to your assistant</div>
+    <h2>Give the corpus to an AI assistant</h2>
+    <p>
+      <code>rlat init-project</code> already wrote
+      <code>.claude/resonance-context.md</code> — a markdown primer with three
+      sections (Landscape / Structure / Evidence) that you paste into your
+      assistant's system prompt. Regenerate it after meaningful corpus changes:
+    </p>
+    <pre><code>rlat summary my-project.rlat -o .claude/resonance-context.md</code></pre>
+  </section>
+
+  <section id="fresh">
+    <div class="section-num">07 — Keep it fresh</div>
+    <h2>Keep the model in sync</h2>
+    <p>
+      When you edit source files, the on-disk content drifts from what was
+      indexed. Four ways to recover:
+    </p>
+    <pre><code># live: a silent watch loop — debounced refresh on every save
+pip install rlat[watch]            # one-time
+rlat watch                         # auto-discovers *.rlat in the current dir
+
+# manual: re-ingest changed files in place (atomic — old archive intact until success)
+rlat refresh my-project.rlat
+
+# query-time guard: return only verified hits
+rlat search my-project.rlat "..." --verified-only
+
+# revisit earned insights whose source drifted — keep or retire each
+rlat reverify my-project.rlat</code></pre>
+    <p>
+      <code>rlat watch</code> runs the same incremental delta-apply as
+      <code>rlat refresh</code>, on a debounce timer triggered by filesystem
+      events. It is silent by default — startup confirms what is being watched,
+      then the loop falls quiet; errors are loud. <code>--once</code> is the CI
+      / pre-commit shape.
+    </p>
+  </section>
+
+  <section id="inspect">
+    <div class="section-num">08 — Inspect &amp; compare</div>
+    <h2>Inspect a knowledge model</h2>
+    <pre><code>rlat profile my-project.rlat              # human-readable summary
+rlat profile my-project.rlat --format json # JSON for scripts / dashboards
+rlat profile big-corpus.rlat --no-drift    # skip the drift walk on huge corpora</code></pre>
+    <h3>Compare two corpora</h3>
+    <pre><code>rlat compare project-old.rlat project-new.rlat</code></pre>
+    <p>
+      Reports <code>centroid_cosine</code> (a single thematic-alignment number)
+      and asymmetric mutual coverage. It always uses the <strong>base
+      band</strong>, so two corpora optimised differently still compare
+      correctly.
+    </p>
+  </section>
+
+  <section id="trouble">
+    <div class="section-num">09 — Troubleshooting</div>
+    <h2>Where things go wrong</h2>
+    <ul class="checklist x">
+      <li><code>rlat: command not found</code> — pip did not put the script on
+      PATH. From a source checkout, run <code>pip install -e .[build]</code>;
+      otherwise check <code>python -m resonance_lattice.cli.app --help</code>.</li>
+      <li><code>error: &lt;path&gt; is not a valid v4.1 knowledge model</code> —
+      the file is corrupted or is not a <code>.rlat</code>. Run
+      <code>file &lt;path&gt;</code> to confirm it is a ZIP archive.</li>
+      <li><code>error: local-mode knowledge model has no recorded
+      source_root</code> — the model was built without recording where its
+      sources came from. Pass <code>--source-root &lt;dir&gt;</code> to override.</li>
+      <li>First query is slow (~1&nbsp;second) — encoder cold-start. Later
+      queries in the same process are sub-20ms warm.</li>
+      <li>A hit shows <code>drifted</code> — the source file changed since
+      build. Run <code>rlat refresh</code>.</li>
+      <li>A hit shows <code>missing</code> — the source file was deleted.
+      <code>rlat refresh</code> rebuilds without it.</li>
+    </ul>
+  </section>
+
+  <section id="next">
+    <h2>What's next</h2>
+    <p>You now have the day-one workflow. From here:</p>
+    <div class="next">
+      <a href="memory.html">
+        <span class="next-label">Next</span><br>
+        <span class="next-title">Memory</span>
+      </a>
+      <a href="lens.html">
+        <span class="next-label">Then</span><br>
+        <span class="next-title">Lens</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-05-16 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

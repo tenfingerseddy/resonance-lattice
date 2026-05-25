@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How it works — Resonance Lattice on Microsoft Fabric</title>
+  <link rel="stylesheet" href="../rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="../index.html"><img src="../assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+    <nav class="site">
+      <a href="../index.html">Home</a>
+      <a href="../getting-started.html">Getting started</a>
+      <a href="../memory.html">Memory</a>
+      <a href="../lens.html">Lens</a>
+      <a href="index.html">Fabric</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="tagline">Resonance Lattice · Microsoft Fabric</div>
+  <h1>How it works (technical)</h1>
+  <p class="lede">
+    A plain-language walk through the mechanism. The point of the page
+    is to make it clear <em>why</em> the design is shaped the way it
+    is — in particular why retrieval happens in three layers and why
+    none of the three layers calls an external service.
+  </p>
+
+  <div class="callout callout-note">
+    <span class="callout-tag">Phase 2 build</span>
+    <p>This page is filled in phase by phase. The "Retrieval inside
+    Fabric" section below is the live content as of phase&nbsp;2; the
+    sections after it land with their phases.</p>
+  </div>
+
+  <h2>What happens when you ask the data agent a question</h2>
+  <p>
+    A user types a question into the Fabric data agent. The agent
+    decides, based on its instructions, that this question is one
+    rlat's knowledge model can answer. Behind the scenes it generates
+    a KQL query that calls <code>rlat_search()</code>, a stored
+    function on the <code>rlat-data-agent</code> KQL database. The
+    function:
+  </p>
+  <ol>
+    <li>Turns the user's question into a 768-dimensional vector
+      (the "<em>embedding</em>") using the same neural network the
+      knowledge model was built with.</li>
+    <li>Runs a cosine-similarity comparison against the
+      <code>passages</code> table — the materialised view holding
+      every passage's pre-computed embedding.</li>
+    <li>Returns the top-k passages along with their source-file
+      citations.</li>
+  </ol>
+  <p>
+    The data agent reads those passages, composes a natural-language
+    answer, and shows them as citations to the user. If no passage
+    is relevant enough (the top score is below a threshold), the
+    agent refuses to answer rather than guess.
+  </p>
+
+  <h2>Retrieval inside Fabric — the sandbox embed</h2>
+  <p>
+    Step 1 above ("turn the question into a vector") is the part of
+    rlat that's hardest to fit into a Fabric-native architecture.
+    Most retrieval systems call an embedding API hosted somewhere
+    else — OpenAI, Azure OpenAI, a self-hosted service — but that
+    means data leaves the tenant and the call adds latency, cost,
+    and a third-party dependency.
+  </p>
+  <p>
+    rlat avoids all three by running the embedding model
+    <em>inside</em> the Fabric Eventhouse, using the Eventhouse's
+    <strong>Python plugin sandbox</strong>. The sandbox is a small
+    Python 3.11 environment that runs as part of a KQL query — same
+    process, same security context, same capacity-billing meter as
+    every other KQL query you run. Nothing leaves the tenant. There
+    is no Azure OpenAI subscription to set up, no embedding-endpoint
+    URL to configure, no second auth surface.
+  </p>
+
+  <h3>What's actually in the sandbox</h3>
+  <p>
+    Five artefacts ship into OneLake the first time you set up rlat
+    in your workspace, at <code>Files/rlat/encoder/</code>:
+  </p>
+  <ul>
+    <li><strong>The encoder weights</strong> — the trained
+      <code>gte-modernbert-base</code> model as an ONNX file
+      (~600 MB across <code>model.onnx</code> + the external-weights
+      sibling <code>model.onnx.data</code>). Same file the local
+      rlat CLI uses, pinned to a specific HuggingFace revision so
+      every workspace gets bit-identical behaviour.</li>
+    <li><strong>The tokenizer config</strong>
+      (<code>tokenizer.json</code>, ~4 MB) — how text gets split
+      into the tokens the model can see.</li>
+    <li><strong>The HuggingFace tokenizers wheel</strong>
+      (<code>tokenizers-0.22.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl</code>,
+      ~3 MB). The Eventhouse Python sandbox image doesn't include this
+      package out of the box; we ship the wheel and install it at
+      query time. The
+      <a href="https://learn.microsoft.com/en-us/kusto/functions-library/slm-embeddings-fl?view=microsoft-fabric"><code>slm_embeddings_fl()</code></a>
+      reference function does the same thing for the smaller e5
+      model — same pattern.</li>
+    <li><strong>A newer ONNX runtime wheel</strong>
+      (<code>onnxruntime-1.20.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl</code>,
+      ~13 MB). The sandbox image ships <code>onnxruntime 1.17.3</code> (Feb
+      2024), which is too old to load IR-10 ONNX models exported by recent
+      PyTorch versions. Shipping a 1.20.1 wheel and importing
+      <code>onnxruntime</code> after the install puts the newer copy
+      first on <code>sys.path</code> for the rest of the query.</li>
+  </ul>
+  <p>
+    OneLake-hosted artefacts in the same tenant bypass the Eventhouse
+    <em>callout policy</em> that ADX requires for arbitrary blob URLs
+    — the OneLake auth + the <code>;impersonate</code> URL suffix is
+    the access check. So there's no extra cluster-admin step to
+    permit the encoder download.
+  </p>
+
+  <h3>What <code>embed_query()</code> does, line by line</h3>
+  <p>
+    The <code>embed_query()</code> function is a tiny KQL wrapper
+    around a <code>python()</code> evaluator. The Python block
+    (running inside the sandbox) does five things:
+  </p>
+  <ol>
+    <li><strong>Install the tokenizers wheel</strong> via
+      <code>sandbox_utils.Zipackage.install(...)</code>. About 1–2
+      seconds. The sandbox caches the wheel content across queries
+      on the same node, so subsequent calls skip the download.</li>
+    <li><strong>Load the tokenizer</strong>
+      (<code>Tokenizer.from_file('tokenizer.json')</code>).</li>
+    <li><strong>Load the ONNX session</strong>
+      (<code>onnxruntime.InferenceSession('model.onnx', providers=['CPUExecutionProvider'])</code>).
+      The data-file sibling resolves automatically by the relative
+      path baked into the .onnx graph.</li>
+    <li><strong>Tokenise the query and run the model</strong>.
+      The output's first token (the <em>CLS</em> position) is the
+      passage-level embedding.</li>
+    <li><strong>L2-normalise</strong> the vector so cosine
+      similarity becomes a plain dot product. Return it as a
+      <code>dynamic</code> column for KQL to join against.</li>
+  </ol>
+
+  <h3>Why the answer is the same as the local rlat CLI</h3>
+  <p>
+    Every step of the sandbox embed mirrors the corresponding step
+    in the local <code>field/encoder.py</code> path that builds the
+    knowledge model. Same ONNX revision; same tokenizer.json; same
+    CLS-pool + L2-normalise. Bit-exactness isn't guaranteed (CPU vs
+    sandbox runtimes may apply different graph fusions), but the
+    <strong>G1 parity gate</strong> is the explicit hard floor: for
+    a fixed set of test strings, cosine(sandbox_vec, local_vec) must
+    be ≥ 0.999. If it's not, the deploy is broken; the deployment
+    thesis doesn't hold; we stop and look at what diverged.
+  </p>
+
+  <h3>Capacity and latency</h3>
+  <p>
+    Measured on the F2 test workspace (one workspace, one cluster), with
+    the live <code>embed_query()</code> function over 10 fixed test strings:
+  </p>
+  <ul>
+    <li><strong>Cold first call</strong> — ~21 s. This includes sandbox
+      spin-up, OneLake artefact fetch (5 files, ~615 MB total), wheel
+      install, tokenizer and ORT session init.</li>
+    <li><strong>Warm calls</strong> — ~13–22 s, mean ~19 s. The sandbox
+      is single-use per query (a new Python process every call), so the
+      ORT session is reloaded each time even though the OneLake artefacts
+      are cached per-node.</li>
+  </ul>
+  <p>
+    These are above the 2–4 s figure originally hoped for. The Phase 6
+    <strong>semantic cache</strong> short-circuits repeated paraphrased
+    questions and mostly moots steady-state latency for the question
+    shapes the data agent actually sees in production. Latency
+    optimisation beyond that is parked for a later phase if measurements
+    on a real-traffic deployment show the cache isn't enough.
+  </p>
+
+  <h2>What <code>rlat_search()</code> does (next phase)</h2>
+  <p class="muted-block">
+    Phase 3 will wrap <code>embed_query()</code> in a full
+    <code>rlat_search(query, lens_id, top_k)</code> stored function:
+    embed → cosine-join against <code>passages.vector</code> → return
+    top-k with citations. This page extends with that detail when the
+    phase lands.
+  </p>
+
+  <h2>The learning layer (later phase)</h2>
+  <p class="muted-block">
+    Phase 6 + Phase 7 add the <em>insight layer</em>: a separate row
+    type in <code>passages</code> holding cached, cited answers
+    generated by a periodic consolidation job from past queries. The
+    data agent searches sources <em>and</em> insights together, so
+    repeated paraphrased questions hit the cache. This page extends
+    with that detail when the phases land.
+  </p>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice on Microsoft Fabric · How it works · current as of build phase P2.</p>
+  </div>
+</footer>
+
+</body>
+</html>

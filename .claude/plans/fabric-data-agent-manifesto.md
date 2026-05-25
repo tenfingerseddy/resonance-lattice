@@ -1,8 +1,13 @@
 # rlat × Fabric Data Agent — Manifesto
 
 **Status**: v1. The thesis, motivations, value claims, scope, and falsifiable claim that constrain every downstream decision.
-**Last updated**: 2026-05-17.
-**Companions**: [fabric-data-agent-architecture.md](fabric-data-agent-architecture.md) (research, locked decisions, mechanism, schemas); [fabric-data-agent-roadmap.md](fabric-data-agent-roadmap.md) (phased build sequence, acceptance gates, open questions).
+**Last updated**: 2026-05-17 (companions list updated 2026-05-24).
+**Companions**:
+- [fabric-data-agent-goal-and-success.md](fabric-data-agent-goal-and-success.md) — the user-observable contract; what done looks like.
+- [fabric-data-agent-architecture.md](fabric-data-agent-architecture.md) — research, locked decisions, mechanism, schemas.
+- [fabric-data-agent-roadmap.md](fabric-data-agent-roadmap.md) — phased build sequence, premise gates, acceptance.
+- [fabric-data-agent-methodology.md](fabric-data-agent-methodology.md) — how the work runs; rigor binding; autonomy boundaries.
+- [fabric-data-agent-research.md](fabric-data-agent-research.md) — append-only research record, populated from Phase −1 onward.
 **Related prior plans**: [fabric-udf-integration.md](fabric-udf-integration.md) (the external-assistant consumer — shipped); [lensed-knowledge-manifesto.md](lensed-knowledge-manifesto.md) (source / insight / lens model); [agent-harness-manifesto.md](agent-harness-manifesto.md) (memory, intent, outcome ledger, closed-loop learning).
 
 ---
@@ -27,7 +32,7 @@ A data agent has a structural blind spot. It only queries **structured rows**. A
 
 rlat is exactly that missing organ. A `.rlat` built over Fabric documentation plus the user's own artifacts (ADRs, notebook code, lakehouse schemas) gives the data agent the ability to answer the *why / how / which-pattern* class of question — with every claim traceable to a source passage.
 
-The obstacle is a format mismatch: a data agent consumes **Fabric data sources** (lakehouse, warehouse, semantic model, KQL database, mirrored database), not a retrieval library. The bridge is a **KQL database / Eventhouse** — the one data-agent source that can natively store vectors and compute similarity in-query.
+The obstacle is a format mismatch: a data agent consumes **Fabric data sources** (lakehouse, warehouse, semantic model, KQL database, **Fabric SQL DB**, mirrored database, AI Search), not a retrieval library. The bridge is a **Fabric SQL DB** — its native `VECTOR(768)` type and `VECTOR_DISTANCE` function provide in-query cosine search; a T-SQL stored procedure calls the existing Fabric UDF (which holds gte-modernbert warm) to embed the query at sub-second latency via `sp_invoke_external_rest_endpoint`. The Eventhouse KQL database is retained for the learning loop's memory events and Activator wiring. *(Revised 2026-05-25 — see `fabric-data-agent-architecture.md` Amendment.)*
 
 And the same bridge does not have to be single-purpose. The `.rlat` that backs the data agent is the same artifact that the shipped Fabric UDF integration ([fabric-udf-integration.md](fabric-udf-integration.md)) exposes to external LLM assistants (Claude Code, Cursor). One knowledge model, two consumer surfaces.
 
@@ -39,7 +44,7 @@ This plan is a direct expression of the three [CLAUDE.md](../../CLAUDE.md) North
 
 | Principle | How this plan embodies it |
 |---|---|
-| **1 — Target: maximum value, minimum effort. No required external services.** | The design uses **zero external services**. The query encoder (gte-modernbert) runs locally inside the Eventhouse Python sandbox. No Azure OpenAI deployment, no API keys, no third-party vector database. Data never leaves the tenant. |
+| **1 — Target: maximum value, minimum effort. No required external services.** | The design uses **zero external services**. The query encoder (gte-modernbert) runs locally inside the Fabric UDF (warm in-tenant process; called from a T-SQL stored procedure via `sp_invoke_external_rest_endpoint`). No Azure OpenAI deployment, no API keys, no third-party vector database. Data never leaves the tenant. The same UDF process serves the data agent (indirectly via SQL DB) AND external assistants directly, so encoder parity is mechanical. *(Revised 2026-05-25.)* |
 | **2 — Engine: continuous self-improvement.** | The learning loop — query log → distillation → earned insight layer — is the closed-loop learning engine, deployed onto Fabric primitives (Eventhouse, Activator, notebooks). |
 | **3 — Structure: context × tools.** | Context = the source / insight / lens layers of a `.rlat`. Tools = the Fabric data agent and external LLM assistants that leverage it. The product wins on the intersection: grounded retrieval that compounds. |
 
@@ -73,7 +78,7 @@ Claims are tiered by what evidence currently supports them. This discipline is d
 ### Tier 2 — claimable as a capability, never quantified yet
 
 - **Closed-loop learning.** The query-log → distillation → insight-layer pipeline is real. The *magnitude* of improvement is benchmark-gated (see Falsifiable claim).
-- **Per-team perspective (lens).** Trust weights and per-team re-ranking are real features. Portability and composition claims are gated on the lensed-knowledge benchmarks.
+- **Per-team perspective (lens).** Trust weights and per-team re-ranking are real features. Portability and composition claims are gated on the lensed-knowledge benchmarks. **DEFERRED to v2** per Goal & Success grilling outcome 2026-05-24; the architecture's `lens_id` parameter stays in place so v2 plugs in mechanically.
 - **Knowledge-gap dashboard.** Frequent query + uniformly weak retrieval = a documented blind spot. True by construction.
 - **Semantic cache.** Repeated questions return faster and *consistently*.
 

@@ -48,6 +48,7 @@ SUITES: dict[str, str] = {
     "doc_examples": "tests.harness.doc_examples",
     "memory_cycle": "tests.harness.memory_cycle",
     "encoder_determinism": "tests.harness.encoder_determinism",
+    "encoder_ragged_batch": "tests.harness.encoder_ragged_batch",
     "optimise_roundtrip": "tests.harness.optimise_roundtrip",
     "band_parity": "tests.harness.band_parity",
     "runtime_parity": "tests.harness.runtime_parity",
@@ -118,7 +119,8 @@ def select(changed: Iterable[str]) -> set[str]:
     for path in changed:
         p = path.replace("\\", "/")
         if p.startswith("src/resonance_lattice/field/") or p.startswith("src/resonance_lattice/install/"):
-            suites |= {"parity", "encoder_determinism", "runtime_parity", "property"}
+            suites |= {"parity", "encoder_determinism", "encoder_ragged_batch",
+                       "runtime_parity", "property"}
         if p.startswith("src/resonance_lattice/store/"):
             # store/incremental.py is the re-projection home for refresh +
             # sync, so any store/* change must exercise optimised_reproject

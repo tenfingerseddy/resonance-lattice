@@ -9,7 +9,7 @@ See `.claude/plans/base-first-rebuild.md` for the technical spec and
 `.claude/plans/yes-i-want-to-glowing-lynx.md` for the process plan.
 """
 
-__version__ = "2.1.0a13"
+__version__ = "2.1.0a15"
 
 # The public Python flow for v2.0 is `archive.read(path)` + `open_store(...)`;
 # RQL ops compose on top. See `docs/internal/RQL.md`. The `build.*` symbols

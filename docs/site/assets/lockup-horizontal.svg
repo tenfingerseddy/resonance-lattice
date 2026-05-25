@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="160" viewBox="0 0 320 80" role="img" aria-label="Resonance Lattice — horizontal lockup">
+  <rect width="320" height="80" fill="#FFFFFF"></rect>
+  <g transform="translate(8 8)">
+    <g stroke="#0E1116" stroke-width="2.2" stroke-linecap="round" fill="none">
+      <path d="M10 20 Q21 12, 32 20 T54 20"></path>
+      <path d="M10 32 Q21 26, 32 32 T54 32" opacity="0.72"></path>
+      <path d="M10 44 Q21 40, 32 44 T54 44" opacity="0.45"></path>
+    </g>
+    <circle cx="32" cy="20" r="2.6" fill="#E89B3C"></circle>
+  </g>
+  <g font-family="Inter Tight, Inter, system-ui, sans-serif" fill="#0E1116">
+    <text x="86" y="42" font-size="22" font-weight="500" letter-spacing="-0.5">Resonance <tspan font-weight="400" fill="#6B6A63">Lattice</tspan></text>
+    <text x="86" y="60" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.6" fill="#6B6A63">BEYOND SEARCH</text>
+  </g>
+</svg>

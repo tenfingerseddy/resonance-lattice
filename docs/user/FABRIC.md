@@ -57,7 +57,7 @@ Open the item, then **Manage Connections → add Lakehouse**. Pick the lakehouse
 
 ## 3. Add the `rlat` library and publish the code
 
-Still on the UDF item: **Library Management → Public libraries → Add from PyPI**, search for `rlat`, install at workspace scope. Pin a version (`==2.1.0a13` or whatever's current).
+Still on the UDF item: **Library Management → Public libraries → Add from PyPI**, search for `rlat`, install at workspace scope. Pin a version (`==2.1.0a15` or whatever's current).
 
 Then publish the code from this repo's [`fabric/udf/`](../../fabric/udf/) directory. The simplest path: open `fabric/udf/` in VS Code with the Microsoft Fabric extension, sign in, map to your UDF item, and Publish. The directory holds:
 
@@ -146,9 +146,11 @@ Token cache name: `rlat-fabric`. Scope: `https://analysis.windows.net/powerbi/ap
 
 ## Encoder distribution
 
-Each `.rlat` records the encoder revision (HuggingFace commit SHA) it was built with. At UDF cold-start, the runtime reads that revision from the `.rlat` metadata and downloads the matching ONNX cache from `tenfingers/rlat-gte-modernbert-base-onnx`, revision-pinned. No per-workspace encoder upload.
+Each `.rlat` records the encoder revision (HuggingFace commit SHA) it was built with. At UDF cold-start, the runtime reads that revision from the `.rlat` metadata and tries to seed the encoder cache from OneLake (`Files/.rlat-cache/rlat/encoders/<revision>/`); if OneLake doesn't have it, the runtime downloads from HuggingFace at `tenfingers/rlat-gte-modernbert-base-onnx` and then mirrors the populated cache back to OneLake so subsequent cold-starts pay only the intra-tenant download (~5s vs ~20s from HuggingFace).
 
-If your tenant blocks egress to huggingface.co, set `RLAT_FABRIC_ENCODER_SOURCE=onelake` on the UDF environment and stage the encoder cache to `Files/rlat-encoders/<revision>.tar.zst` instead.
+The cache is self-healing across consumer surfaces. The build notebook writes to the same OneLake path via `XDG_CACHE_HOME=/lakehouse/default/Files/.rlat-cache` (per `scripts/build_fabric_build.py`). Either the UDF or the build notebook populates the cache on first use; the other benefits from it. Neither depends on the other running first.
+
+If your tenant blocks egress to huggingface.co, the first-ever cold-start fails until someone with HF egress (e.g. local dev machine running `rlat install-encoder`, then a sync script that uploads to `Files/.rlat-cache/rlat/encoders/<revision>/`) seeds the OneLake cache. After that, every cold-start uses OneLake only.
 
 ## What's server-side vs client-side
 
