@@ -15,10 +15,12 @@
   <nav class="site">
       <a href="index.html" aria-current="page">Home</a>
       <a href="explainer.html">What is rlat?</a>
+      <a href="why-rlat.html">Why rlat?</a>
       <a href="self-improvement.html">Self-improvement</a>
       <a href="getting-started.html">Getting started</a>
       <a href="core-features.html">Core features</a>
       <a href="claim-system.html">Claims</a>
+      <a href="memory.html">Memory</a>
       <a href="encoder.html">Encoder</a>
       <a href="storage-modes.html">Storage modes</a>
       <a href="cli.html">CLI</a>
@@ -36,13 +38,17 @@
   <div class="tagline">Resonance Lattice · Docs</div>
   <h1>rlat documentation</h1>
   <p class="lede">
-    rlat builds a <em>knowledge model</em> from your files — one portable
-    <code>.rlat</code> file that knows its own world. It carries your documents,
-    plus what has been learned about the world they cover — stable facts,
-    standing rules, what was tried and failed — with a receipt for every claim.
-    An AI assistant searches it, cites it, and grounds its answers in it.
-    Proven in three unrelated worlds: a Microsoft Fabric tenant, a garden, a
-    law practice.
+    Your AI assistant is brilliant about the world in general — and
+    confidently wrong about yours. rlat builds a <em>knowledge model</em>
+    from your files: one portable <code>.rlat</code> that knows its own
+    world, so the assistant answers from it — grounded, cited, no invented
+    sources. Same model, same questions: hallucination fell
+    <strong>19.6% → 0%</strong> while accuracy rose
+    <strong>56.9% → 92.2%</strong>
+    (<a href="benchmarks.html#hallucination">measured</a>). The file also
+    carries what has been learned about the world your documents cover —
+    stable facts, standing rules, what was tried and failed — with a
+    receipt for every claim.
   </p>
   <ul class="checklist">
     <li><strong>Learned knowledge that provably changes answers</strong> —
@@ -75,6 +81,10 @@
       <div class="toc-title">What is rlat?</div>
       <div class="toc-desc">The whole idea in plain language — what it is, why it helps, and how it works. No jargon, no setup. Start here if you've never used it.</div>
     </a>
+    <a class="toc-card" href="why-rlat.html">
+      <div class="toc-title">Why rlat?</div>
+      <div class="toc-desc">The measured case against the alternatives — LLM alone, file tools, vector DBs, pasting docs — and the honest list of when not to use it.</div>
+    </a>
     <a class="toc-card" href="getting-started.html">
       <div class="toc-title">Getting started</div>
       <div class="toc-desc">Install rlat, build your first knowledge model, run your first query — in about fifteen minutes.</div>
@@ -94,6 +104,10 @@
     <a class="toc-card" href="claim-system.html">
       <div class="toc-title">Claims</div>
       <div class="toc-desc">One earned record from two sources — the assistant's sessions and your documents. How claims are earned, trusted, retrieved, and forgotten.</div>
+    </a>
+    <a class="toc-card" href="memory.html">
+      <div class="toc-title">Memory &amp; sessions</div>
+      <div class="toc-desc">Recall at the prompt, capture at session end, zero labour. Hooks, the recall daemon, privacy, and the full command table — one subcommand of seventeen needs a key.</div>
     </a>
     <a class="toc-card" href="encoder.html">
       <div class="toc-title">Encoder</div>
@@ -145,7 +159,7 @@
 
 <footer class="site">
   <div class="bar">
-    <p>Resonance Lattice documentation · current as of 2026-06-11.</p>
+    <p>Resonance Lattice documentation · current as of 2026-06-12.</p>
   </div>
 </footer>
 

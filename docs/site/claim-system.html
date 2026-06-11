@@ -15,10 +15,12 @@
   <nav class="site">
       <a href="index.html">Home</a>
       <a href="explainer.html">What is rlat?</a>
+      <a href="why-rlat.html">Why rlat?</a>
       <a href="self-improvement.html">Self-improvement</a>
       <a href="getting-started.html">Getting started</a>
       <a href="core-features.html">Core features</a>
       <a href="claim-system.html" aria-current="page">Claims</a>
+      <a href="memory.html">Memory</a>
       <a href="encoder.html">Encoder</a>
       <a href="storage-modes.html">Storage modes</a>
       <a href="cli.html">CLI</a>
@@ -274,7 +276,11 @@
     </p>
     <p>
       Mining is off until you opt in — <code>rlat memory install-hooks
-      --mine</code> turns it on (it sets <code>RLAT_MINE_ATTRIBUTES=1</code>).
+      --mine</code> turns it on (it sets <code>RLAT_MINE_ATTRIBUTES=1</code>;
+      needs an <a href="api-keys.html">API key</a>). Prefer no key? The
+      <code>rlat-learn</code> skill does the same job on your Claude
+      subscription — same four gates, and you approve every fact before it
+      lands (<a href="skills.html">Skills</a>).
       When a session yields facts, the session receipt says so:
     </p>
     <pre><code>[rlat] Learned 2 world fact(s) into km.rlat (review: rlat lens / rlat profile)</code></pre>
@@ -451,9 +457,10 @@ rlat capture-attribute km.rlat "The workspace runs an F64 capacity." --kind attr
       </div>
     </div>
     <p>
-      Every step here — capture, calibration, drift checks, and forgetting
-      — runs by itself on session-end hooks and a session-end
-      consolidation pass. You do not invoke them.
+      Capture and recall run by themselves on session hooks; drift checks
+      run when sources change. The consolidation pass — confidence raise,
+      then forget — is one mechanical command, <code>rlat memory
+      consolidate</code>, safe to run any time.
     </p>
     <div class="pullquote">
       After six months you have a tighter claim store, not a bigger one.
@@ -614,8 +621,9 @@ rlat capture-attribute km.rlat "The workspace runs an F64 capacity." --kind attr
       </tbody>
     </table>
     <p>
-      <code>rlat memory consolidate</code> exists too, but it runs on its
-      own at session end — you rarely call it yourself.
+      <code>rlat memory consolidate</code> runs the housekeeping pass —
+      confidence raise, then forget. Fully mechanical, no key; the full
+      table is on the <a href="memory.html">Memory &amp; sessions</a> page.
     </p>
 
     <h3>Corpus claims and lenses</h3>
@@ -652,7 +660,7 @@ rlat capture-attribute km.rlat "The workspace runs an F64 capacity." --kind attr
 
 <footer class="site">
   <div class="bar">
-    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <p>Resonance Lattice documentation · current as of 2026-06-12 ·
     <a href="index.html">all docs</a>.</p>
   </div>
 </footer>

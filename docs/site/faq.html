@@ -15,10 +15,12 @@
   <nav class="site">
       <a href="index.html">Home</a>
       <a href="explainer.html">What is rlat?</a>
+      <a href="why-rlat.html">Why rlat?</a>
       <a href="self-improvement.html">Self-improvement</a>
       <a href="getting-started.html">Getting started</a>
       <a href="core-features.html">Core features</a>
       <a href="claim-system.html">Claims</a>
+      <a href="memory.html">Memory</a>
       <a href="encoder.html">Encoder</a>
       <a href="storage-modes.html">Storage modes</a>
       <a href="cli.html">CLI</a>
@@ -95,7 +97,10 @@
       habits) are dropped. The gate is prompt-level, validated rather than
       architecturally guaranteed: zero person facts landed across every trap
       in the pre-registered bench
-      (<a href="benchmarks.html#e2c-capture-gate">E2c</a>). You can also
+      (<a href="benchmarks.html#e2c-capture-gate">E2c</a>). No API key
+      needed: the <code>rlat-learn</code> skill runs the same capture on
+      your Claude subscription, with you approving every fact — the
+      background hook (key required) is for unattended capture. You can also
       record a fact deliberately with <code>rlat capture-attribute my.rlat
       "..." --kind attribute|constraint|falsified</code> (or auto-probe with
       <code>rlat capture-env</code>), and review or remove what has landed
@@ -371,22 +376,34 @@ for hit in report.hits:
       workspace, capture-env, capture-attribute, consolidate-insights — is offline
       and LLM-free.
     </p>
-    <p>An Anthropic API key is needed for:</p>
+    <p>An Anthropic API key is needed only for the unattended LLM verbs:</p>
     <ul class="checklist">
       <li><code>rlat deep-search</code> — the multi-hop research loop.</li>
+      <li><code>rlat grow</code> — the opt-in self-improvement pass that
+      authors gap fills (<code>--dry-run</code> is free).</li>
       <li><code>rlat reverify</code> — re-checks insights whose source drifted.</li>
       <li><code>rlat probe</code> — the idle-cycle self-probe of weak-zone queries.</li>
-      <li>The LLM-driven memory subcommands — <code>rlat memory verify</code> and
-      <code>rlat memory consolidate</code>. The rest of <code>rlat memory</code>
-      (add, list, recall, corroborate, feedback, gc) needs no key.</li>
+      <li><code>rlat memory verify</code> — the one LLM-driven memory
+      subcommand. The other sixteen — including <code>consolidate</code>
+      (fully mechanical), <code>add</code>, <code>recall</code>,
+      <code>capture</code>, <code>corroborate</code>, <code>feedback</code>,
+      <code>gc</code>, <code>install-hooks</code> — need no key.</li>
+      <li>The opt-in background capture hooks
+      (<code>rlat memory install-hooks --mine</code> /
+      <code>RLAT_ATOMIC_CAPTURE=1</code>) — they fail open and stay silent
+      without a key.</li>
     </ul>
     <div class="callout callout-tip">
       <span class="callout-tag">Tip</span>
-      <p>In a Claude Code session, the <code>deep-research</code> skill runs the
-      same multi-hop loop as <code>rlat deep-search</code> with no API key —
-      your Claude subscription covers the LLM hops. See the
-      <a href="api-keys.html">API keys</a> page for when each surface is the
-      right pick.</p>
+      <p>Every one of those loops also runs free on your Claude
+      subscription, in-session: the <code>deep-research</code> skill is the
+      no-key <code>deep-search</code>; the <code>rlat-learn</code> skill is
+      the no-key capture path (you approve every fact); the four curation
+      skills (<code>rlat-gap-scan</code>, <code>rlat-contradictions</code>,
+      <code>rlat-refresh-facts</code>, <code>rlat-curate</code>) are the
+      no-key <code>grow</code>. The key is for <em>unattended</em> runs —
+      automation and CI. See the <a href="api-keys.html">API keys</a> page
+      for the full two-ways table.</p>
     </div>
     <p>
       API key discovery order: <code>RLAT_LLM_API_KEY_ENV</code> (an indirection
@@ -476,7 +493,7 @@ for hit in report.hits:
 
 <footer class="site">
   <div class="bar">
-    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <p>Resonance Lattice documentation · current as of 2026-06-12 ·
     <a href="index.html">all docs</a>.</p>
   </div>
 </footer>

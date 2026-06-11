@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Why rlat? — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="why-rlat.html" aria-current="page">Why rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="memory.html">Memory</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>Why rlat?</h1>
+  <p class="lede">
+    You already have an LLM, file tools, vector databases, and a context
+    window you could paste documents into. This page is the measured case
+    for using rlat instead — and the honest list of cases where you
+    shouldn't. Every number below comes from a published benchmark with a
+    committed test set; each one links to its section on the
+    <a href="benchmarks.html">benchmarks page</a>.
+  </p>
+
+  <section id="case">
+    <div class="section-num">01 — The case in one paragraph</div>
+    <h2>What you're choosing between</h2>
+    <p>
+      An AI assistant answering questions about <em>your</em> corpus has
+      four options today: trust its training data, dig through files with
+      grep-style tools, bolt on a vector database, or paste the documents
+      into context. rlat is the fifth: build the corpus into a single
+      <code>.rlat</code> file once, and the assistant gets grounded,
+      cited answers in milliseconds for tenths of a cent — plus three
+      things none of the alternatives have at all: standing knowledge of
+      your world's rules and dead ends, a memory that survives sessions,
+      and a self-improvement loop with published evidence.
+    </p>
+  </section>
+
+  <section id="vs-llm">
+    <div class="section-num">02 — vs the LLM alone</div>
+    <h2>Training data is where hallucinations live</h2>
+    <p>
+      On a Microsoft Fabric documentation corpus — a domain the LLM
+      <em>partially</em> knows, the most dangerous kind — Sonnet alone
+      answered 63 hand-written questions at <strong>56.9% accuracy with
+      19.6% hallucination</strong>, and invented an answer for half the
+      product names that don't exist. The same model with rlat in the
+      loop:
+    </p>
+    <table class="compact">
+      <thead><tr><th>Lane</th><th>Accuracy</th><th>Hallucination</th><th>$ / question</th></tr></thead>
+      <tbody>
+        <tr><td>Sonnet alone</td><td>56.9%</td><td>19.6%</td><td>$0.002</td></tr>
+        <tr><td>+ <code>rlat search</code> (one shot)</td><td><strong>76.5%</strong></td><td>3.9%</td><td>$0.004</td></tr>
+        <tr><td>+ <code>rlat deep-search --mode knowledge</code></td><td><strong>92.2%</strong></td><td><strong>0.0%</strong></td><td>$0.009</td></tr>
+      </tbody>
+    </table>
+    <p>
+      One retrieval call adds ~20 points of accuracy at 5× lower
+      hallucination; the multi-hop loop takes hallucination to zero on
+      answerable questions. For compliance work, single-shot
+      <code>--mode constrain</code> is the floor: 2.0% hallucination and
+      a 91.7% refusal rate on made-up product names — it invents nothing
+      11 times out of 12. Full matrix:
+      <a href="benchmarks.html#hallucination">hallucination reduction</a>.
+    </p>
+  </section>
+
+  <section id="vs-grep">
+    <div class="section-num">03 — vs file tools</div>
+    <h2>The grep loop is good. It's also 6.5× the price.</h2>
+    <p>
+      The strongest alternative is a real one: an agent with grep, glob,
+      and read-file tools digging through the corpus. On the Fabric bench
+      it scored <strong>94.1%</strong> — two points above deep-search's
+      92.2% — at <strong>$0.060 per question against $0.009</strong>,
+      slower wall-time, and it was fooled by half again as many fake
+      product names (25.0% vs 16.7% distractor hallucination). Within
+      noise of each other on accuracy; 6.5× apart on spend.
+    </p>
+    <p>
+      And here is the honest other half. On a second benchmark — a
+      hand-written code corpus the LLM had <em>zero</em> prior knowledge
+      of — the grep loop beat single-shot rlat on accuracy outright
+      (85% vs 35%): questions needing cross-file synthesis reward a tool
+      that can keep digging. rlat was still <strong>3.7× cheaper per
+      correct answer</strong> ($0.012 vs $0.044), but if your workload is
+      deep code navigation and thoroughness beats cost, use the file
+      tools — we publish the number that says so
+      (<a href="benchmarks.html#token-spend">token spend</a>).
+    </p>
+    <p>
+      The split, in one rule: <strong>volume and repetition favour rlat;
+      one-off forensic digs favour the agent loop.</strong> An assistant
+      answering corpus questions all day at $0.060 each is a bill; at
+      $0.009 it's a rounding error.
+    </p>
+  </section>
+
+  <section id="vs-vectordb">
+    <div class="section-num">04 — vs a vector database</div>
+    <h2>A database is a part. rlat is the whole.</h2>
+    <p>
+      Measured against Chroma's out-of-box defaults on the same 1,000-passage
+      corpus, same CPU: rlat answers warm queries at <strong>17 ms p50
+      against 145 ms — 8.5× faster</strong> — and the result on disk is
+      <strong>2.7 MB against 8.6 MB</strong>. Chroma does build faster (a
+      lighter embedder), then pays it back 8× on every query; build happens
+      once, queries happen millions of times
+      (<a href="benchmarks.html#speed">build &amp; query speed</a>).
+    </p>
+    <p>
+      But the speed row understates the difference, because a vector DB
+      is infrastructure you assemble: you choose the embedder, write the
+      chunker, run the service, and what you get back is passages. A
+      <code>.rlat</code> is the assembled thing — encoder pinned and
+      benchmarked (BEIR-5 floor <a href="benchmarks.html#retrieval-quality">published</a>),
+      chunking built in, zero services, one portable file you can commit,
+      copy, or hand to a teammate. And it holds what a DB has no column
+      for: cited claims, standing constraints, falsified findings, and
+      drift tracking back to source files.
+    </p>
+  </section>
+
+  <section id="vs-paste">
+    <div class="section-num">05 — vs pasting docs into context</div>
+    <h2>The most expensive option is the default one</h2>
+    <p>
+      Dumping the whole corpus into the context window every question
+      cost <strong>$0.796 per correct answer</strong> on the code-corpus
+      bench — 264,331 tokens a question — and scored <em>worse</em> than
+      the grep agent (70% vs 85%): models lose facts in the middle of a
+      giant paste. rlat's retrieved slice cost <strong>$0.012 per correct
+      answer — 67× cheaper</strong>
+      (<a href="benchmarks.html#token-spend">token spend</a>). Pasting
+      re-buys the same tokens every single question; a knowledge model
+      pays for the corpus once, at build time.
+    </p>
+  </section>
+
+  <section id="only-rlat">
+    <div class="section-num">06 — What has no alternative</div>
+    <h2>The part you can't assemble from parts</h2>
+    <p>
+      Retrieval is the comparable half of rlat. The other half doesn't
+      have a competitor row, because the alternatives don't attempt it:
+    </p>
+    <ul class="checklist">
+      <li><strong>Your world's standing rules, always served.</strong>
+      Facts no document states — "this tenant is EU-only" — captured and
+      injected on every relevant answer. Measured: rule-violating answers
+      fell <strong>62% → 7%</strong>, replicated across three unrelated
+      domains (<a href="benchmarks.html#r1-constraints">R1 / R1-X</a>).</li>
+      <li><strong>Your dead ends, never re-recommended.</strong> Approaches
+      tried and falsified in your environment serve under their verdict:
+      re-recommendations fell <strong>7 of 7 → 0 of 7</strong>
+      (<a href="benchmarks.html#r2-falsification-ledger">R2</a>).</li>
+      <li><strong>A memory that survives the session</strong> — recall at
+      the prompt, capture at session end, zero labour
+      (<a href="memory.html">Memory &amp; sessions</a>).</li>
+      <li><strong>Published failures, not just wins.</strong> The
+      self-cleaning rule we wanted didn't pass its safety bar, so it
+      didn't ship — and the full record is public
+      (<a href="benchmarks.html#r4-suppression">R4</a>). That is the
+      standard the numbers above are held to.</li>
+    </ul>
+  </section>
+
+  <section id="when-not">
+    <div class="section-num">07 — When NOT rlat</div>
+    <h2>The honest list</h2>
+    <ul class="checklist">
+      <li><strong>One question, small corpus</strong> — if the documents
+      fit comfortably in context and you'll ask once, paste them. Build
+      cost only pays off on repetition.</li>
+      <li><strong>Deep code navigation</strong> — for cross-file forensic
+      work where thoroughness beats cost, the grep/read agent loop
+      measured more complete. Use both: rlat to orient, tools to dig.</li>
+      <li><strong>Exact-string lookup</strong> — if you know the literal
+      string, ripgrep finds it faster than any semantic layer.</li>
+      <li><strong>General world knowledge</strong> — questions with no
+      private corpus behind them are what the LLM alone is for.</li>
+    </ul>
+  </section>
+
+  <section id="cost-to-try">
+    <div class="section-num">08 — The cost of finding out</div>
+    <h2>One pip install, no API key</h2>
+    <p>
+      <code>pip install rlat</code>, build a knowledge model from a folder,
+      query it — all free and local. The LLM-driven loops (deep research,
+      curation, capture) run as skills on the Claude subscription you
+      already have; an API key is only for unattended automation
+      (<a href="api-keys.html">API keys</a>). First build to first
+      grounded answer is a 15-minute path:
+      <a href="getting-started.html">getting started</a>.
+    </p>
+  </section>
+
+  <section id="next">
+    <h2>Where to go next</h2>
+    <div class="next">
+      <a href="benchmarks.html">
+        <span class="next-label">Receipts</span><br>
+        <span class="next-title">Benchmarks</span>
+      </a>
+      <a href="getting-started.html">
+        <span class="next-label">Try it</span><br>
+        <span class="next-title">Getting started</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-12 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

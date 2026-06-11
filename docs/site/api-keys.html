@@ -15,10 +15,12 @@
   <nav class="site">
       <a href="index.html">Home</a>
       <a href="explainer.html">What is rlat?</a>
+      <a href="why-rlat.html">Why rlat?</a>
       <a href="self-improvement.html">Self-improvement</a>
       <a href="getting-started.html">Getting started</a>
       <a href="core-features.html">Core features</a>
       <a href="claim-system.html">Claims</a>
+      <a href="memory.html">Memory</a>
       <a href="encoder.html">Encoder</a>
       <a href="storage-modes.html">Storage modes</a>
       <a href="cli.html">CLI</a>
@@ -110,34 +112,60 @@
 
   <section id="free-alternatives">
     <div class="section-num">02 — The free path</div>
-    <h2>Free alternatives</h2>
+    <h2>Every loop runs two ways</h2>
     <p>
-      If you do not have an API key, there are three free ways to get
-      <code>rlat deep-search</code>'s value:
+      Each LLM-driven loop ships with a bundled Claude Code skill that runs
+      it on the subscription you already have — no key, nothing metered.
+      The skill path has two real advantages: it runs on <em>your
+      assistant's own model</em> (typically a stronger model than a budget
+      API call), and it keeps you in the loop — the skills confirm with you
+      before anything lands in the file. The API path wins when you want
+      the loop <em>unattended</em>: automation, CI, scheduled runs — and
+      it is cheap there (<code>rlat deep-search</code> ≈ $0.009/question).
     </p>
-    <ul class="checklist">
-      <li>
-        <strong>The <code>deep-research</code> skill</strong> — drives
-        the same loop natively in your Claude Code session. Same prompts,
-        same hop budget, same name-verification check, same output
-        shape. It pays nothing on top of your existing Claude
-        subscription. <strong>This is what most users should use.</strong>
-      </li>
-      <li>
-        <strong>Single-shot <code>rlat search --format context</code></strong>
-        — one-shot retrieval, zero LLM cost. The
-        <a href="benchmarks.html#hallucination">benchmark</a> shows 76.5%
-        answerable accuracy at 3.9% hallucination on the Microsoft Fabric
-        corpus, versus 92.2% / 0% for the deep loop — single-shot is
-        enough for the majority of factual lookups.
-      </li>
-      <li>
-        <strong>Manual research with <code>rlat search</code> plus your
-        existing Claude session</strong> — Claude reads passages, decides
-        what to search next, and synthesises. The same loop the skill
-        formalises, just more freeform.
-      </li>
-    </ul>
+    <table class="compact">
+      <thead>
+        <tr><th>The loop</th><th>Free, on your subscription</th><th>Unattended, with a key</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Deep research over a knowledge model</td>
+          <td><strong><code>deep-research</code> skill</strong> — the same loop (same prompts, hop budget, name-verification, output shape), driven in-session. What most users should use.</td>
+          <td><code>rlat deep-search</code></td>
+        </tr>
+        <tr>
+          <td>Teach the file your world (capture)</td>
+          <td><strong><code>rlat-learn</code> skill</strong> — say "remember this"; the assistant applies the same four capture gates (including the privacy gate), you approve every fact, and it lands via the key-free <code>rlat capture-attribute</code>.</td>
+          <td>The background hook (<code>rlat memory install-hooks --mine</code>) mines facts at session end, unattended.</td>
+        </tr>
+        <tr>
+          <td>Curate and grow the corpus</td>
+          <td><strong>Four skills</strong> — <code>rlat-gap-scan</code>, <code>rlat-contradictions</code>, <code>rlat-refresh-facts</code>, <code>rlat-curate</code> — run the whole detect → judge → fetch → land loop with you as the authority (user-vouched facts seed at the highest trust tier).</td>
+          <td><code>rlat grow</code> authors gap fills unattended, gated on faithfulness.</td>
+        </tr>
+        <tr>
+          <td>Re-check stale or weak spots</td>
+          <td>No dedicated skill — but an assistant session does it directly: read the stale claim and its updated source, judge, then correct via the key-free surfaces.</td>
+          <td><code>rlat reverify</code>, <code>rlat memory verify</code>, <code>rlat probe</code> (idle-cycle — unattended by nature).</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      One more zero-LLM option covers most factual lookups outright:
+      single-shot <code>rlat search --format context</code> — the
+      <a href="benchmarks.html#hallucination">benchmark</a> shows 76.5%
+      answerable accuracy at 3.9% hallucination on the Microsoft Fabric
+      corpus, versus 92.2% / 0% for the deep loop.
+    </p>
+    <div class="callout callout-note">
+      <span class="callout-tag">Note</span>
+      <p>The subscription path is not a degraded mode. In this project's own
+      benchmark program the in-session (subscription) judges were the
+      pre-registered primary; the budget API judge was the cross-check —
+      and it was the <em>lenient</em> one on borderline calls (the
+      judge-sensitivity notes on the
+      <a href="benchmarks.html#world-knowledge">benchmarks page</a>).</p>
+    </div>
   </section>
 
   <section id="getting-a-key">

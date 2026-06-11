@@ -100,11 +100,10 @@ INCLUDE=(
     "benchmarks/results/user_bench/token_usage_v2.json"
     "benchmarks/results/optimised/beir_fiqa_probe_v1.json"
     # Receipts the docs-site benchmarks page links directly (retrieval
-    # quality + memory sections).
+    # quality section).
     "benchmarks/results/beir/new_arch/beir5_encoder_comparison_v1.json"
     "benchmarks/results/beir/new_arch/aggregate_5beir_qwen3_8b_v1.json"
     "benchmarks/results/beir/new_arch/v2_floor_gte_mb_base_768d.json"
-    "benchmarks/results/locomo/locomo_v2_retrieval.json"
     "benchmarks/results/longmemeval/longmemeval_v2_retrieval.json"
 
     # ── v3 world-knowledge evidence ("no claim without a public
@@ -118,9 +117,18 @@ INCLUDE=(
     "benchmarks/r4_continuous_credit/"
 
     # ── Ecosystem: Claude skills ───────────────────────────────────
+    # The subscription path: every LLM-driven loop has a skill that
+    # runs free on the user's Claude Code session — deep research,
+    # the curation loop (gap-scan/contradictions/refresh-facts/curate),
+    # and in-session world-fact capture (rlat-learn).
     ".claude/skills/rlat/"
     ".claude/skills/deep-research/"
     ".claude/skills/rlat-build-on-kaggle/"
+    ".claude/skills/rlat-gap-scan/"
+    ".claude/skills/rlat-contradictions/"
+    ".claude/skills/rlat-refresh-facts/"
+    ".claude/skills/rlat-curate/"
+    ".claude/skills/rlat-learn/"
 
     # ── Fabric integration (UDF only) ──────────────────────────────
     # UDF code users publish to their workspace + the user-facing

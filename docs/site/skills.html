@@ -15,10 +15,12 @@
   <nav class="site">
       <a href="index.html">Home</a>
       <a href="explainer.html">What is rlat?</a>
+      <a href="why-rlat.html">Why rlat?</a>
       <a href="self-improvement.html">Self-improvement</a>
       <a href="getting-started.html">Getting started</a>
       <a href="core-features.html">Core features</a>
       <a href="claim-system.html">Claims</a>
+      <a href="memory.html">Memory</a>
       <a href="encoder.html">Encoder</a>
       <a href="storage-modes.html">Storage modes</a>
       <a href="cli.html">CLI</a>
@@ -474,6 +476,11 @@ not invent details.**
           <td>"Curate my knowledge base", "let me review before adding", "I'll provide the source", "human in the loop".</td>
         </tr>
         <tr>
+          <td><code>rlat-learn</code></td>
+          <td>Teaches the knowledge model your world from inside the session — the subscription path to capture. The assistant extracts durable world facts, standing constraints, and tried-and-falsified findings from what <em>you</em> said, applies the same four gates as the background miner (including the privacy gate: facts about the person never land), confirms each with you, then lands them via the key-free <code>rlat capture-attribute</code>.</td>
+          <td>"Remember this", "rlat should know this", "capture that as a constraint", "record that X didn't work", "save what we learned about the project".</td>
+        </tr>
+        <tr>
           <td><code>rlat-board-ops</code></td>
           <td>Modifies the project's GitHub Project board — a maintainer workflow rather than a user-facing retrieval skill.</td>
           <td>Project-board updates.</td>
@@ -483,7 +490,9 @@ not invent details.**
     <p>
       The skills don't overlap: <code>rlat</code> orchestrates
       <strong>CLI workflows</strong>; <code>deep-research</code> orchestrates
-      <strong>the multi-hop research loop in conversation</strong>. A single-hop
+      <strong>the multi-hop research loop in conversation</strong>;
+      <code>rlat-learn</code> owns <strong>in-session capture</strong> (the
+      subscription path to teaching the file its world). A single-hop
       fact question goes to <code>rlat search</code>; a multi-file synthesis
       question goes to <code>deep-research</code>. The CLI verb
       <code>rlat deep-search</code> — the programmatic surface for the same loop,

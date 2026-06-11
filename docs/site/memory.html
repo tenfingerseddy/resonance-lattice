@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Memory &amp; sessions — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="why-rlat.html">Why rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="memory.html" aria-current="page">Memory</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>Memory &amp; sessions</h1>
+  <p class="lede">
+    Most assistants start every session with amnesia: the dead end you hit
+    on Tuesday gets re-recommended on Thursday. rlat wires a memory into
+    the session itself — what the assistant learned surfaces at the next
+    prompt, what happened is captured when the session ends, and none of
+    it asks for your labour. One command turns it on, and only one of its
+    seventeen subcommands ever needs an API key.
+  </p>
+
+  <section id="loop">
+    <div class="section-num">01 — The shape of it</div>
+    <h2>A session with memory on</h2>
+    <p>
+      Three things happen around every session, all of them automatic:
+    </p>
+    <table class="compact">
+      <thead><tr><th>When</th><th>What runs</th><th>What you see</th></tr></thead>
+      <tbody>
+        <tr><td><strong>At each prompt</strong></td><td>The recall hook asks
+        the memory: does anything earned in past sessions bear on this?
+        Relevant claims are injected into the assistant's context — gated,
+        so an irrelevant lesson stays out.</td><td>The assistant already
+        knows the fix that worked and the approach that failed.</td></tr>
+        <tr><td><strong>At session end</strong></td><td>The capture hook
+        reads the transcript, scrubs it for credentials, and lands what
+        happened as experience claims — deduplicated, workspace-scoped,
+        fail-open.</td><td>One receipt line:
+        <code>[rlat] Captured 1 row (0 redactions)</code>.</td></tr>
+        <tr><td><strong>When you run it</strong></td><td>A consolidation
+        pass re-derives each claim's confidence from outcomes, then prunes
+        what stopped earning its place. Fully mechanical — no LLM, no
+        key.</td><td>A tighter store, not a bigger one.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      This page is the operational half: hooks, the recall daemon, the
+      capture pipeline, privacy, and the full command table. The conceptual
+      half — what a claim is, how it earns confidence, how it is retired —
+      is the <a href="claim-system.html">claim system</a> page.
+    </p>
+  </section>
+
+  <section id="setup">
+    <div class="section-num">02 — Setup</div>
+    <h2>One command</h2>
+    <pre><code>rlat memory install-hooks</code></pre>
+    <p>
+      That wires two hooks into the project's Claude Code
+      <code>settings.json</code> (an idempotent merge — safe to re-run,
+      never clobbers what's there):
+    </p>
+    <table class="compact">
+      <thead><tr><th>Hook</th><th>Command</th><th>Job</th></tr></thead>
+      <tbody>
+        <tr><td><code>UserPromptSubmit</code></td><td><code>rlat memory hook</code></td>
+        <td>Recall — inject relevant past claims at the prompt.</td></tr>
+        <tr><td><code>SessionEnd</code></td><td><code>rlat memory capture</code></td>
+        <td>Capture — land what the session learned.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Add <code>--user</code> to install into <code>~/.claude/settings.json</code>
+      instead of the project's. Add <code>--mine</code> to also opt in to
+      world-fact mining (below). Both hooks <strong>fail open</strong>: if
+      memory breaks, your session never does — the hook exits clean and the
+      worst case is a session that simply isn't remembered.
+    </p>
+  </section>
+
+  <section id="recall">
+    <div class="section-num">03 — Recall</div>
+    <h2>Inside the pause</h2>
+    <p>
+      Recall has to fit inside the moment between you pressing enter and
+      the model starting to think — so it can't load an encoder per prompt.
+      A long-lived <strong>recall daemon</strong> holds the encoder and the
+      claim store warm; the hook is a local round-trip to it, not a cold
+      start. The daemon listens on a per-user named pipe (Windows) or Unix
+      socket, guarded by a random key written <code>0600</code> on first
+      boot — on a shared host, nobody else's hook can reach your memory.
+    </p>
+    <pre><code>rlat memory recall --daemon     # boot the warm server
+rlat memory recall "fabric auth"  # one-shot query, no daemon needed
+rlat memory doctor              # one line per check: store, daemon, hooks</code></pre>
+    <p>
+      Injection is gated, not generous. A claim surfaces only when it is
+      relevant to the prompt, eligible for this workspace, and trusted
+      enough to be worth the tokens — the ranking is the claim system's
+      relevance-times-trust ordering. When an injection does fire, you can
+      grade it: <code>rlat memory feedback good</code> (or
+      <code>bad</code>) votes on the most recent one, and the vote feeds
+      the claim's record.
+    </p>
+  </section>
+
+  <section id="capture">
+    <div class="section-num">04 — Capture</div>
+    <h2>Zero-labour, by design</h2>
+    <p>
+      At session end the pipeline runs four steps, none of them yours:
+    </p>
+    <ul class="checklist">
+      <li><strong>Gate</strong> — trivial sessions ("ok", "thanks",
+      "continue") never land. A session must have said something durable
+      to be worth a row.</li>
+      <li><strong>Scrub</strong> — every captured text passes the
+      credential redactor before it touches disk (next section).</li>
+      <li><strong>Dedup</strong> — a lesson the store already holds isn't
+      written twice; the existing claim's recurrence count goes up instead,
+      which is evidence, not noise.</li>
+      <li><strong>Scope</strong> — the claim is tagged with the workspace
+      it was learned in, so one project's lessons don't leak into
+      another's recall.</li>
+    </ul>
+    <p>
+      The default path is fully mechanical — one claim per session, no LLM
+      anywhere. Two opt-in extractors sharpen it, and both fall back to the
+      mechanical path the moment the LLM is unavailable:
+    </p>
+    <ul class="checklist">
+      <li><strong>Atomic capture</strong> (<code>RLAT_ATOMIC_CAPTURE=1</code>)
+      — an LLM splits the session into its specific facts and decisions,
+      one claim each, so the same fact recurring in a future session
+      recognises itself and lifts its trust.</li>
+      <li><strong>World-fact mining</strong> (<code>install-hooks --mine</code>)
+      — a passive miner reads what <em>you</em> said and lands durable
+      world facts into the project's knowledge model, behind four gates
+      measured at 0.86 precision, 1.00 recall, and zero privacy leaks
+      (<a href="benchmarks.html#e2c-capture-gate">E2c</a>). Prefer no API
+      key? The <a href="skills.html">rlat-learn skill</a> does the same
+      job on your Claude subscription, and you approve every fact before
+      it lands.</li>
+    </ul>
+  </section>
+
+  <section id="privacy">
+    <div class="section-num">05 — Privacy</div>
+    <h2>What never lands</h2>
+    <p>
+      Memory lives on your disk, under
+      <code>~/.rlat/memory/&lt;user&gt;/</code> — no service, no telemetry,
+      nothing leaves the machine. Before any text lands there, the
+      redactor strips every credential shape it knows: AWS access keys,
+      Anthropic and OpenAI keys, GitHub tokens (classic and fine-grained),
+      JWTs, PEM private keys, long hex secrets. Files that exist to hold
+      secrets — <code>.env</code>, <code>*.key</code>, <code>*.pem</code>,
+      <code>id_rsa</code>, AWS credential files — are denylisted whole:
+      the capture keeps <em>which</em> file was read, never what was in
+      it. Every redaction is logged to <code>redaction.log</code> so you
+      can audit what was caught.
+    </p>
+    <div class="callout callout-note">
+      <span class="callout-tag">Honest limits</span>
+      <p>The redactor catches credentials, not PII — emails, phone numbers,
+      and names pass through, because mechanical patterns over-flag that
+      kind of text. The mining path adds its own person-fact gate on top
+      (facts about <em>you</em> are dropped entirely; zero leaks across all
+      seven planted traps in <a href="benchmarks.html#e2c-capture-gate">E2c</a>)
+      — but plain session capture has no semantic PII layer today.</p>
+    </div>
+  </section>
+
+  <section id="housekeeping">
+    <div class="section-num">06 — Housekeeping</div>
+    <h2>Forgetting, and the line we won't cross</h2>
+    <p>
+      <code>rlat memory consolidate</code> is the whole maintenance story:
+      it re-derives each claim's confidence from the cumulative outcome
+      ledger, then applies the forget pass — decayed claims, redundant
+      events, stale rows. Protections override drops: a claim you wrote by
+      hand, a recently-corroborated claim, a severe warning, and every
+      falsification record are all held back. Mechanical end to end;
+      <code>--dry-run</code> shows what would change without touching
+      disk.
+    </p>
+    <p>
+      One thing it will <strong>not</strong> do is silently retire a claim
+      because outcomes turned against it. We wanted that — a loop that
+      cleans its own mistakes — and we tested it three ways. All three
+      failed the pre-registered safety bar: every rule that cleared wrong
+      facts also killed true ones. The
+      <a href="benchmarks.html#r4-suppression">full failure record is
+      published</a>, and the boundary it bought is in the product: outcome
+      signals lower a claim's confidence and surface it, but retiring it
+      stays your act, or re-verification's. A memory that quietly deletes
+      true things is worse than one that asks.
+    </p>
+  </section>
+
+  <section id="commands">
+    <div class="section-num">07 — Reference</div>
+    <h2>Seventeen subcommands, one key</h2>
+    <p>
+      Everything under <code>rlat memory</code>, grouped by job. The key
+      column is the whole answer to "what does this cost me": one
+      subcommand calls an LLM, the rest never do.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Command</th><th>What it does</th><th>API key?</th></tr></thead>
+      <tbody>
+        <tr><td colspan="3"><strong>Daily use</strong></td></tr>
+        <tr><td><code>add</code></td><td>Write a claim by hand (<code>--polarity prefer|avoid|factual</code>).</td><td>No</td></tr>
+        <tr><td><code>list</code></td><td>See the store — text or JSON, filterable.</td><td>No</td></tr>
+        <tr><td><code>recall</code></td><td>Query the memory; <code>--daemon</code> boots the warm server.</td><td>No</td></tr>
+        <tr><td><code>feedback</code></td><td>Vote <code>good</code>/<code>bad</code> on the last recall injection.</td><td>No</td></tr>
+        <tr><td colspan="3"><strong>Session plumbing</strong></td></tr>
+        <tr><td><code>install-hooks</code></td><td>Wire the recall + capture hooks (<code>--user</code>, <code>--mine</code>).</td><td>No</td></tr>
+        <tr><td><code>hook</code></td><td>The UserPromptSubmit entry point the hook calls.</td><td>No</td></tr>
+        <tr><td><code>capture</code></td><td>The SessionEnd entry point — the capture pipeline.</td><td>No — opt-in LLM extraction if a key is present; falls back without one</td></tr>
+        <tr><td><code>doctor</code></td><td>Probe the store, daemon, and hooks — one line per check.</td><td>No</td></tr>
+        <tr><td colspan="3"><strong>Trust &amp; calibration</strong></td></tr>
+        <tr><td><code>corroborate</code></td><td>Confirm a claim — raises confidence one rung.</td><td>No</td></tr>
+        <tr><td><code>verify</code></td><td>Judge low-confidence claims against a knowledge model; confirm raises, contradict drops. <code>--cost-cap-usd</code> bounds spend.</td><td><strong>Yes</strong></td></tr>
+        <tr><td><code>train</code></td><td>Mutate a claim directly: <code>--bad-vote</code> / <code>--good-vote</code> / <code>--corroborate</code>.</td><td>No</td></tr>
+        <tr><td colspan="3"><strong>Housekeeping</strong></td></tr>
+        <tr><td><code>consolidate</code></td><td>The session-end pass: confidence raise → forget. <code>--dry-run</code> previews.</td><td>No</td></tr>
+        <tr><td><code>dedup</code></td><td>Retroactively collapse duplicate event claims. Idempotent.</td><td>No</td></tr>
+        <tr><td><code>gc</code></td><td>Manual deletion, filter required (<code>--polarity</code>, <code>--max-age-days</code>, <code>--is-bad</code>…).</td><td>No</td></tr>
+        <tr><td colspan="3"><strong>Scorecard</strong></td></tr>
+        <tr><td><code>eval</code></td><td>The longitudinal scorecard — is memory getting more useful over time?</td><td>No</td></tr>
+        <tr><td><code>rollup</code></td><td>Weekly digest: this week vs last, PASS/FAIL.</td><td>No</td></tr>
+        <tr><td><code>session-mark</code></td><td>Record a session boundary so <code>eval</code> slices by session.</td><td>No</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="next">
+    <h2>Where to go next</h2>
+    <div class="next">
+      <a href="claim-system.html">
+        <span class="next-label">The model</span><br>
+        <span class="next-title">The claim system</span>
+      </a>
+      <a href="api-keys.html">
+        <span class="next-label">Related</span><br>
+        <span class="next-title">API keys — what needs one</span>
+      </a>
+      <a href="benchmarks.html">
+        <span class="next-label">Receipts</span><br>
+        <span class="next-title">Benchmarks</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-12 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

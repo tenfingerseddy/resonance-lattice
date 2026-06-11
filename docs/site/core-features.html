@@ -15,10 +15,12 @@
   <nav class="site">
       <a href="index.html">Home</a>
       <a href="explainer.html">What is rlat?</a>
+      <a href="why-rlat.html">Why rlat?</a>
       <a href="self-improvement.html">Self-improvement</a>
       <a href="getting-started.html">Getting started</a>
       <a href="core-features.html" aria-current="page">Core features</a>
       <a href="claim-system.html">Claims</a>
+      <a href="memory.html">Memory</a>
       <a href="encoder.html">Encoder</a>
       <a href="storage-modes.html">Storage modes</a>
       <a href="cli.html">CLI</a>
@@ -282,12 +284,15 @@ rlat skill-context fabric.rlat \
       tried-and-falsified findings — served with their verdict, so an
       assistant stops re-recommending dead ends
       (<a href="benchmarks.html#r2-falsification-ledger">receipt</a>).</li>
-      <li><strong>Passive capture is one command, opt-in.</strong>
-      <code>rlat memory install-hooks --mine</code> wires the session hooks
-      and sets <code>RLAT_MINE_ATTRIBUTES=1</code>; from then on, durable
-      world facts you state in passing land automatically. The extractor's
-      GATE 4 drops facts about <em>you</em> — only facts about the knowledge
-      model's world are kept
+      <li><strong>Capture is opt-in, two ways.</strong> On a subscription:
+      the <code>rlat-learn</code> skill — say "remember this" and the
+      assistant extracts world facts through the same four gates, with you
+      approving each one (no API key). Unattended: <code>rlat memory
+      install-hooks --mine</code> wires the session hooks
+      (<code>RLAT_MINE_ATTRIBUTES=1</code>, needs a key) and durable world
+      facts you state in passing land automatically. Either way the
+      extractor's GATE 4 drops facts about <em>you</em> — only facts about
+      the knowledge model's world are kept
       (<a href="benchmarks.html#e2c-capture-gate">receipt</a>).</li>
     </ul>
 
