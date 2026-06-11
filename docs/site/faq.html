@@ -115,13 +115,14 @@
       Validated against BGE-large-v1.5 (rlat wins by +0.026 nDCG@10) and
       E5-large-v2 (+0.081 nDCG@10) — apples-to-apples, same chunker, ANN, and
       scoring — plus Qwen3-Embedding-8B at +0.014 nDCG@10 mean on its own stack.
-      See the <a href="benchmarks.html">Benchmarks</a> page for the comparison
-      table.
+      See the <a href="benchmarks.html#retrieval-quality-h">Benchmarks</a> page
+      for the comparison table.
     </p>
 
     <h3 id="why-no-rerankers">Why no rerankers, lexical sidecar, or auto-router?</h3>
     <p>
-      Measured. Cross-encoder rerankers regressed gte-modernbert-base on 4 of 5
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/docs/internal/HONEST_CLAIMS.md">Measured</a>.
+      Cross-encoder rerankers regressed gte-modernbert-base on 4 of 5
       BEIR corpora — a training-distribution mismatch with strong dense top-k.
       A lexical V1 band failed parity on 4 of 5 corpora. Auto-mode routers add
       latency without a quality gain. A single recipe wins on quality,
@@ -198,6 +199,7 @@ rlat convert internal.rlat --to remote --remote-url-base https://docs.example.co
         <tr><td><code>knowledge</code></td><td>Passages supplement training. Lighter gate, because the directive already tells the LLM to lean on training.</td><td>70.6% accuracy / 5.9% hallucination</td></tr>
       </tbody>
     </table>
+    <p>Full table + receipts: <a href="benchmarks.html#hallucination">the hallucination bench</a>.</p>
     <pre><code>rlat skill-context fabric.rlat --query "$user_query" --mode constrain --strict
 rlat search compliance.rlat "what's our SOX retention policy?" --format context --mode constrain</code></pre>
     <p>
@@ -232,9 +234,10 @@ rlat search compliance.rlat "what's our SOX retention policy?" --format context 
       <thead><tr><th>Surface</th><th>Accuracy</th><th>Hallucination</th><th>Cost / q</th></tr></thead>
       <tbody>
         <tr><td><code>rlat search --format context</code> (single-shot, augment)</td><td>76.5%</td><td>3.9%</td><td>$0.004</td></tr>
-        <tr><td><code>rlat deep-search</code></td><td>92.2%</td><td>2.0%</td><td>$0.010</td></tr>
+        <tr><td><code>rlat deep-search</code></td><td>92.2%</td><td>2.0%</td><td>$0.009</td></tr>
       </tbody>
     </table>
+    <p>Full table + receipts: <a href="benchmarks.html#hallucination">the hallucination bench</a>.</p>
     <p>Pick <code>deep-search</code> when the question spans multiple files, when correctness matters more than latency or spend, or when you want a synthesised answer with citations rather than a list of passages. Stick with <code>search</code> for single-hop lookups, when you drive synthesis yourself downstream, or when latency and cost dominate.</p>
 
     <h3 id="strict-names">What is <code>--strict-names</code>?</h3>

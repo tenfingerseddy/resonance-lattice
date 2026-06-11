@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "aggregate_name": "5-BEIR launch verification (board 239, BGE encoder)",
+  "timestamp_generated": "2026-04-22T01:17:48",
+  "encoder": "qwen3-8b",
+  "probe_modes": "field_only,plus_cross_encoder,plus_cross_encoder_expanded,plus_full_stack",
+  "probe_rerankers": "BAAI/bge-reranker-v2-m3,mixedbread-ai/mxbai-rerank-base-v1",
+  "per_corpus": {
+    "nfcorpus": {
+      "best_mode": "field_only",
+      "best_reranker": null,
+      "best_ndcg10": 0.41381,
+      "verification_modes": null
+    },
+    "scifact": {
+      "best_mode": "field_only",
+      "best_reranker": null,
+      "best_ndcg10": 0.7738,
+      "verification_modes": null
+    },
+    "arguana": {
+      "best_mode": "field_only",
+      "best_reranker": null,
+      "best_ndcg10": 0.46616,
+      "verification_modes": null
+    },
+    "scidocs": {
+      "best_mode": "field_only",
+      "best_reranker": null,
+      "best_ndcg10": 0.27823,
+      "verification_modes": null
+    },
+    "fiqa": {
+      "best_mode": "field_only",
+      "best_reranker": null,
+      "best_ndcg10": 0.56835,
+      "verification_modes": null
+    }
+  },
+  "averages_across_5": {
+    "ours_field_only_avg": 0.50007,
+    "ours_best_mode_avg": 0.50007
+  },
+  "v1_0_0_launch_gate": {
+    "spec": "5-BEIR avg best-mode nDCG@10 >= 0.46",
+    "measured": 0.50007,
+    "passes": true
+  }
+}

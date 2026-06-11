@@ -68,7 +68,7 @@ A `.rlat` now **audits its own shape** and can **grow from outside facts**, all 
 - **`[fabric]` extra** in `pyproject.toml` — `azure-identity>=1.15`, `azure-storage-file-datalake>=12.14`. `requires-python` relaxed from `>=3.12` to `>=3.11` (Fabric UDFs run 3.11.9 only); ruff + pyright targets adjusted accordingly.
 - **CLI surface 16 → 17** (added `fabric` subcommand).
 - New harness suites: [tests/harness/fabric_bootstrap.py](tests/harness/fabric_bootstrap.py) (7 server-side guarantees: cold/warm bootstrap, mtime drift, LRU(8) cap, list_kms_for, missing-rlat error, blank-revision error) and [tests/harness/fabric_client.py](tests/harness/fabric_client.py) (10 client-side guarantees against a fake `http.server` UDF: URL parse, search/list_kms dispatch, unknown alias, HTTPError surfacing, `rlat fabric add/list/remove` round-trip, SP env detection, missing `azure-identity`).
-- Docs: end-to-end walkthrough at [docs/user/FABRIC.md](docs/user/FABRIC.md); "Hosted (Fabric UDF)" section in [STORAGE_MODES.md](docs/user/STORAGE_MODES.md); `fabric://` URL form + `rlat fabric` reference in [CLI.md](docs/user/CLI.md).
+- Docs: end-to-end walkthrough at [fabric.html](https://tenfingerseddy.github.io/resonance-lattice/fabric.html); "Hosted (Fabric UDF)" section in [storage-modes.html](https://tenfingerseddy.github.io/resonance-lattice/storage-modes.html); `fabric://` URL form + `rlat fabric` reference in [cli.html](https://tenfingerseddy.github.io/resonance-lattice/cli.html).
 
 ### Added — `rlat watch`
 
@@ -80,7 +80,7 @@ A `.rlat` now **audits its own shape** and can **grow from outside facts**, all 
 - Debounce default `1000ms` (override via `RLAT_WATCH_DEBOUNCE_MS`).
 - New harness suite [tests/harness/watch_loop.py](tests/harness/watch_loop.py): 9 contracts + a debounce-coalescing sanity check.
 - **CLI surface 15 → 16** (added `watch`).
-- Docs: `rlat watch` reference section in [docs/user/CLI.md](docs/user/CLI.md).
+- Docs: `rlat watch` reference section in [cli.html](https://tenfingerseddy.github.io/resonance-lattice/cli.html).
 
 ### Fixed — `rlat watch` review pass
 
@@ -103,7 +103,7 @@ Migration path from v0.11: there isn't one. Build fresh knowledge models with v2
 
 ### Added (2026-04-28 — Skill restructure 3 → 2 + composite workflow)
 
-- **`.claude/skills/rlat/`** restructured as a workflow-orchestration composite. Frontmatter description names all 9 sub-workflows (init / refresh / search / skill-context / memory / compare / convert / optimise / programmatic deep-search) for positive trigger specificity. `allowed-tools: Bash(rlat:*), Read, Write, Edit, Glob, Grep`. Pre-launch fix-up at commit `e493f050+` corrected three classes of stale commands flagged in the launch-readiness audit: removed `rlat install-encoder --check` (no `--check` flag), corrected memory subcommand syntax to `rlat memory --memory-root <path> {add|recall|primer|...} [args]` (the `--memory-root` flag goes on the parent command, not the subcommand), and replaced the non-existent `rlat rql ...` CLI surface with a Python-API reference (RQL ops are Python-only in v2.0). Replaced 500-line v0.11-stale `references/CLI_REFERENCE.md` with a slim pointer to the canonical [docs/user/CLI.md](docs/user/CLI.md).
+- **`.claude/skills/rlat/`** restructured as a workflow-orchestration composite. Frontmatter description names all 9 sub-workflows (init / refresh / search / skill-context / memory / compare / convert / optimise / programmatic deep-search) for positive trigger specificity. `allowed-tools: Bash(rlat:*), Read, Write, Edit, Glob, Grep`. Pre-launch fix-up at commit `e493f050+` corrected three classes of stale commands flagged in the launch-readiness audit: removed `rlat install-encoder --check` (no `--check` flag), corrected memory subcommand syntax to `rlat memory --memory-root <path> {add|recall|primer|...} [args]` (the `--memory-root` flag goes on the parent command, not the subcommand), and replaced the non-existent `rlat rql ...` CLI surface with a Python-API reference (RQL ops are Python-only in v2.0). Replaced 500-line v0.11-stale `references/CLI_REFERENCE.md` with a slim pointer to the canonical `docs/user/CLI.md`.
 - **`.claude/skills/rlat-deep-research/`** removed — folded into the rlat skill's "Programmatic deep-search" workflow section. Eliminates 3-skills redundancy where `rlat deep-search` was both a CLI verb and a separate skill.
 - **`.claude/skills/deep-research/`** retained — Claude-driven multi-hop research over an rlat KM (uses the user's Claude Code subscription instead of the API key the CLI verb requires).
 - 15 evals at `.claude/skills/rlat/evals.json` covering should-trigger × 8 sub-workflows + should-defer-to-deep-research × 2 + should-NOT-trigger × 4 (exact-symbol-rename, specific-file-edit, other-vector-DB, training-knowledge).
@@ -127,7 +127,7 @@ Migration path from v0.11: there isn't one. Build fresh knowledge models with v2
 - **`rlat convert <km> --to {bundled|local|remote}`** ships. Switches a knowledge model between storage modes WITHOUT rebuilding embeddings — bands, registry, ANN, and the optimised W projection are preserved (`np.allclose` at 1e-6). All six pairwise transitions supported. Atomic in-place via `tmp + os.replace`.
 - **`Store.fetch_all(source_files)`** primitive on the ABC — bulk-reads every requested source file via the cached `_read_full_text`. Default impl works for all three subclasses; specific stores can override with parallel-fetch paths in v2.1+.
 - **`ConversionDriftError`** typed exception. Conversion validates every passage's `content_hash` against the live bytes resolved via the source mode's Store BEFORE write; if any drift, raises this error and does NOT write a new archive. The user runs `rlat refresh` (local) or `rlat sync` (remote) to reconcile, then retries convert. Same correctness pattern as Audit 07's codex P0 fix.
-- **"Optimise on remote" workflow** is now a clean two-command flow: `rlat convert upstream.rlat --to local --source-root <dir> -o working.rlat` then `rlat optimise working.rlat`. Documented in [docs/user/OPTIMISE.md](docs/user/OPTIMISE.md) and [docs/user/FAQ.md](docs/user/FAQ.md). The optimise pipeline stays storage-mode-agnostic.
+- **"Optimise on remote" workflow** is now a clean two-command flow: `rlat convert upstream.rlat --to local --source-root <dir> -o working.rlat` then `rlat optimise working.rlat`. Documented in `docs/user/OPTIMISE.md` and `docs/user/FAQ.md`. The optimise pipeline stays storage-mode-agnostic.
 - **`tests/harness/conversion`** — 8 hermetic guarantees (3 round-trips × bands `np.allclose`; passage_id stable; content_hash stable; drift abort; idempotent no-op; error-shape).
 - **CLI surface count 14 → 15** (added `convert`).
 

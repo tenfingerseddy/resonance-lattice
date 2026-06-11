@@ -276,7 +276,9 @@ rlat search fabric://team/team-docs "..." --format=context</code></pre>
       <code>dim_source_file</code>, <code>dim_km</code>, and
       <code>dim_date</code>. Drop the measures and dimensions on the canvas to
       build whatever views your team cares about — top queries, refusal rate,
-      latency percentiles, build cadence.
+      latency percentiles, build cadence. For a picture of where this lands,
+      see the <a href="fabric-dashboard-mockup.html">example dashboard
+      mockup</a>.
     </p>
     <p>That's the whole loop.</p>
   </section>
@@ -310,7 +312,8 @@ rlat search fabric://team/team-docs "..." --format=context</code></pre>
       <li>The ONNX runtime warm-up and first encode.</li>
     </ul>
     <p>
-      Roughly 5–15&nbsp;seconds cold, sub-100&nbsp;ms warm. The UDF returns a
+      A few seconds cold, sub-second warm — the same figures you see when
+      testing the UDF in <a href="#test-udf">section 04</a>. The UDF returns a
       <code>cold</code> flag so callers can tell which they paid for.
     </p>
   </section>

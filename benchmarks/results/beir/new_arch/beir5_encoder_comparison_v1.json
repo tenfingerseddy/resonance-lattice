@@ -1,0 +1,206 @@
+{
+  "config": {
+    "stack": "v2.0",
+    "retrieval_pipeline": "FAISS HNSW M=32 efC=200 efS=128 above N=5000; exact dense below",
+    "top_k": 10,
+    "encode_batch": 32,
+    "corpora": [
+      "nfcorpus",
+      "scifact",
+      "arguana",
+      "scidocs",
+      "fiqa"
+    ]
+  },
+  "runs": [
+    {
+      "label": "gte-modernbert-base (rlat default)",
+      "model_id": "Alibaba-NLP/gte-modernbert-base",
+      "aggregate_ndcg_at_10": 0.514312,
+      "aggregate_recall_at_10": 0.5664340000000001,
+      "per_corpus": [
+        {
+          "corpus": "nfcorpus",
+          "n_passages": 3633,
+          "n_queries": 323,
+          "n_qrels": 323,
+          "encoded_in_seconds": 47.82933254599993,
+          "ndcg_at_10": 0.3436,
+          "recall_at_10": 0.16407,
+          "used_ann": false
+        },
+        {
+          "corpus": "scifact",
+          "n_passages": 5183,
+          "n_queries": 300,
+          "n_qrels": 300,
+          "encoded_in_seconds": 50.207116412999994,
+          "ndcg_at_10": 0.76697,
+          "recall_at_10": 0.89256,
+          "used_ann": true
+        },
+        {
+          "corpus": "arguana",
+          "n_passages": 8674,
+          "n_queries": 1406,
+          "n_qrels": 1406,
+          "encoded_in_seconds": 69.86541001900002,
+          "ndcg_at_10": 0.74318,
+          "recall_at_10": 0.96373,
+          "used_ann": true
+        },
+        {
+          "corpus": "scidocs",
+          "n_passages": 25657,
+          "n_queries": 1000,
+          "n_qrels": 1000,
+          "encoded_in_seconds": 244.49032680799996,
+          "ndcg_at_10": 0.19428,
+          "recall_at_10": 0.20082,
+          "used_ann": true
+        },
+        {
+          "corpus": "fiqa",
+          "n_passages": 57638,
+          "n_queries": 648,
+          "n_qrels": 648,
+          "encoded_in_seconds": 406.0648158220001,
+          "ndcg_at_10": 0.52353,
+          "recall_at_10": 0.61099,
+          "used_ann": true
+        }
+      ],
+      "encoder_load_seconds": 38.494776596000065,
+      "error": null
+    },
+    {
+      "label": "bge-large-en-v1.5",
+      "model_id": "BAAI/bge-large-en-v1.5",
+      "aggregate_ndcg_at_10": 0.48881600000000003,
+      "aggregate_recall_at_10": 0.53985,
+      "per_corpus": [
+        {
+          "corpus": "nfcorpus",
+          "n_passages": 3633,
+          "n_queries": 323,
+          "n_qrels": 323,
+          "encoded_in_seconds": 341.69017744300004,
+          "ndcg_at_10": 0.3813,
+          "recall_at_10": 0.19289,
+          "used_ann": false
+        },
+        {
+          "corpus": "scifact",
+          "n_passages": 5183,
+          "n_queries": 300,
+          "n_qrels": 300,
+          "encoded_in_seconds": 451.3197825269999,
+          "ndcg_at_10": 0.7463,
+          "recall_at_10": 0.87322,
+          "used_ann": true
+        },
+        {
+          "corpus": "arguana",
+          "n_passages": 8674,
+          "n_queries": 1406,
+          "n_qrels": 1406,
+          "encoded_in_seconds": 535.009716215,
+          "ndcg_at_10": 0.64166,
+          "recall_at_10": 0.88193,
+          "used_ann": true
+        },
+        {
+          "corpus": "scidocs",
+          "n_passages": 25657,
+          "n_queries": 1000,
+          "n_qrels": 1000,
+          "encoded_in_seconds": 1645.5843573299999,
+          "ndcg_at_10": 0.22582,
+          "recall_at_10": 0.23715,
+          "used_ann": true
+        },
+        {
+          "corpus": "fiqa",
+          "n_passages": 57638,
+          "n_queries": 648,
+          "n_qrels": 648,
+          "encoded_in_seconds": 2837.131440094,
+          "ndcg_at_10": 0.449,
+          "recall_at_10": 0.51406,
+          "used_ann": true
+        }
+      ],
+      "encoder_load_seconds": 7.889161938999905,
+      "error": null
+    },
+    {
+      "label": "e5-large-v2",
+      "model_id": "intfloat/e5-large-v2",
+      "aggregate_ndcg_at_10": 0.433122,
+      "aggregate_recall_at_10": 0.483638,
+      "per_corpus": [
+        {
+          "corpus": "nfcorpus",
+          "n_passages": 3633,
+          "n_queries": 323,
+          "n_qrels": 323,
+          "encoded_in_seconds": 343.1749418879999,
+          "ndcg_at_10": 0.37152,
+          "recall_at_10": 0.18907,
+          "used_ann": false
+        },
+        {
+          "corpus": "scifact",
+          "n_passages": 5183,
+          "n_queries": 300,
+          "n_qrels": 300,
+          "encoded_in_seconds": 453.2386299619993,
+          "ndcg_at_10": 0.72215,
+          "recall_at_10": 0.84383,
+          "used_ann": true
+        },
+        {
+          "corpus": "arguana",
+          "n_passages": 8674,
+          "n_queries": 1406,
+          "n_qrels": 1406,
+          "encoded_in_seconds": 539.8056754919999,
+          "ndcg_at_10": 0.45726,
+          "recall_at_10": 0.70341,
+          "used_ann": true
+        },
+        {
+          "corpus": "scidocs",
+          "n_passages": 25657,
+          "n_queries": 1000,
+          "n_qrels": 1000,
+          "encoded_in_seconds": 1662.057863819,
+          "ndcg_at_10": 0.20513,
+          "recall_at_10": 0.21157,
+          "used_ann": true
+        },
+        {
+          "corpus": "fiqa",
+          "n_passages": 57638,
+          "n_queries": 648,
+          "n_qrels": 648,
+          "encoded_in_seconds": 2862.771245434,
+          "ndcg_at_10": 0.40955,
+          "recall_at_10": 0.47031,
+          "used_ann": true
+        }
+      ],
+      "encoder_load_seconds": 8.499149278999539,
+      "error": null
+    },
+    {
+      "label": "Qwen3-Embedding-4B",
+      "model_id": "Qwen/Qwen3-Embedding-4B",
+      "aggregate_ndcg_at_10": 0.0,
+      "aggregate_recall_at_10": 0.0,
+      "per_corpus": [],
+      "encoder_load_seconds": 0.0,
+      "error": "TypeError(\"Transformer.__init__() got an unexpected keyword argument 'trust_remote_code'\")"
+    }
+  ]
+}

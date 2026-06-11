@@ -466,6 +466,11 @@
       $1.46 relaxed-rubric judge). Both rubric result JSONs are committed to the
       repository.
     </p>
+    <p>
+      Result artifacts:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/results/user_bench/hallucination_fabric_11lane.json">hallucination_fabric_11lane.json</a> (strict) ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/results/user_bench/hallucination_fabric_11lane_relaxed.json">hallucination_fabric_11lane_relaxed.json</a> (relaxed)
+    </p>
     <pre><code>pip install rlat[bench]
 rlat install-encoder
 # Build the Fabric corpus locally OR pull a prebuilt knowledge model:
@@ -568,8 +573,12 @@ python -m benchmarks.user_bench.hallucination.rejudge_relaxed \
       volume-critical workflows where each query budget is small, rlat is the
       order-of-magnitude cheaper option.
     </p>
+    <p>
+      Result artifact:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/results/user_bench/token_usage_v2.json">token_usage_v2.json</a>
+    </p>
     <pre><code>python -m benchmarks.user_bench.token_usage.run \
-  --output benchmarks/results/user_bench/token_usage.json \
+  --output benchmarks/results/user_bench/token_usage_v2.json \
   --budget-usd 16</code></pre>
   </section>
 
@@ -607,6 +616,10 @@ python -m benchmarks.user_bench.hallucination.rejudge_relaxed \
     <p>
       Run on a Kaggle T4. <strong>No LLM judge</strong> — this is retrieval
       recall only.
+    </p>
+    <p>
+      Result artifact:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/results/locomo/locomo_v2_retrieval.json">locomo_v2_retrieval.json</a>
     </p>
 
     <h3 id="longmemeval">LongMemEval retrieval recall</h3>
@@ -673,6 +686,10 @@ python -m benchmarks.user_bench.hallucination.rejudge_relaxed \
       we don't claim a specific task-accuracy industry rank — only that retrieval
       recall sits in the top band for the metric reported.
     </p>
+    <p>
+      Result artifact:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/results/longmemeval/longmemeval_v2_retrieval.json">longmemeval_v2_retrieval.json</a>
+    </p>
   </section>
 
   <section id="retrieval-quality">
@@ -692,13 +709,20 @@ python -m benchmarks.user_bench.hallucination.rejudge_relaxed \
         <tr><td><strong>gte-modernbert-base 768d</strong> (rlat default)</td><td><strong>0.5144</strong></td><td><strong>0.5666</strong></td></tr>
         <tr><td>bge-large-en-v1.5 (1024d)</td><td>0.4888</td><td>0.5399</td></tr>
         <tr><td>e5-large-v2 (1024d)</td><td>0.4331</td><td>0.4836</td></tr>
-        <tr><td>Qwen3-Embedding-4B (2560d)</td><td>ERROR (loader incompatibility — retry pending)</td><td>—</td></tr>
+        <tr><td>Qwen3-Embedding-8B (4096d)</td><td>0.5001</td><td>—</td></tr>
       </tbody>
     </table>
     <p>
+      Result artifacts:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/results/beir/new_arch/beir5_encoder_comparison_v1.json">beir5_encoder_comparison_v1.json</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/results/beir/new_arch/aggregate_5beir_qwen3_8b_v1.json">aggregate_5beir_qwen3_8b_v1.json</a>
+    </p>
+    <p>
       <strong>Headline:</strong> gte-modernbert-base wins the stack
       apples-to-apples against BGE-large (+0.026 nDCG@10) and E5-large
-      (+0.081 nDCG@10), at roughly half the embedding dimensionality. Per-corpus
+      (+0.081 nDCG@10), at roughly half the embedding dimensionality — and
+      also edges Qwen3-Embedding-8B (+0.014 nDCG@10) at 1/5 the
+      dimensionality. Per-corpus
       is mixed — nfcorpus and scidocs go to BGE (short keyword / abstract
       corpora); scifact, arguana, and fiqa go to gte-mb. Arguana
       (paraphrase-heavy argument retrieval) is where gte-mb's masked-language-
@@ -730,6 +754,10 @@ python -m benchmarks.user_bench.hallucination.rejudge_relaxed \
         <tr><td>fiqa</td><td>57,638</td><td>0.5239</td><td>0.6114</td><td>FAISS HNSW</td></tr>
       </tbody>
     </table>
+    <p>
+      Result artifact:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/results/beir/new_arch/v2_floor_gte_mb_base_768d.json">v2_floor_gte_mb_base_768d.json</a>
+    </p>
   </section>
 
   <section id="speed">
@@ -795,6 +823,10 @@ python -m benchmarks.user_bench.hallucination.rejudge_relaxed \
         gte-modernbert-base) but pays the gain back 8× in query latency.
       </li>
     </ul>
+    <p>
+      Result artifact:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/results/user_bench/build_query_speed.json">build_query_speed.json</a>
+    </p>
     <pre><code>pip install rlat[bench]
 python -m benchmarks.user_bench.build_query_speed.run \
   --output benchmarks/results/user_bench/build_query_speed.json</code></pre>
@@ -989,6 +1021,10 @@ python -m benchmarks.user_bench.build_query_speed.run \
         corpus-specific.
       </li>
     </ul>
+    <p>
+      Result artifact:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/results/user_bench/primer_effectiveness.json">primer_effectiveness.json</a>
+    </p>
     <pre><code>pip install rlat[bench]
 rlat install-encoder
 rlat build ./docs ./src -o resonance-lattice.rlat
@@ -1280,7 +1316,7 @@ python -m benchmarks.user_bench.primer_effectiveness.run \
 
   <section id="reproduce">
     <h2 id="reproduce-h">Reproduce it yourself</h2>
-    <pre><code>git clone &lt;repo&gt;
+    <pre><code>git clone https://github.com/tenfingerseddy/resonance-lattice.git
 cd resonance-lattice
 pip install -e .[bench]
 rlat install-encoder
@@ -1289,12 +1325,12 @@ rlat build ./docs ./src -o resonance-lattice.rlat
 # Build &amp; query speed (no API spend, deterministic)
 python -m benchmarks.user_bench.build_query_speed.run
 
-# Token usage (costs ~$80 at full N=20)
+# Token usage
 export CLAUDE_API=sk-ant-...
-python -m benchmarks.user_bench.token_usage.run --budget-usd 100
+python -m benchmarks.user_bench.token_usage.run --budget-usd 16
 
-# Hallucination (costs ~$130 at full N=40)
-python -m benchmarks.user_bench.hallucination.run --budget-usd 150</code></pre>
+# Hallucination (measured $8.93 total at full N=63 across all 11 lanes)
+python -m benchmarks.user_bench.hallucination.run --budget-usd 12</code></pre>
     <p>
       Each <code>run.py</code> accepts <code>--n-tasks</code> to subset for
       pilots and <code>--budget-usd</code> to abort at a hard cost cap.

@@ -99,6 +99,13 @@ INCLUDE=(
     "benchmarks/results/user_bench/primer_effectiveness.json"
     "benchmarks/results/user_bench/token_usage_v2.json"
     "benchmarks/results/optimised/beir_fiqa_probe_v1.json"
+    # Receipts the docs-site benchmarks page links directly (retrieval
+    # quality + memory sections).
+    "benchmarks/results/beir/new_arch/beir5_encoder_comparison_v1.json"
+    "benchmarks/results/beir/new_arch/aggregate_5beir_qwen3_8b_v1.json"
+    "benchmarks/results/beir/new_arch/v2_floor_gte_mb_base_768d.json"
+    "benchmarks/results/locomo/locomo_v2_retrieval.json"
+    "benchmarks/results/longmemeval/longmemeval_v2_retrieval.json"
 
     # ── v3 world-knowledge evidence ("no claim without a public
     #    receipt") — pre-registered designs, verdicts, items, and raw

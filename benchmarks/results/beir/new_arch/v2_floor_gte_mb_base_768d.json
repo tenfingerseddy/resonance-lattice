@@ -1,0 +1,81 @@
+{
+  "config": {
+    "encoder_model": "Alibaba-NLP/gte-modernbert-base",
+    "encoder_revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+    "runtime": "torch",
+    "top_k": 10,
+    "ann_threshold_n": 5000,
+    "ann_M": 32,
+    "ann_efConstruction": 200,
+    "ann_efSearch": 128
+  },
+  "aggregate": {
+    "ndcg_at_10_avg": 0.514358,
+    "recall_at_10_avg": 0.566612,
+    "corpora_count": 5,
+    "corpora_requested": 5,
+    "failed": []
+  },
+  "trials": [
+    {
+      "corpus": "nfcorpus",
+      "n_passages": 3633,
+      "n_queries": 323,
+      "n_qrels": 323,
+      "encoded_in_seconds": 69.961900464,
+      "indexed_in_seconds": 4.1900000269379234e-07,
+      "queried_in_seconds": 0.10420895599997948,
+      "used_ann": false,
+      "ndcg_at_10": 0.34309,
+      "recall_at_10": 0.16397
+    },
+    {
+      "corpus": "scifact",
+      "n_passages": 5183,
+      "n_queries": 300,
+      "n_qrels": 300,
+      "encoded_in_seconds": 90.92355224900007,
+      "indexed_in_seconds": 1.1977774460000319,
+      "queried_in_seconds": 0.12207710699999552,
+      "used_ann": true,
+      "ndcg_at_10": 0.76717,
+      "recall_at_10": 0.89256
+    },
+    {
+      "corpus": "arguana",
+      "n_passages": 8674,
+      "n_queries": 1406,
+      "n_qrels": 1406,
+      "encoded_in_seconds": 101.27485696500003,
+      "indexed_in_seconds": 1.9532001750000063,
+      "queried_in_seconds": 0.5261973769999031,
+      "used_ann": true,
+      "ndcg_at_10": 0.74302,
+      "recall_at_10": 0.96373
+    },
+    {
+      "corpus": "scidocs",
+      "n_passages": 25657,
+      "n_queries": 1000,
+      "n_qrels": 1000,
+      "encoded_in_seconds": 595.5665202780001,
+      "indexed_in_seconds": 11.522840467000151,
+      "queried_in_seconds": 0.8540309909999451,
+      "used_ann": true,
+      "ndcg_at_10": 0.19463,
+      "recall_at_10": 0.20142
+    },
+    {
+      "corpus": "fiqa",
+      "n_passages": 57638,
+      "n_queries": 648,
+      "n_qrels": 648,
+      "encoded_in_seconds": 1197.693230906,
+      "indexed_in_seconds": 33.3194627339999,
+      "queried_in_seconds": 0.5477197169998362,
+      "used_ann": true,
+      "ndcg_at_10": 0.52388,
+      "recall_at_10": 0.61138
+    }
+  ]
+}

@@ -236,7 +236,7 @@ rlat search fabric://team/team-docs "..."</code></pre>
       <tbody>
         <tr><td>One <code>.rlat</code>, queryable by everyone on the workspace</td><td>Maintainer pays the Fabric capacity-unit cost per call</td></tr>
         <tr><td>Re-upload the <code>.rlat</code> and the next query sees fresh content</td><td>Requires a Fabric workspace plus a UDF item</td></tr>
-        <tr><td>First-call cold start ~5&ndash;15s; warm calls sub-second</td><td>Fabric UDFs run Python 3.11.9 only</td></tr>
+        <tr><td>First-call cold start of a few seconds; warm calls sub-second (see <a href="fabric.html">the Fabric page</a> for the measured latency profile)</td><td>Fabric UDFs run Python 3.11.9 only</td></tr>
       </tbody>
     </table>
   </section>

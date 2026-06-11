@@ -159,7 +159,9 @@ hf download tenfingers/python-stdlib-rlat python-stdlib.rlat --local-dir .
 rlat search python-stdlib.rlat "asyncio Task cancellation" --top-k 5 --format context</code></pre>
     <p>
       All five are encoded with the same <code>gte-modernbert-base</code> 768d
-      recipe, so retrieval quality matches anything you build locally. To index
+      recipe, so retrieval quality matches anything you build locally.
+      Sub-20ms warm-query receipts are on the
+      <a href="benchmarks.html#speed">Benchmarks page</a>. To index
       your own project instead, keep reading.
     </p>
   </section>
@@ -223,7 +225,9 @@ rlat init-project</code></pre>
     <div class="callout callout-note">
       <span class="callout-tag">Big corpus, no local GPU?</span>
       <p>CPU encoding of <code>gte-modernbert-base</code> runs at ~80–150
-      passages/sec; corpora over ~10K passages take an unpleasant amount of
+      passages/sec (measured locally; end-to-end speed receipts on
+      <a href="benchmarks.html#speed">the benchmarks page</a>); corpora over
+      ~10K passages take an unpleasant amount of
       time. Ask Claude Code &ldquo;can we build this on Kaggle?&rdquo; — the
       <code>rlat-build-on-kaggle</code> skill walks through using a free T4 GPU
       instead.</p>
