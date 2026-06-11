@@ -1,6 +1,6 @@
 # Skill Integration — Spec
 
-Internal design document for `rlat skill-context`. The user-facing guide is at [docs/user/SKILLS.md](../user/SKILLS.md).
+Internal design document for `rlat skill-context`. The user-facing guide is at [docs/site/skills.html](../site/skills.html).
 
 ## Design thesis
 
@@ -209,7 +209,7 @@ The `harness/skill_context.py` suite does not currently lock these numbers (no p
 
 ## Cross-references
 
-- User guide: [docs/user/SKILLS.md](../user/SKILLS.md)
-- CLI reference: [docs/user/CLI.md](../user/CLI.md) (when written)
+- User guide: [docs/site/skills.html](../site/skills.html)
+- CLI reference: [docs/site/cli.html](../site/cli.html)
 - Anthropic skills docs: https://code.claude.com/docs/en/skills.md
 - Anthropic hooks docs: https://code.claude.com/docs/en/hooks.md

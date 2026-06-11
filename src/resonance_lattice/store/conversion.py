@@ -1,9 +1,9 @@
 """Storage-mode conversion — `rlat convert` pipeline (Audit 08).
 
 Converts a knowledge model between any pair of `bundled` / `local` /
-`remote` modes without rebuilding embeddings. The bands, registry, ANN
-index, and optimised W matrix are all storage-mode-independent — they
-describe the corpus content, not how source bytes resolve at query time.
+`remote` modes without rebuilding embeddings. The bands, registry, and ANN
+index are all storage-mode-independent — they describe the corpus content,
+not how source bytes resolve at query time.
 What changes between modes is just `metadata.store_mode` plus the
 supporting payload (zstd-framed `source/` for bundled, `manifest.json`
 for remote, neither for local).
@@ -13,7 +13,7 @@ Three correctness invariants (Audit 07 pattern, baked in):
   1. Every kept passage's `content_hash` is re-validated against live
      bytes resolved via the SOURCE mode's Store before write. Drift
      aborts; no silent stale carry-forward into the new mode.
-  2. Bands, registry, ANN, optimised W byte-identical pre/post.
+  2. Bands, registry, ANN byte-identical pre/post.
      Conversion preserves corpus identity; `passage_id` stable.
   3. metadata.store_mode advances atomically with the payload swap
      (`tmp + os.replace` via `archive.write`). No window where the
@@ -22,8 +22,7 @@ Three correctness invariants (Audit 07 pattern, baked in):
 Six pairwise transitions, all routed through one function. The branching
 is small: source mode determines how `Store.fetch_all()` retrieves bytes,
 target mode determines what supporting payload to compose for
-`archive.write()`. Bands + registry + projections + ann_blobs flow
-through unchanged.
+`archive.write()`. Bands + registry + ann_blobs flow through unchanged.
 
 Audit 08 commit 3/6.
 """
@@ -118,6 +117,18 @@ def convert(
             f"{archive_path} is already in mode {target_mode!r}; "
             f"nothing to convert"
         )
+    # Row-mode (semantic-slicer) archives are bundled-only by construction —
+    # their `source_file` slots are business keys, not paths into a real file
+    # tree, so materialising them to local/remote would write provenance-less
+    # key-named files that a future `rlat refresh` would then walk as if real.
+    # `build_rlat` forbids building row-mode in any other mode; hold that
+    # invariant here too rather than letting convert smuggle around it.
+    if contents.metadata.build_config.get("row_mode") and target_mode != "bundled":
+        raise ValueError(
+            f"{archive_path} is a row-mode (slicer) knowledge model; it can "
+            f"only stay bundled. Convert to {target_mode!r} is not supported — "
+            f"rebuild from the source table instead."
+        )
     if target_mode == "remote" and not remote_url_base:
         raise ValueError(
             "convert --to remote requires --remote-url-base <url-prefix>"
@@ -163,8 +174,8 @@ def convert(
     if drifted:
         raise ConversionDriftError(drifted, len(contents.registry))
 
-    # Compose target-mode supporting payloads. Bands, registry,
-    # projections, ann_blobs flow through unchanged.
+    # Compose target-mode supporting payloads. Bands, registry, and
+    # ann_blobs flow through unchanged.
     new_remote_manifest: dict[str, dict[str, str]] = {}
     new_source_files: dict[str, bytes] = {}
 
@@ -209,19 +220,28 @@ def convert(
         # Reset pinned_ref — the new manifest defines a fresh pin baseline.
         contents.metadata.build_config["pinned_ref"] = ""
 
-    # Update metadata.store_mode and write atomically. Bands, registry,
-    # projections, and ann_blobs are passed through unchanged — same
-    # bytes, just under a different mode declaration.
+    # Update metadata.store_mode and write atomically. Bands, registry, and
+    # ann_blobs are passed through unchanged — same bytes, just under a
+    # different mode declaration.
     contents.metadata.store_mode = target_mode
+    # Preserve the earned insight layer + telemetry across the mode change. The
+    # bands (incl. the insight band) and ann pass through above, so without
+    # `insights` the insight.jsonl member would be dropped — silently losing the
+    # promoted insight claims (the insight band survives as a dead orphan;
+    # archive.read then reads back 0 insights). Telemetry would likewise be lost.
+    # Both are corpus content, not mode-specific, so a storage-mode convert must
+    # carry them.
+    preserved_telemetry = archive.read_telemetry(archive_path)
     archive.write(
         output_path,
         metadata=contents.metadata,
         bands=contents.bands,
         registry=contents.registry,
-        projections=contents.projections,
         ann_blobs=contents.ann_blobs,
         source_files=new_source_files or None,
         remote_manifest=new_remote_manifest or None,
+        insights=contents.insights or None,
+        telemetry=preserved_telemetry or None,
     )
 
     return ConversionResult(

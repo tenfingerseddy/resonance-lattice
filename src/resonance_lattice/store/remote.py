@@ -33,9 +33,9 @@ from typing import Callable, IO
 from .base import DriftStatus, RemoteShaMismatch, Store, sha256_hex
 
 # Worker count for parallel `fetch_all`. HTTP-bound, so threads (not
-# processes) — the GIL releases on the socket read inside urllib. 8 mirrors
-# the optimise pipeline's synth-query concurrency; well within the
-# rate-limit headroom of typical CI/CDN endpoints.
+# processes) — the GIL releases on the socket read inside urllib. 8 is a
+# conservative default; well within the rate-limit headroom of typical
+# CI/CDN endpoints.
 _FETCH_ALL_WORKERS = 8
 
 # Network-error classes that `freshness` and `sync` collapse to "missing"
@@ -252,7 +252,6 @@ class RemoteStore(Store):
     # `cli/maintain.cmd_sync` and lands on `store/incremental.apply_delta`
     # (the same delta-apply pipeline `rlat refresh` uses). That path
     # bucketises on stable `passage_id`, re-encodes only updated + added
-    # passages, re-projects the optimised band from the new base for free,
-    # and writes atomically — so the manifest, bands, and registry stay
+    # passages, and writes atomically — so the manifest, bands, and registry stay
     # internally consistent. The codex P0 manifest-only mode is statically
     # impossible: `apply_delta` requires the encoder by signature.

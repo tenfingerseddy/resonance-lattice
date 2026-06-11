@@ -1,13 +1,20 @@
-"""LayeredMemory — three-tier (working / episodic / semantic).
+"""Per-user earned-experience memory.
 
-Ported from v0.11 production. Confirmed live (NOT the unwired ResonanceMemory
-in v0.11's memory.py — that was deleted).
+Backed by a flat `ExperienceClaimStore` (`memory/claim_store.py`) — one
+unified `Claim` record per row, polarity-tagged + confidence-graded. The
+pipeline:
 
-Tier dynamics:
-- Working:  short-lived, current-session context.
-- Episodic: per-session records.
-- Semantic: consolidated knowledge promoted from episodic.
-
-Phase 5 deliverable. See base plan handoff to Kane's plan; design docs in
-docs/internal/MEMORY.md (written this phase).
+  capture     extract event(s) from a transcript, redact, dedup, write.
+  recall      cosine + workspace gate + confidence gap + recurrence gate
+              + manifesto rerank, source-dispatched (experience vs corpus).
+  distil      §7 atomic-event extraction; arrows 1/2/3 build pattern /
+              learning / principle claims from clusters / attribution /
+              cross-domain.
+  confidence  Beta tallies → 4-rung label, modulated by user verdicts,
+              implicit corroboration, corpus confirm/contradict.
+  forget      decay-below-floor + redundant-after-promotion + falsified
+              + trivial drop, with provenance / severity / declaration
+              protections.
+  redactor    Layer-1 PII + denylist scrub at capture time, with an
+              append-only audit log.
 """

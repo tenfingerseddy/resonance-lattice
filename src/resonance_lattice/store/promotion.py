@@ -1,12 +1,11 @@
 """Promotion pipeline — run candidates through the compression test, write
 survivors back to the .rlat insight layer.
 
-The bridge between memory (where synthesis_candidate rows accumulate) and
-the corpus insight layer (where promoted rows live). At consolidation
-cadence — `Stop` / `SessionEnd` hooks, or explicit
-`rlat memory promote-to-corpus` — the harness calls `promote_candidates`
-with the eligible memory rows plus a query history; the function decides
-which graduate.
+The bridge between authored answers (deep-search, curator fills, the
+agent/human caller-verified path) and the corpus insight layer (where
+promoted rows live). Callers funnel through `promote_if_faithful`, which
+builds the verdict-anchored query history and calls `promote_candidates`;
+the function decides which graduate.
 
 The memory module owns *which* rows are eligible (semantic tier, has
 citations, verdict-positive, scope=shared). This module owns the
@@ -17,25 +16,26 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 
+from ..state.claim import Claim
+from ..state.claim_lifecycle import GateSignals, consolidate_corpus
 from . import archive
 from .compression_test import (
     CompressionTestResult,
     QueryRecord,
     run_compression_test,
 )
+from .corpus_claim_io import new_corpus_claim
 from .faithfulness import FaithfulnessReport, assess_faithfulness
-from .insight import (
-    InsightCitation,
-    InsightPassage,
-    compute_insight_id,
-    seed_confidence,
-)
+from .insight import InsightCitation
+
+# Most-recent previously-promoted queries the verdict-anchored coverage
+# gate re-checks per landing (one batched encode; bounds cost on bands
+# with long promotion histories).
+_VERDICT_QUERY_WINDOW = 32
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,7 @@ class SynthesisCandidate:
     encoder_version: str
     faithfulness: float | None = None   # gate score; seeds the Beta prior
     kind: str = "synthesis"
+    provenance: str | None = None       # trust tier; None auto-derives from citations (user must be explicit)
 
 
 @dataclass(frozen=True)
@@ -63,41 +64,26 @@ class PromotionOutcome:
     """One candidate's verdict from the promotion run."""
     candidate_id: str
     promoted: bool
-    promoted_insight_id: str | None
+    promoted_claim_id: str | None
     test_result: CompressionTestResult
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _build_insight_passage(
-    candidate: SynthesisCandidate, idx: int,
-) -> InsightPassage:
-    insight_id = compute_insight_id(
-        candidate.content,
-        list(candidate.source_passage_hashes),
-        candidate.source_model_hash,
-    )
-    corroboration, falsification = seed_confidence(candidate.faithfulness)
-    return InsightPassage(
-        insight_idx=idx,
-        insight_id=insight_id,
-        kind=candidate.kind,         # type: ignore[arg-type]
+def _build_corpus_claim(candidate: SynthesisCandidate) -> Claim:
+    """Build the provisional corpus `Claim` for a candidate — born
+    `candidate` (the `new_corpus_claim` default). The compression test
+    reads it; a passing candidate is then transitioned to `active` by
+    the lifecycle spine (`consolidate_corpus`), not born active here."""
+    return new_corpus_claim(
         content=candidate.content,
+        kind=candidate.kind,
         citations=candidate.citations,
-        query=candidate.query,
-        generated_at=_now(),
         source_model_hash=candidate.source_model_hash,
         source_passage_hashes=candidate.source_passage_hashes,
-        verdict_state="accepted",    # promotion implies the test passed
-        verdict_signals=(),
-        lineage=(),
+        faithfulness=candidate.faithfulness,
+        query=candidate.query,
         intent_context=candidate.intent_context,
-        stale_if_sources_drift=True,
         encoder_version=candidate.encoder_version,
-        corroboration=corroboration,
-        falsification=falsification,
+        provenance=candidate.provenance,  # None → auto-derive the tier from the citations
     )
 
 
@@ -108,6 +94,7 @@ def promote_candidates(
     queries: list[QueryRecord],
     *,
     contents: archive.ArchiveContents | None = None,
+    require_lift: bool = True,
 ) -> list[PromotionOutcome]:
     """Run each candidate through the compression test; promote survivors.
 
@@ -142,8 +129,8 @@ def promote_candidates(
     insights = list(contents.insights)
 
     outcomes: list[PromotionOutcome] = []
-    new_insights: list[InsightPassage] = []
-    existing_ids = {i.insight_id for i in insights}
+    new_insights: list[Claim] = []
+    existing_ids = {c.claim_id for c in insights}
     # Running insight band: starts as the existing band (or an empty (0, D)
     # shell), grows by one row each time a candidate promotes. Eliminates
     # the O(N²) per-iteration vstack — each promotion does a single append.
@@ -155,23 +142,22 @@ def promote_candidates(
         )
 
     for i, candidate in enumerate(candidates):
-        # Build a temporary InsightPassage to feed the test (test reads
-        # citations + content_hashes; doesn't care about insight_idx yet).
-        candidate_idx = len(insights) + len(new_insights)
-        provisional = _build_insight_passage(candidate, candidate_idx)
+        # Build the provisional corpus claim to feed the test (test reads
+        # citations + content_hashes; the band-row join is positional).
+        provisional = _build_corpus_claim(candidate)
         emb = candidate_embeddings[i].astype("float32", copy=False)
 
-        # Pre-test: same insight_id already in the layer or queued this
-        # cycle? Skip the compression-test compute and return a clean
+        # Pre-test: same content fingerprint already in the layer or queued
+        # this cycle? Skip the compression-test compute and return a clean
         # 'idempotent' outcome. Mirrors memory.dedup's corroborate-or-add
         # idempotency — running the consolidator twice with the same
         # candidate is a no-op rather than a duplicate-reject.
-        if provisional.insight_id in existing_ids:
+        if provisional.claim_id in existing_ids:
             from .compression_test import CompressionTestResult
             outcomes.append(PromotionOutcome(
                 candidate_id=candidate.candidate_id,
                 promoted=False,
-                promoted_insight_id=None,
+                promoted_claim_id=None,
                 test_result=CompressionTestResult(
                     passed=False, reason="idempotent",
                     coverage_with=0.0, coverage_without=0.0, coverage_delta=0.0,
@@ -192,52 +178,69 @@ def promote_candidates(
             running_band if running_band.shape[0] > 0 else None,
             running_insights,
             queries,
+            require_lift=require_lift,
         )
 
-        if result.passed:
+        promoted = (
+            consolidate_corpus(
+                provisional,
+                signals=GateSignals(compression_test_pass=True),
+            )
+            if result.passed else None
+        )
+        if promoted is not None and promoted.state == "active":
+            # Compression test passed AND the spine committed the
+            # candidate→active transition. Only an `active` claim is
+            # written + reported promoted — a passing candidate the
+            # spine declined (trust below PROMOTE_CONFIDENCE_THRESHOLD,
+            # or below RETIRE_FLOOR) is NOT written, so its content
+            # fingerprint stays free for a later, better candidate.
             running_band = np.vstack([running_band, emb.reshape(1, -1)])
-            new_insights.append(provisional)
-            existing_ids.add(provisional.insight_id)
+            new_insights.append(promoted)
+            existing_ids.add(promoted.claim_id)
             outcomes.append(PromotionOutcome(
                 candidate_id=candidate.candidate_id,
                 promoted=True,
-                promoted_insight_id=provisional.insight_id,
+                promoted_claim_id=promoted.claim_id,
                 test_result=result,
             ))
         else:
+            # Either the compression test failed, or it passed but the
+            # spine declined the transition. `test_result` carries the
+            # distinction; `promoted` is False either way.
             outcomes.append(PromotionOutcome(
                 candidate_id=candidate.candidate_id,
                 promoted=False,
-                promoted_insight_id=None,
+                promoted_claim_id=None,
                 test_result=result,
             ))
 
-    # No survivors → no write.
+    # No survivors → no write. The claim↔band-row join is positional, so
+    # the final layer is just existing + newly-promoted in order.
     if not new_insights:
         return outcomes
 
-    # Compose final insight layer + atomic writeback. Re-stamp insight_idx
-    # to match the running_band's row order.
-    from dataclasses import replace as _replace
-    final_insights = [
-        _replace(ins, insight_idx=i)
-        for i, ins in enumerate(insights + new_insights)
-    ]
-    archive.write_insight_layer_in_place(p, final_insights, running_band)
+    archive.write_insight_layer_in_place(
+        p, insights + new_insights, running_band,
+    )
     return outcomes
 
 
 def _candidate_from_answer(
     question: str, answer: str, cited: list[dict],
     faithfulness: float | None = None,
+    provenance: str | None = None,
 ) -> SynthesisCandidate:
     """Build a SynthesisCandidate from a deep-search answer + its cited
     passages. `cited` rows must carry `passage_id` + `content_hash`.
-    `faithfulness` is the gate score — it seeds the Beta confidence prior."""
+    `faithfulness` is the gate score — it seeds the Beta confidence prior.
+    `provenance` overrides the trust tier (e.g. "user" when the user vouched);
+    None auto-derives it from the citations."""
     citations = tuple(
         InsightCitation(
             passage_id=p["passage_id"], char_span=None,
             confidence=float(p.get("score", 0.5)),
+            source_url=p.get("source_url"),  # carries external provenance; None for corpus
         )
         for p in cited
     )
@@ -256,6 +259,7 @@ def _candidate_from_answer(
         intent_context=None,
         encoder_version="gte-mb-768",
         faithfulness=faithfulness,
+        provenance=provenance,
     )
 
 
@@ -265,9 +269,11 @@ def promote_if_faithful(
     question: str,
     answer: str,
     evidence_passages: list[dict],
-    client,
+    client=None,
     model: str | None = None,
     contents: archive.ArchiveContents | None = None,
+    provenance: str | None = None,
+    faithfulness: float | None = None,
 ) -> tuple[FaithfulnessReport, list[PromotionOutcome]]:
     """Faithfulness-gate a deep-search answer, then promote if it passes.
 
@@ -279,14 +285,38 @@ def promote_if_faithful(
 
     `client` is an `anthropic.Anthropic`-shaped client for the faithfulness
     judge; inject a stub for tests.
+
+    CALLER-VERIFIED landing (`client=None`): the FREE agent/human path. When
+    no `client` is given, the LLM faithfulness gate is SKIPPED because the
+    caller asserts it already verified the claim traces to its sources
+    (agent-as-judge in a skill, or human curation in `rlat-curate`). An
+    explicit `faithfulness` score (0..1, the caller's verification
+    confidence) is then REQUIRED — without it the call refuses to land
+    (the safety floor: no silent unverified write). Everything downstream
+    still applies: the citations must carry `passage_id`+`content_hash`, the
+    compression test gates the write, and the lifecycle spine still requires
+    ≥2 distinct citations + trust ≥ 0.5. So `client=None` moves the
+    *grounding* judgement to the caller; it does not drop the other guards.
     """
     from ..field.encoder import encode
 
-    report = assess_faithfulness(
-        question, answer, evidence_passages, client, model=model,
-    )
-    if not report.faithful:
-        return report, []
+    if client is not None:
+        report = assess_faithfulness(
+            question, answer, evidence_passages, client, model=model,
+        )
+        if not report.faithful:
+            return report, []
+    else:
+        # No judge client → the caller asserts the claim is verified. Require an explicit confidence; refuse to
+        # land a caller-verified claim with no stated faithfulness (silence beats an unverified write).
+        if faithfulness is None:
+            return FaithfulnessReport(
+                claim_support=0.0, question_relevance=0.0, faithful=False, claims=(),
+                reason="caller-verified landing requires an explicit faithfulness score"), []
+        f = max(0.0, min(1.0, float(faithfulness)))
+        report = FaithfulnessReport(
+            claim_support=f, question_relevance=f, faithful=True, claims=(),
+            reason="caller-asserted (verified by agent/human, LLM gate skipped)")
 
     # Candidate citations must carry passage_id + content_hash for a real
     # provenance binding; a projection without the registry omits these.
@@ -298,57 +328,49 @@ def promote_if_faithful(
         return report, []
 
     candidate = _candidate_from_answer(
-        question, answer, cited, faithfulness=report.score,
+        question, answer, cited, faithfulness=report.score, provenance=provenance,
     )
-    embedding = encode([answer]).astype("float32")
+
+    # Verdict-anchored REGRESSION gate (2026-06 review, roadmap 4.3): the
+    # compression test's coverage guards ran with queries=[] in every
+    # production promotion — inert. The query set is the verdict-anchored
+    # prior demand: questions of previously-promoted ACTIVE claims (each
+    # passed the faithfulness gate when it landed), with their cited
+    # passage_ids as the coverage targets. A new landing must not REGRESS
+    # that covered demand (delta < 0 fails). Lift is deliberately NOT
+    # required (`require_lift=False`): a novel-topic fill scores delta == 0
+    # against prior demand by construction, and demanding lift would also
+    # reject legitimate synthesis whose sources are already retrievable
+    # (synthesis value ≠ routing value — the measured +0.082 authoring lift
+    # exists even when sources rank in top-K). One batched encode covers
+    # the answer + every query text. Best-effort: failure degrades to
+    # queries=[] (the pre-wire behaviour) — bookkeeping must never brick
+    # a landing.
+    if contents is None:
+        contents = archive.read(Path(km_path))
+    queries: list[QueryRecord] = []
+    try:
+        prior = [
+            c for c in (contents.insights or [])
+            if c.state == "active"
+            and getattr(c.facts, "query", None)
+            and c.facts.citations
+        ][-_VERDICT_QUERY_WINDOW:]
+        texts = [answer] + [c.facts.query for c in prior]
+        embs = encode(texts).astype("float32")
+        embedding = embs[:1]
+        for emb, c in zip(embs[1:], prior):
+            ids = frozenset(
+                cit.passage_id for cit in c.facts.citations if cit.passage_id
+            )
+            if ids:
+                queries.append(QueryRecord(emb, ids))
+    except Exception:  # noqa: BLE001 — coverage bookkeeping must not brick a landing
+        queries = []
+        embedding = encode([answer]).astype("float32")
+
     outcomes = promote_candidates(
-        km_path, [candidate], embedding, queries=[], contents=contents,
+        km_path, [candidate], embedding, queries=queries, contents=contents,
+        require_lift=False,
     )
     return report, outcomes
-
-
-def candidates_from_memory_rows(rows: Iterable[dict]) -> list[SynthesisCandidate]:
-    """Adapter: turn memory-row dicts into SynthesisCandidate DTOs.
-
-    Expected memory row shape (kind="synthesis_candidate"):
-        {
-          "id": str,
-          "content": str,
-          "citations": [{"passage_id": str, "char_span": [int, int]|None,
-                          "confidence": float}, ...],
-          "source_passage_hashes": [str, ...],
-          "source_model_hash": str,
-          "query": str | None,
-          "intent_context": str | None,
-          "encoder_version": str,
-        }
-
-    Memory rows missing required fields are skipped silently (the caller
-    upstream is responsible for sanity-checking; we don't crash a
-    consolidation cycle on one malformed row).
-    """
-    out: list[SynthesisCandidate] = []
-    for r in rows:
-        try:
-            citations = tuple(
-                InsightCitation(
-                    passage_id=c["passage_id"],
-                    char_span=(tuple(c["char_span"]) if c.get("char_span") else None),
-                    confidence=float(c.get("confidence", 0.9)),
-                )
-                for c in r["citations"]
-            )
-            out.append(SynthesisCandidate(
-                candidate_id=r["id"],
-                content=r["content"],
-                citations=citations,
-                source_passage_hashes=tuple(r["source_passage_hashes"]),
-                source_model_hash=r["source_model_hash"],
-                query=r.get("query"),
-                intent_context=r.get("intent_context"),
-                encoder_version=r.get("encoder_version", ""),
-                faithfulness=r.get("faithfulness"),
-            ))
-        except (KeyError, ValueError, TypeError):
-            continue
-    return out

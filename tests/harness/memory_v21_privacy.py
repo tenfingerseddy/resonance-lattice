@@ -242,12 +242,12 @@ def _check_capture_audit_correlation() -> int:
         Message, ToolCall, Transcript, capture,
     )
     from resonance_lattice.memory.redaction import Redactor
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "u"
         log = root / "redaction.log"
-        memory = Memory(root=root, encoder=ZeroEncoder())
+        memory = ExperienceClaimStore(root=root, encoder=ZeroEncoder())
         redactor = Redactor(audit_log_path=log)
         leaky = Transcript(
             session_id="leak",
@@ -269,14 +269,14 @@ def _check_capture_audit_correlation() -> int:
             cwd="/proj",
         )
         result = capture(leaky, store=memory, redactor=redactor)
-        if not result.row_id or result.redactions < 1:
+        if not result.claim_ids or result.redactions < 1:
             print(f"[memory_v21_privacy] FAIL (e): capture skipped or no "
                   f"redactions: {result}", file=sys.stderr)
             return 1
         log_text = log.read_text(encoding="utf-8")
-        rows, _ = memory.read_all()
-        captured = next(r for r in rows if r.row_id == result.row_id)
-        if "sk-ant-" in captured.text:
+        claims = memory.read_all()
+        captured = next(c for c in claims if c.claim_id == result.claim_ids[0])
+        if "sk-ant-" in captured.content:
             print(f"[memory_v21_privacy] FAIL (e): row text leaked secret",
                   file=sys.stderr)
             return 1
@@ -284,9 +284,9 @@ def _check_capture_audit_correlation() -> int:
             print(f"[memory_v21_privacy] FAIL (e): audit log leaked secret",
                   file=sys.stderr)
             return 1
-        if f"row_id={result.row_id}" not in log_text:
+        if f"row_id={result.claim_ids[0]}" not in log_text:
             print(f"[memory_v21_privacy] FAIL (e): audit log missing "
-                  f"row_id={result.row_id}", file=sys.stderr)
+                  f"row_id={result.claim_ids[0]}", file=sys.stderr)
             return 1
         if "pattern=anthropic_key" not in log_text:
             print(f"[memory_v21_privacy] FAIL (e): pattern attribution missing",
@@ -308,12 +308,12 @@ def _check_path_none_scrub() -> int:
         Message, ToolCall, Transcript, capture,
     )
     from resonance_lattice.memory.redaction import Redactor
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "u"
         log = root / "redaction.log"
-        memory = Memory(root=root, encoder=ZeroEncoder())
+        memory = ExperienceClaimStore(root=root, encoder=ZeroEncoder())
         redactor = Redactor(audit_log_path=log)
 
         leaky_no_path = Transcript(
@@ -332,7 +332,7 @@ def _check_path_none_scrub() -> int:
             cwd="/proj",
         )
         result = capture(leaky_no_path, store=memory, redactor=redactor)
-        if not result.row_id or result.redactions < 1:
+        if not result.claim_ids or result.redactions < 1:
             print(f"[memory_v21_privacy] FAIL (f): path=None tool-call leak "
                   f"NOT scrubbed; result={result}", file=sys.stderr)
             return 1
@@ -345,9 +345,9 @@ def _check_path_none_scrub() -> int:
             print(f"[memory_v21_privacy] FAIL (f): audit log leaked secret",
                   file=sys.stderr)
             return 1
-        rows, _ = memory.read_all()
-        captured = next(r for r in rows if r.row_id == result.row_id)
-        if "sk-ant-" in captured.text:
+        claims = memory.read_all()
+        captured = next(c for c in claims if c.claim_id == result.claim_ids[0])
+        if "sk-ant-" in captured.content:
             print(f"[memory_v21_privacy] FAIL (f): row text leaked secret",
                   file=sys.stderr)
             return 1

@@ -4,9 +4,8 @@
 `unique`    — passages in A with no near-match in B.
 `intersect` — passage pairs from A and B with cosine ≥ threshold.
 
-ALL ops here use the base band (cross-model rule per CLAUDE.md). Optimised
-bands are corpus-specific projections; their dimensions and orientations
-are not interoperable across knowledge models. `select_band(prefer="base")`
+ALL ops here use the base band (cross-model rule per CLAUDE.md) — the one
+representation comparable across knowledge models. `select_band(prefer="base")`
 enforces this — every op raises a clear error if either KM is missing the
 base band, rather than silently producing nonsense numbers.
 
@@ -33,8 +32,7 @@ def _require_base_pair(
     """Resolve both knowledge models' base bands or raise with a clear message.
 
     Cross-model ops have one entry condition: both KMs must carry a base
-    band of matching dim. Optimised bands are explicitly excluded — they
-    aren't comparable across KMs.
+    band of matching dim.
 
     This is the *dim-only* guard — cosine ordering is still meaningful
     across distinct backbone revisions even though magnitudes differ.

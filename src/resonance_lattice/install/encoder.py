@@ -1,6 +1,6 @@
 """HF download → ONNX export → optional OpenVINO conversion.
 
-Triggered automatically on first `rlat build` or `rlat optimise` if cache
+Triggered automatically on first `rlat build` if cache
 is empty. Can also be invoked explicitly via `rlat install-encoder`.
 
 Phase 1 deliverable.
@@ -65,7 +65,7 @@ def _required_artifacts(target: Path) -> list[Path]:
     host. OpenVINO IR is conditional — only required if Intel + openvino are
     both available, mirroring the install path's conversion gate. The torch
     snapshot is always required because torch_runtime reads from it directly
-    (build / optimise paths) and ONNX export reads from it too."""
+    (build paths) and ONNX export reads from it too."""
     base = [
         target / _REVISION_FILE,
         target / "tokenizer.json",

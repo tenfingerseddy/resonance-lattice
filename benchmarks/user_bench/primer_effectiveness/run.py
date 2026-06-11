@@ -82,7 +82,7 @@ class Trial:
 
 
 def _client():
-    from resonance_lattice.optimise.synth_queries import discover_api_key
+    from resonance_lattice._anthropic import discover_api_key
     import anthropic
     key = discover_api_key()
     if not key:

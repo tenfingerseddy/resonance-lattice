@@ -20,12 +20,9 @@ contain, then:
   3. Compose new band: `np.vstack(kept_rows + new_rows)`. New `passage_idx`
      numbers are assigned line-implicitly; ids stay stable.
   4. Rebuild ANN if N crosses the threshold (FAISS HNSW; ~100ms for 50K).
-  5. Re-project the optimised band if present: `optimised = new_base @ W.T;
-     L2-normalise`. Sub-second; no LLM call; no GPU. The footgun where
-     `rlat refresh` discards the optimised band disappears.
-  6. Single atomic write of the full ZIP via `archive.write` (tmp+os.replace).
+  5. Single atomic write of the full ZIP via `archive.write` (tmp+os.replace).
 
-Three correctness invariants (Audit 07, codex P0 fix):
+Two correctness invariants (Audit 07, codex P0 fix):
 
   1. No "manifest-only" path. Any caller updating `manifest.commit_sha` MUST
      also pass an Encoder + run the delta-apply. `apply_delta(encoder=None)`
@@ -34,8 +31,6 @@ Three correctness invariants (Audit 07, codex P0 fix):
      during bucketise (local mode reads files, remote mode trusts the
      SHA-verified cache from RemoteStore — both surfaces read bytes through
      `Store.fetch`-equivalent paths and hash what they read).
-  3. The optimised band re-projects from the new base. No silent staleness;
-     no $14-21 + 30 min penalty for routine refreshes.
 
 Audit 07 commit 3/8.
 """
@@ -53,7 +48,6 @@ from ..field.encoder import Encoder
 from . import archive
 from .archive import ArchiveContents
 from .base import compute_hash
-from .bands import write_band
 from .chunker import chunk_text
 from .registry import PassageCoord, compute_id
 
@@ -179,7 +173,6 @@ class ApplyResult:
     n_updated: int
     n_added: int
     n_removed: int
-    re_projected_optimised: bool
 
 
 def apply_delta(
@@ -196,10 +189,6 @@ def apply_delta(
     re-encoding" mode. This is the static signature that prevents the codex
     P0 silent-correctness regression: every code path that updates the
     archive must re-encode the deltas.
-
-    The optimised band, if present, is re-projected through the existing W
-    matrix. No LLM call, no GPU training, no $14-21 cost — just a single
-    matmul + L2 normalise.
 
     Bundled-mode archives are immutable post-build by design (source bytes
     are zstd-framed inside the ZIP). They route to `rlat build`, not here.
@@ -253,7 +242,6 @@ def apply_delta(
 
     # 4. Rebuild ANN (cheap; ~100ms for 50K).
     new_bands: dict[str, np.ndarray] = {"base": new_base}
-    new_projections: dict[str, np.ndarray] = {}
     new_ann_blobs: dict[str, bytes] = {}
     new_ann_meta: dict[str, dict[str, int | str]] = {}
     if ann.should_build_ann(len(new_registry)):
@@ -266,31 +254,7 @@ def apply_delta(
             "efSearch": ann.HNSW_EFSEARCH,
         }
 
-    # 5. Re-project the optimised band if present. Free.
-    re_projected = False
-    if "optimised" in contents.bands:
-        W = contents.projections.get("optimised")
-        if W is None:
-            raise ValueError(
-                f"{archive_path}: optimised band present but projection W "
-                f"missing — archive is malformed; rebuild with `rlat build` "
-                f"+ `rlat optimise` to recover."
-            )
-        # base → optimised: matmul through W.T then L2-normalise per row.
-        # W shape is (d_native, dim) where dim = base dim (768 for v2.0);
-        # new_base shape is (N, dim). Output shape (N, d_native).
-        optimised = new_base @ W.T
-        norms = np.linalg.norm(optimised, axis=1, keepdims=True)
-        optimised = optimised / np.maximum(norms, 1e-12)
-        new_bands["optimised"] = optimised.astype(np.float32, copy=False)
-        new_projections["optimised"] = W
-        if ann.should_build_ann(len(new_registry)):
-            opt_index = ann.build(new_bands["optimised"])
-            new_ann_blobs["optimised"] = ann.serialize(opt_index)
-            new_ann_meta["optimised"] = dict(new_ann_meta.get("base", {}))
-        re_projected = True
-
-    # 5b. Pass-through preserve the insight layer. The drift cascade is
+    # 5. Pass-through preserve the insight layer. The drift cascade is
     # applied as a post-pass by cmd_refresh against the rewritten archive
     # (so this function stays single-concern: source layer delta-apply).
     # Without this preservation, refresh on an insight-bearing archive
@@ -312,7 +276,7 @@ def apply_delta(
     metadata = contents.metadata
     for band_name in new_bands:
         if band_name in metadata.bands:
-            # Source-layer bands (base, optimised) count source passages;
+            # Source-layer bands count source passages;
             # insight band counts insight rows and must not be overwritten
             # by the source registry length.
             if band_name == archive.INSIGHT_BAND_NAME:
@@ -325,15 +289,21 @@ def apply_delta(
 
     # 7. Atomic write. local + remote archives don't carry source_files
     # in-archive; bundled is rejected up top.
+    # Preserve telemetry across the rewrite — archive.write would otherwise drop
+    # the append-only insight/telemetry.jsonl member, silently losing the capture
+    # log on every refresh/sync (insights are preserved above; telemetry must be
+    # too, or the cross-session self-improvement substrate vanishes on drift).
+    # Read from the still-intact on-disk archive before the atomic replace.
+    preserved_telemetry = archive.read_telemetry(archive_path)
     archive.write(
         archive_path,
         metadata=metadata,
         bands=new_bands,
         registry=new_registry,
-        projections=new_projections,
         ann_blobs=new_ann_blobs,
         remote_manifest=contents.remote_manifest,
         insights=preserved_insights,
+        telemetry=preserved_telemetry or None,
     )
 
     return ApplyResult(
@@ -343,6 +313,5 @@ def apply_delta(
         n_updated=delta.n_updated,
         n_added=delta.n_added,
         n_removed=delta.n_removed,
-        re_projected_optimised=re_projected,
     )
 

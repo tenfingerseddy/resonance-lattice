@@ -1,8 +1,8 @@
 """`rlat compare <a.rlat> <b.rlat> [--format text|json] [--sample N]`
 
 Cross-knowledge-model comparison — always uses the base band per base plan
-§3.4. A optimised + non-optimised pair compares on bases; optimised
-bands are not interoperable across knowledge models by design.
+§3.4. The base band is the one representation comparable across knowledge
+models.
 
 Reports:
 
@@ -31,7 +31,6 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
 
 from ..field.algebra import centroid
 from ..field.dense import sampled_mean_max_cosine

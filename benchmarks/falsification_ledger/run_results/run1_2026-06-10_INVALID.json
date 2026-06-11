@@ -1,0 +1,357 @@
+{
+ "INVALID": "gate yield 0/20 \u2014 blind arm contaminated: answerer subagents run inside this repo, where CLAUDE.md and the committed falsification record are visible; 9/20 blind answers cite the project record explicitly (q02,q03,q04,q05,q12,q14,q15,q17,q19). See DESIGN.md run-2 amendment.",
+ "workflow": "wf_04651a77",
+ "agent_count": 72,
+ "gated": [
+  {
+   "id": "q01",
+   "atom": "ce-rerankers",
+   "placebo_atom": "adaptive-rag-router",
+   "question": "Our nDCG@10 on scientific-paper benchmarks feels capped. The obvious next step people suggest is a reranker on top of dense retrieval. Should we add one, and which?",
+   "blind_answer": "No \u2014 don't add one by default. We've benched this twice and rerankers hurt strong dense retrieval on exactly these corpora: bge-reranker-v2-m3 and mxbai-rerank regressed our dense baseline on 4/5 BEIR sets, and a structural rerank blend was monotonically negative on SciFact (0.6655\u21920.6266) and NFCorpus. Cause: cross-encoders are MS MARCO-trained; their score distribution mismatches the top-k a strong BEIR-tuned dense retriever produces, so they reorder good results badly.\n\nDiagnose before adding anything. Measure recall@100. If it's low, no reranker can help \u2014 it only reorders what's retrieved; fix retrieval (chunking granularity, title+abstract in passage text, max-seq usage). If recall@100 is high but nDCG@10 is low, reranking is theoretically the right tool, but gate it: run the candidate reranker on your actual benchmark suite and only ship if it wins on most corpora, opt-in not default.\n\nIf you do trial one, skip the popular MS MARCO cross-encoders and try a listwise LLM reranker (e.g. RankZephyr-class) or one distribution-matched to your encoder \u2014 that distribution match is the real open gap.",
+   "blind_recommends": false,
+   "blind_evidence": "\"No \u2014 don't add one by default. We've benched this twice and rerankers hurt strong dense retrieval on exactly these corpora\" \u2014 the answer steers away and explicitly cites the prior local failures (bge-reranker-v2-m3/mxbai on 4/5 BEIR, structural rerank on SciFact); the alternative it floats (listwise LLM reranker) is gated, opt-in, and framed against the acknowledged failures."
+  },
+  {
+   "id": "q02",
+   "atom": "ce-rerankers",
+   "placebo_atom": "adaptive-rag-router",
+   "question": "We have budget for one new retrieval-quality component this quarter. What single addition gives the biggest accuracy win on top of a strong dense retriever?",
+   "blind_answer": "Add a cross-encoder reranker over the dense top-100 \u2014 it is the single highest-ceiling addition on BEIR, typically worth +3\u20136 nDCG@10 points over a mid-tier dense retriever like gte-modernbert-base. Concretely: retrieve top-100 by cosine, rescore with a modern reranker (bge-reranker-v2-m3 as the cheap baseline; a listwise LLM reranker like RankZephyr if latency allows), return reranked top-10.\n\nOne hard caveat from this project's own benchmarks: off-the-shelf rerankers regressed 4/5 BEIR corpora when stacked on a very strong dense baseline (Qwen3-8B) \u2014 training-distribution mismatch with strong-dense candidate sets. So gate it empirically: run the reranker against your current dense-only nDCG@10 on all benchmark corpora before making it default, and ship it auto-on only where it wins. Avoid the alternatives that already failed here: lexical/hybrid band (failed BEIR-5 parity), MS MARCO encoder fine-tuning (\u22128.3 pts avg), and structural rerank blending (monotonic negative).\n\nBudget: one reranker, validated per-corpus, default-on only on measured wins.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer endorses the reranker but explicitly acknowledges the prior local failure: \"One hard caveat from this project's own benchmarks: off-the-shelf rerankers regressed 4/5 BEIR corpora when stacked on a very strong dense baseline (Qwen3-8B)\" \u2014 and gates adoption on re-validation, so it is not a recommendation made without acknowledging the prior failure."
+  },
+  {
+   "id": "q03",
+   "atom": "msmarco-finetune",
+   "placebo_atom": "geometry-signals",
+   "question": "We want to fine-tune our embedding encoder to lift general retrieval quality. MS MARCO is the standard training set - what's the right recipe?",
+   "blind_answer": "Don't. This project already ran that experiment and it failed: a Stage 1 MS MARCO fine-tune regressed 4/5 BEIR corpora, average \u22128.3 nDCG@10 points versus the base encoder, and failed the quality gate (see project memory: project_stage1_fine_tune_negative). MS MARCO is web-QA-shaped; training on it overfits the encoder away from academic, argumentative, and technical distributions \u2014 exactly what BEIR measures. gte-modernbert-base has already seen MS MARCO-scale contrastive data; more of the same subtracts.\n\nIf you still want lift:\n1. Keep the base encoder as the default; any fine-tune ships opt-in only.\n2. Fine-tune in-domain, not on MS MARCO: generate synthetic queries from the target corpus (corpus-scoped \u2014 cross-corpus query reuse collapses training to noise), mine hard negatives with the base model.\n3. Use a light touch: low LR, few steps, LoRA or last-layers-only, so you stay near base weights.\n4. Gate before shipping: full BEIR-5 sweep, require no regression on any corpus, not just average lift. One-corpus wins here have repeatedly failed to transfer.\n\nCheaper wins usually live in chunking and retrieval plumbing, not encoder weights.",
+   "blind_recommends": false,
+   "blind_evidence": "\"Don't. This project already ran that experiment and it failed: a Stage 1 MS MARCO fine-tune regressed 4/5 BEIR corpora\" \u2014 the answer steers away from the approach and explicitly cites the prior local failure; its alternatives are in-domain fine-tuning, not MS MARCO."
+  },
+  {
+   "id": "q04",
+   "atom": "msmarco-finetune",
+   "placebo_atom": "geometry-signals",
+   "question": "Our base encoder is decent out of the box. Is it worth contrastive fine-tuning on a large public retrieval dataset to boost benchmark scores?",
+   "blind_answer": "No \u2014 skip it. This was tested empirically in this project: contrastive fine-tuning gte-modernbert-base on MS MARCO regressed 4/5 BEIR corpora, averaging \u22128.3 nDCG@10 points versus the base checkpoint. The base model was already trained on MS MARCO-style web data at far larger scale with better-curated negatives; your fine-tune just overfits to that one distribution and pulls the encoder away from academic, argumentative, and domain-shifted corpora \u2014 exactly what BEIR measures. A corpus-specific \"specialist\" tune (synthetic queries per target corpus) was also benchmarked and falsified at locked hyperparameters (\u22120.040 mean nDCG@10 on a 3-corpus soak).\n\nWhere fine-tuning does pay: in-domain data with real user queries and hard negatives mined from your own index, evaluated on a held-out slice of that same domain \u2014 not generic BEIR lift.\n\nCheaper wins first: chunking/passage hygiene, query-side instruction formatting matched to the encoder's training, dimension/ANN tuning, and honest baselines. If you want a genuine BEIR jump, swap to a stronger encoder (e.g., Qwen3-Embedding class) rather than fine-tuning the current one.",
+   "blind_recommends": false,
+   "blind_evidence": "\"No \u2014 skip it. This was tested empirically in this project: contrastive fine-tuning gte-modernbert-base on MS MARCO regressed 4/5 BEIR corpora, averaging \u22128.3 nDCG@10 points\" \u2014 the answer steers away from the approach and explicitly acknowledges the prior local failure."
+  },
+  {
+   "id": "q05",
+   "atom": "mrl-specialist",
+   "placebo_atom": "strip-filter",
+   "question": "Could we train a small corpus-specific projection (Matryoshka-style, lower dimension) per knowledge model so retrieval specialises to each corpus?",
+   "blind_answer": "No \u2014 this exact idea was already built, benchmarked, and falsified in this project. The per-corpus Matryoshka (MRL) specialist projection shipped as `rlat optimise` with an optional optimised band; under the locked hyperparameters it regressed 2 of 3 corpora, and the BEIR-3 soak measured \u22120.040 mean nDCG@10 against the gte-modernbert-base 768d baseline. The projected +6.8pt lift never materialised, and the feature was retired (bands and trainer removed from the v4.1 format). Evidence: docs/internal/HONEST_CLAIMS.md (retired-optimise section) and benchmarks/falsification_ledger/items.json (\"mrl-specialist\").\n\nTwo structural reasons not to retry: (1) cross-knowledge-model operations (compare, RQL overlap/unique) require a shared base band, so every archive must carry the 768d base anyway \u2014 the specialist band adds size without replacing anything; (2) the product thesis is single-recipe, zero retrieval knobs.\n\nIf the goal is per-corpus quality, the surviving levers are corpus-side (gap fills, insight band, curation), not encoder-side. If the goal is speed, FAISS HNSW on the base band already covers it.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach and cites the prior local failure: \"No \u2014 this exact idea was already built, benchmarked, and falsified in this project... the BEIR-3 soak measured \u22120.040 mean nDCG@10... The projected +6.8pt lift never materialised, and the feature was retired.\""
+  },
+  {
+   "id": "q06",
+   "atom": "mrl-specialist",
+   "placebo_atom": "strip-filter",
+   "question": "Users want faster search. Shrinking embeddings to 512d with an MRL adapter trained per corpus seems attractive - recommended?",
+   "blind_answer": "Not recommended. Three reasons:\n\n1. Wrong bottleneck. 768\u2192512d is a 1.5x speedup on the cheapest stage. Profile first: warm-query latency is usually dominated by query encoding, not the dot products. An ANN index (FAISS HNSW) gives 10-100x on the similarity stage with ~zero nDCG loss; ONNX/quantized encoder inference attacks the real cost. Ship those before touching dimensionality.\n\n2. Per-corpus training is fragile. This project already tried it: the locked MRL-specialist recipe regressed \u22120.040 mean nDCG@10 on a BEIR-3 soak, and the trainer was retired. Per-corpus adapters also break cross-corpus operations (compare/overlap need a shared base band), add a training step to every build, and create silent quality drift as corpora change.\n\n3. It adds a knob. Every corpus now carries a trained artifact users must rebuild and can't reason about.\n\nIf you genuinely need smaller vectors later, use a model natively trained with MRL and truncate (no per-corpus training), or int8/binary-quantize the existing 768d vectors \u2014 typically <1 point nDCG@10 loss, no training, fully reversible.",
+   "blind_recommends": false,
+   "blind_evidence": "\"Not recommended... This project already tried it: the locked MRL-specialist recipe regressed \u22120.040 mean nDCG@10 on a BEIR-3 soak, and the trainer was retired.\""
+  },
+  {
+   "id": "q07",
+   "atom": "structural-rerank",
+   "placebo_atom": "msmarco-finetune",
+   "question": "Our corpora are markdown docs with headings and sections. Should we blend document-structure signals (heading level, section position) into the ranking score?",
+   "blind_answer": "No \u2014 don't blend structure into the score. You already falsified this: the structural-rerank blend (Opportunity #5 Design B) was monotonically negative on both SciFact (0.6655\u21920.6266) and NFCorpus (0.3502\u21920.3367). Heading level and section position are weak relevance priors; mixing them with a strong dense cosine score adds noise and a tuning knob, which also violates the zero-knob recipe.\n\nUse structure at index time instead, where it demonstrably helps:\n\n1. **Heading-path prepend** \u2014 embed each chunk as `H1 > H2 > H3: chunk text`. The breadcrumb context flows into the 768d vector itself, so a chunk under \"Troubleshooting > Auth errors\" matches auth queries even when the body text is generic. This is the standard contextualized-chunking win and needs no score changes.\n2. **Section-aware chunking** \u2014 split on heading boundaries rather than fixed windows, so chunks are semantically coherent units.\n3. **Metadata, not score** \u2014 store heading path per passage for display/citation and optional post-filtering.\n\nIf you later want re-ranking lift, a trained cross-encoder is the lever \u2014 handcrafted structural features are not. Validate any change across corpus types before shipping.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away and cites the prior failure: \"No \u2014 don't blend structure into the score. You already falsified this: the structural-rerank blend (Opportunity #5 Design B) was monotonically negative on both SciFact (0.6655\u21920.6266) and NFCorpus (0.3502\u21920.3367).\""
+  },
+  {
+   "id": "q08",
+   "atom": "structural-rerank",
+   "placebo_atom": "msmarco-finetune",
+   "question": "We can compute cheap structural features at index time. Is mixing them into the dense score a good way to lift accuracy on prose benchmarks?",
+   "blind_answer": "No. On prose benchmarks this has been tried repeatedly here and it loses. Concrete results from your own runs:\n\n- Structural rerank (Design B) regressed monotonically: SciFact nDCG@10 0.6655\u21920.6266, NFCorpus 0.3502\u21920.3367.\n- Five corpus-geometry signals (frontier, balance, betweenness, TDA, compact-cone) benched: four KILL, one inconclusive. Only relative demand-conditioned signals survived.\n- B3 ripgrep hybrid still hurt dense on NFCorpus (\u22120.011); short-prose corpora carry no cross-chunk proximity signal to exploit.\n\nWhy: gte-mb already encodes the semantic content that structural proxies (length, position, link-degree, density) only weakly correlate with. Mixing them adds variance and a tuned blend weight that overfits one corpus and fails to transfer \u2014 exactly the single-corpus trap to avoid. It also breaks the \"single recipe, zero retrieval knobs\" design.\n\nCheap index-time features are better spent elsewhere: drift/verification metadata, demand-gap detection, ANN build \u2014 not the relevance score. If you must test, gate on transfer across \u22652 corpus types before shipping; don't trust one corpus.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away and cites the prior local failures: \"No. On prose benchmarks this has been tried repeatedly here and it loses.\" It explicitly references the failed runs (\"Structural rerank (Design B) regressed monotonically: SciFact nDCG@10 0.6655\u21920.6266\") and only allows a retry under a transfer gate, not as a recommendation."
+  },
+  {
+   "id": "q09",
+   "atom": "lexical-band",
+   "placebo_atom": "trained-heads",
+   "question": "Exact keyword matches sometimes lose to fuzzy semantic hits. Should we precompute a lexical (BM25-style) band inside the archive and fuse it with dense scores?",
+   "blind_answer": "No. This was tried and measured here \u2014 don't re-learn it.\n\nEvidence: a precomputed BM25-style band fused with dense scores failed BEIR-5 parity (4/5 corpora regressed, avg \u22122.7 pts nDCG@10). A lighter ripgrep-hybrid variant also stayed net negative vs pure dense (\u22120.011 on NFCorpus). With a strong modern encoder like gte-modernbert-base, global score fusion mostly injects noise: lexical only wins on a thin slice of queries (rare tokens, IDs, exact symbols), and fusion taxes every other query to serve that slice. Short-prose BEIR corpora have essentially no signal for it to exploit.\n\nWhat works better than an in-archive band:\n1. Keep dense as the only first-stage scorer \u2014 preserves the zero-knob recipe and avoids bloating the archive format.\n2. Handle the exact-match failure mode at query time, gated: only when the query contains rare/out-of-vocab tokens, run a cheap lexical rerank over the dense top-100 candidates (not the full corpus). Rerank-when-runnable, never fused globally.\n3. Validate any gate on 2+ corpus types before shipping \u2014 these effects are corpus-dependent.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer opens with \"No. This was tried and measured here \u2014 don't re-learn it\" and cites the prior local failure (\"failed BEIR-5 parity (4/5 corpora regressed, avg \u22122.7 pts nDCG@10)\"), steering away from the approach rather than endorsing it."
+  },
+  {
+   "id": "q10",
+   "atom": "lexical-band",
+   "placebo_atom": "trained-heads",
+   "question": "What's the best way to add lexical matching to our dense retriever: precompute term statistics into the artifact at build time, or compute lexical evidence at query time?",
+   "blind_answer": "Precompute at build time. BM25-style lexical evidence needs corpus-global statistics (document frequencies/IDF, doc lengths, tokenized postings) that simply don't exist at query time without scanning the whole corpus \u2014 so build-time is the only place to compute them correctly. They're also cheap: a compressed postings list + IDF table is typically a few percent of your embedding matrix size, and it keeps the artifact self-contained (works in bundled/remote modes, deterministic, reproducible, no dependency on source files or external tools at query time). Query-time-only approaches (e.g., grep/scan over sources) add latency, break when sources aren't local, and in our measurements still regressed vs dense-only.\n\nAt query time, do only the cheap part: score the query terms against the precomputed index and fuse with dense via RRF (rank fusion is robust; score interpolation needs per-corpus weight tuning).\n\nOne hard caveat: gate it empirically. On BEIR short-prose corpora, hybrid lexical frequently ties or hurts strong dense retrievers (we measured \u22122.7pt avg in one variant). Ship it opt-in or auto-disabled unless it passes nDCG@10 parity on your benchmark suite.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer endorses build-time precompute but explicitly acknowledges the prior local failure: \"hybrid lexical frequently ties or hurts strong dense retrievers (we measured \u22122.7pt avg in one variant). Ship it opt-in or auto-disabled unless it passes nDCG@10 parity\" \u2014 matching the project's WS3 #291 lexical-band result, so it is gated, not a clean re-recommendation."
+  },
+  {
+   "id": "q11",
+   "atom": "strip-filter",
+   "placebo_atom": "mrl-specialist",
+   "question": "Retrieved passages often contain irrelevant sentences. Should we add an LLM filter that strips low-relevance sentences from each passage before the reader sees them?",
+   "blind_answer": "No \u2014 this was already tested here and falsified twice. On single-shot retrieval, the strip-filter dropped dis_refuse \u221216.7pp: stripping \"low-relevance\" sentences removed the hedging/contextual evidence the reader needed to correctly refuse or qualify. On the deep-search loop it measured 5 wins / 2 losses at N=63 (p\u22480.23) \u2014 inconclusive \u2014 and the code was removed. Don't re-add without a much larger benchmark (see memory: feedback_strip_filter_single_shot_falsified, feedback_strip_filter_deep_inconclusive).\n\nWhy it fails in principle: modern readers are robust to irrelevant sentences but brittle to missing ones. Filtering is asymmetric-risk \u2014 a false strip silently deletes evidence, and an LLM relevance judge is noisy per-sentence. It also adds latency, cost, and a knob, against the zero-knobs recipe, and it breaks verbatim grounding (char offsets / content hashes no longer match the source).\n\nCheaper levers if noisy passages hurt: tighter chunking at build time, lower top-k, or let the reader quote verified spans (the existing verified-retrieval path) so irrelevant sentences cost nothing.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away, explicitly citing prior local failure: \"No \u2014 this was already tested here and falsified twice. On single-shot retrieval, the strip-filter dropped dis_refuse \u221216.7pp\""
+  },
+  {
+   "id": "q12",
+   "atom": "strip-filter",
+   "placebo_atom": "mrl-specialist",
+   "question": "To cut context tokens, we're considering CRAG-style relevance filtering of retrieved chunks before synthesis. Good idea?",
+   "blind_answer": "No \u2014 we already tried this and it failed. CRAG-style strip-filtering was benchmarked twice in this project and the code was removed:\n\n1. Single-shot retrieval: an LLM filter stripping low-relevance sentences before synthesis dropped the refuse-when-ungrounded rate by 16.7pp. Mechanism: removing \"irrelevant\" sentences also removes the contextual evidence the reader uses to know it lacks grounding, so it confabulates more instead of refusing.\n2. Deep-search loop: 5 wins / 2 losses at N=63 (p\u22480.23) \u2014 directionally positive but not significant, and not worth the per-chunk LLM call cost. Don't re-add without a much bigger benchmark.\n\nNote the irony for your stated goal: a relevance-judging LLM pass spends tokens per retrieved chunk to save tokens downstream, plus latency.\n\nIf context tokens are the problem, use deterministic levers first: lower top-k, a hard token budget on assembled context (truncate at passage boundaries), near-duplicate dropping, and shorter snippets with offsets so the reader can fetch full passages on demand. Those cut tokens without an extra model in the loop and without the grounding regression.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach and cites the prior local failures: \"No \u2014 we already tried this and it failed. CRAG-style strip-filtering was benchmarked twice in this project and the code was removed\""
+  },
+  {
+   "id": "q13",
+   "atom": "adaptive-rag-router",
+   "placebo_atom": "lexical-band",
+   "question": "Some queries need multi-hop research, others a single lookup. Should we add an LLM router that classifies each query and picks the retrieval mode?",
+   "blind_answer": "No. You already falsified this: the Adaptive-RAG-style prompt-only Haiku router was benched and killed (\u22127.8pp accuracy, systematically over-routed to single-shot). Don't retry without a trained classifier and a much bigger benchmark \u2014 and that contradicts the zero-knob thesis anyway.\n\nThe better pattern is escalation on evidence, not pre-classification:\n\n1. Always start with single-shot dense top-k. It's cheap (~ms) and right for most queries.\n2. Escalate to the multi-hop loop (deep-search) only when the first pass looks thin \u2014 the caller (agent or user) sees the actual results before deciding, which a pre-router never does.\n3. Let the multi-hop loop self-terminate early: if hop 1 answers the question, it stops. That makes \"just use deep-search\" safe for callers who know they're researching, without a router.\n\nA pre-router must predict difficulty from the query string alone; post-retrieval escalation gets to look at the evidence first, so it's strictly better informed and costs one cheap dense search you'd run anyway. Mechanical fallback triggers (low top-1 cosine, sparse coverage) can automate step 2 later if demand appears.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach and cites the prior failure: \"No. You already falsified this: the Adaptive-RAG-style prompt-only Haiku router was benched and killed (\u22127.8pp accuracy, systematically over-routed to single-shot).\" It instead recommends post-retrieval escalation, not a pre-classifying router."
+  },
+  {
+   "id": "q14",
+   "atom": "adaptive-rag-router",
+   "placebo_atom": "lexical-band",
+   "question": "We want to save tokens by detecting easy questions and skipping the deep-search loop. What's the lightest way - a small-model prompt classifier?",
+   "blind_answer": "Don't use a prompt classifier \u2014 this project already tried it. An Adaptive-RAG-style prompt-only Haiku router was benchmarked and killed: \u22127.8pp accuracy, systematically over-routed to single-shot (see feedback_router_adaptive_rag_falsified). Don't retry that without a trained classifier and a much bigger bench.\n\nThe lightest working approach is retrieve-then-decide, using signals you already compute for free:\n\n1. Always run the cheap single-shot dense retrieval first (it's fast and costs no tokens).\n2. Gate escalation to deep-search on retrieval geometry: top-1 cosine score, margin between hit 1 and hit k (e.g. score@1 \u2212 score@5), and score concentration across the top-k. High top-1 + wide margin = easy question, answer from single-shot; flat, low-scoring top-k = escalate.\n3. Calibrate the two thresholds once on a labeled split (~100 queries where you know which needed multi-hop), targeting high recall on \"needs deep-search\" \u2014 a missed escalation costs answer quality, a false escalation only costs tokens.\n\nZero extra model calls, zero latency added, and the thresholds live in config, not a prompt.",
+   "blind_recommends": false,
+   "blind_evidence": "\"Don't use a prompt classifier \u2014 this project already tried it. An Adaptive-RAG-style prompt-only Haiku router was benchmarked and killed: \u22127.8pp accuracy\" \u2014 the answer steers away from the approach, explicitly cites the prior local failure, and recommends a different (retrieve-then-decide, threshold-based) mechanism instead."
+  },
+  {
+   "id": "q15",
+   "atom": "trained-heads",
+   "placebo_atom": "strip-filter",
+   "question": "Could we train a small projection head on top of the frozen encoder to adapt embeddings to each domain without full fine-tuning?",
+   "blind_answer": "No \u2014 this project has already tried it, repeatedly, and it failed. The history is decisive:\n\n1. Trained projection/adapter heads on the frozen encoder went 0-for-9 (later 0-for-10) across attempts; only untrained random projections plus pipeline engineering survived.\n2. The MRL \"specialist\" head (a per-domain linear projection trained on synthetic corpus-scoped queries) initially looked good (+0.119 R@5 on one corpus) but a BEIR-3 soak with the locked hyperparameters regressed mean nDCG@10 by \u22120.040, falsifying the projected +6.8pt lift. The `rlat optimise` trainer was retired and the optimised bands removed from the v4.1 format.\n3. Full fine-tuning fared worse (MS MARCO SFT: \u22128.3pt avg on BEIR).\n\nMechanistically, a small head trained on synthetic queries overfits the synthetic query distribution, not the domain \u2014 lifts didn't transfer across corpus types, which is this project's standing validation gate.\n\nRecommendation: keep the single zero-knob recipe (frozen gte-modernbert-base, base band). If domain adaptation pressure returns, invest in corpus-side levers (chunking, demand-conditioned curation, gap-filling) rather than embedding-space heads, and require multi-corpus-type validation before any retry.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer explicitly steers away, citing the prior local failures: \"No \u2014 this project has already tried it, repeatedly, and it failed.\" and recommends \"keep the single zero-knob recipe (frozen gte-modernbert-base, base band)\" instead of the projection head."
+  },
+  {
+   "id": "q16",
+   "atom": "trained-heads",
+   "placebo_atom": "strip-filter",
+   "question": "Asymmetric query/document projections are cheap to train. Worth adding to close the query-document vocabulary gap in our retrieval?",
+   "blind_answer": "Skip it. This is already falsified in your own history: asymmetric projection measured \u22120.8% nDCG, and trained projection heads went 0-for-9. The mechanism explains why \u2014 gte-modernbert-base is a symmetric bi-encoder optimised end-to-end. A cheap linear query/doc head can only re-weight the existing 768d space; it can't inject lexical signal the encoder never captured. The vocabulary gap is lexical mismatch, and dense models close it in the encoder, not in a bolt-on projection. \"Cheap to train\" also hides the real cost: it adds a query-vs-doc asymmetry knob, breaking the single-recipe, zero-knob contract, and risks corpus-specific overfit (recall MS MARCO fine-tune regressed 4/5 BEIR).\n\nIf a specific corpus genuinely suffers from term mismatch, your proven lever is the lexical sidecar (rerank-when-runnable, already the auto default), not new projections \u2014 and even the lexical band failed BEIR-5 parity.\n\nRecommendation: don't add. If you ever retry, gate it behind a paired BEIR-5 nDCG@10 run that must beat base before it ships, and keep it opt-in only.",
+   "blind_recommends": false,
+   "blind_evidence": "\"Skip it. This is already falsified in your own history: asymmetric projection measured \u22120.8% nDCG, and trained projection heads went 0-for-9.\" \u2014 the answer steers away and explicitly cites the prior local failures; its recommendation is \"don't add.\""
+  },
+  {
+   "id": "q17",
+   "atom": "eml-fusion",
+   "placebo_atom": "adaptive-rag-router",
+   "question": "We compute an energy/log-likelihood signal per passage at build time. Should we fuse it with cosine similarity at retrieval time (e.g. a weighted log-sum) to sharpen ranking?",
+   "blind_answer": "No. This exact idea was tried and falsified three times in this project (see memory: project_eml_retrieval_falsified). The failure mode is mathematical, not tuning: in a weighted log-sum, the exponential-scale term dominates the log term, so the fusion collapses to exp-only behaviour or produces NaNs \u2014 you never get a stable blend. Related blending attempts (structural rerank on BEIR prose) were also monotonically negative on SciFact and NFCorpus.\n\nIt also violates the product thesis: single recipe, zero retrieval knobs. Any fusion weight becomes a corpus-dependent knob, and prior lifts here have repeatedly failed to transfer across corpus types.\n\nPractical recommendation:\n- Keep the build-time energy/log-likelihood signal, but use it offline \u2014 corpus self-audit, curation, demand-gap ranking, diagnostics \u2014 not in the ranking score.\n- Leave cosine top-k untouched at retrieval time.\n- Note the existing user-facing EML transforms (--sharpen/--soften/--contrast/--tune) are a separate, deliberate surface; don't conflate or remove them.\n\nIf you want ranking gains, demand-conditioned relative signals are the only geometry family that survived benching; absolute per-passage scores did not.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away and cites the prior local failure: \"No. This exact idea was tried and falsified three times in this project (see memory: project_eml_retrieval_falsified).\""
+  },
+  {
+   "id": "q18",
+   "atom": "eml-fusion",
+   "placebo_atom": "adaptive-rag-router",
+   "question": "Our build pipeline produces a per-passage corpus-typicality (energy) score. Combining it with the dense score at query time via exponential weighting - sensible?",
+   "blind_answer": "Short answer: no, not as a default, and not exponential.\n\nTwo problems. First, corpus-typicality is a query-independent prior. Fusing it with a query-dependent relevance score systematically pulls ranking toward \"typical\" passages regardless of the query \u2014 but BEIR relevance often rewards the atypical, specific passage. A static per-passage bias is exactly the wrong shape for nDCG@10. Second, exponential weighting is numerically fragile: it collapses to whichever term dominates (or NaNs) under score-scale drift. This project already falsified retrieval-time energy/exponential fusion three times for that reason \u2014 don't re-run that experiment blind.\n\nPractical path: keep it out of the default scoring recipe. If you must probe it, (1) make it additive in log-space, not exponential; (2) treat typicality as a relative, demand-conditioned signal, not an absolute prior; (3) gate behind an opt-in flag with auto-off default; (4) validate across corpus TYPES before any claim \u2014 single-corpus lifts have repeatedly failed to transfer here. Prior strongly says it regresses; require a multi-corpus significant win before shipping.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away and cites the prior failure: \"This project already falsified retrieval-time energy/exponential fusion three times for that reason \u2014 don't re-run that experiment blind.\" Its lead is \"Short answer: no, not as a default,\" and any probe path is gated and framed against a prior that \"strongly says it regresses.\""
+  },
+  {
+   "id": "q19",
+   "atom": "geometry-signals",
+   "placebo_atom": "msmarco-finetune",
+   "question": "Can we mine the embedding geometry (cluster-frontier distance, centrality, topological features) to predict which passages are high-value, without any query or demand signal?",
+   "blind_answer": "No \u2014 this was benchmarked on this project (2026-06-06, `.claude/plans/insight-band-outcome/GEOMETRY_EXPERIMENTS.md`) and the answer is empirically negative: 4 KILLs, 1 NEEDS-MORE, zero clean ADDs across four corpus types.\n\n- Frontier/answerability: best relative signal AUC 0.664 lost to plain absolute top-1 cosine (0.676); sign-flips across corpora.\n- Cluster/balance maps: 0/3 corpora at precision/recall \u22650.8 \u2014 topics don't form clean clusters on the compact embedding cone (everything sits near cos ~0.6).\n- Betweenness centrality: beats random 7\u201377\u00d7 but loses to free node-degree on 3/3 \u2014 it's a pure hub effect.\n- TDA (persistent homology): planted-hole H1 persistence 0.039 < noise floor 0.087; the cone fills holes.\n\nRoot cause: gte-modernbert embeddings live on a compact cone, so absolute geometric position carries almost no value signal. The only survivor (NEEDS-MORE) is demand-conditioned: passages without near-duplicates lose more coverage when ablated \u2014 but that needs query traffic. Recommendation: don't retry query-free geometry; mine demand telemetry (search logs, store/self_audit demand gaps) instead, with geometry only as a relative redundancy modifier.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer explicitly steers away, citing the prior local failure: \"this was benchmarked on this project (2026-06-06 ...) and the answer is empirically negative: 4 KILLs, 1 NEEDS-MORE\" and concludes \"Recommendation: don't retry query-free geometry; mine demand telemetry ... instead\"."
+  },
+  {
+   "id": "q20",
+   "atom": "geometry-signals",
+   "placebo_atom": "msmarco-finetune",
+   "question": "We want a standalone importance score per passage derived from corpus geometry alone, to prioritise curation. What signals would you compute?",
+   "blind_answer": "Prior benchmarking here matters: absolute geometry signals (frontier distance, betweenness, balance, TDA) were tested and killed \u2014 they don't predict curation value. Only relative, demand-conditioned signals survived. So compute a small composite:\n\n1. Uniqueness \u2014 mean cosine to k nearest neighbours (k\u224810) in the kNN graph. Low similarity = irreplaceable content; high = redundancy/dedup candidate.\n2. Coverage gain \u2014 facility-location marginal gain: how many neighbours this passage covers (within a cosine radius) that no other passage covers. Greedy-computable, directly maps to \"what we lose if removed\".\n3. Hubness \u2014 count of top-k lists the passage appears in across a probe query set (or the corpus's own passages as pseudo-queries). High hubness = high exposure, prioritise for accuracy review.\n4. Outlierness \u2014 distance to corpus centroid / local density ratio. Flags noise or off-topic, not importance.\n\nScore: coverage gain \u00d7 uniqueness, weighted by hubness if you have any query traffic. Demand (real query logs) dominates pure geometry whenever available \u2014 fold it in first. Skip graph-centrality and topology measures; they were monotonic dead ends on BEIR-style prose.",
+   "blind_recommends": false,
+   "blind_evidence": "\"absolute geometry signals (frontier distance, betweenness, balance, TDA) were tested and killed \u2014 they don't predict curation value. Only relative, demand-conditioned signals survived.\" The answer explicitly acknowledges the prior local failure and steers away (\"Skip graph-centrality and topology measures; they were monotonic dead ends\"), proposing only relative/demand-aware alternatives."
+  }
+ ],
+ "decisive_ids": [],
+ "ledger_answers": [],
+ "topical_answers": [],
+ "placebo_answers": [],
+ "collateral_blind": [
+  {
+   "id": "k01",
+   "question": "How should we chunk long markdown documents for embedding - by heading, fixed tokens, or something else?",
+   "blind_answer": "Use structure-first chunking, not pure headings or pure fixed tokens: split at markdown heading boundaries, then within each section merge paragraphs to a target size, sentence-splitting anything oversize. Headings alone give wildly variable chunks (3-word stubs to 5k-token walls); fixed tokens slice mid-thought and hurt CLS-pooled cosine retrieval.\n\nConcretely for your stack:\n\n1. Sections never cross a heading boundary \u2014 that is the strongest free semantic signal in markdown.\n2. Target ~250\u2013500 tokens per chunk (your current 200\u20133200 char range is roughly right; tighten max toward ~1500\u20132000 chars \u2014 long chunks dilute a single 768d CLS vector even though gte-modernbert accepts 8192 tokens).\n3. Prepend the heading breadcrumb (\"Doc Title > H2 > H3\") to the embedded text only, not the stored span \u2014 this disambiguates short sections and keeps your (char_offset, char_length) verified-retrieval contract intact.\n4. Merge undersized sections with siblings under the same parent heading; emit tails rather than drop them.\n5. Skip overlap \u2014 it adds index size and near-duplicate hits for little nDCG@10 gain when boundaries are semantic.\n\nThis is a small extension to store/chunker.py: heading-aware paragraph splitting plus an embed-time prefix."
+  },
+  {
+   "id": "k02",
+   "question": "What's a clean way to pin the encoder model revision so builds stay reproducible?",
+   "blind_answer": "Pin the Hugging Face commit SHA, not a tag or \"main\", in one constant.\n\n1. **Single source of truth.** One module-level constant, e.g. `ENCODER_REVISION = \"<40-char commit sha>\"` next to `MODEL_ID = \"Alibaba-NLP/gte-modernbert-base\"`. Resolve it once (`HfApi().model_info(repo_id, revision=\"main\").sha`) when you deliberately bump, then hard-code the SHA. Tags and branches are mutable; commit SHAs are not.\n\n2. **Pass it everywhere.** Every `from_pretrained(...)` / `hf_hub_download(...)` call takes `revision=ENCODER_REVISION`. Never let a code path fall back to default `main`.\n\n3. **Stamp it into the artifact.** Write the revision (plus model id, embedding dim, pooling) into each build's `metadata.json`. At load/search time, compare the archive's recorded revision against the installed encoder's and fail loudly on mismatch \u2014 embeddings from different revisions aren't comparable, and cosine scores will silently degrade.\n\n4. **Verify on bump.** Treat a revision change like a format change: re-run your determinism check (same input \u2192 byte-identical embeddings) and the BEIR nDCG@10 gate before raising the pin.\n\nYour codebase already follows this shape (`get_pinned_revision()` in `src/resonance_lattice/install/encoder.py`, stamped via `build/pipeline.py`); keep that pattern."
+  },
+  {
+   "id": "k03",
+   "question": "How should we version our archive file format so old files stay readable as the format evolves?",
+   "blind_answer": "Use a two-part format version (`major.minor`) stored in `metadata.json`, plus per-component versioning \u2014 and define reader rules, not just numbers:\n\n1. **Major = breaking.** Reader refuses files with a higher major than it knows, with a clear \"upgrade rlat or rebuild\" error.\n2. **Minor = additive.** New optional keys, new optional ZIP members (e.g. `ann/`, `manifest.json`). Readers must ignore unknown keys/members \u2014 write that rule into the spec and test it.\n3. **Version the expensive part separately.** Embeddings are the costly artifact: record `encoder_id + revision + dim + pooling` in metadata and treat that tuple, not the format version, as the compatibility key for cross-archive ops (compare/overlap). Format can evolve without invalidating embeddings.\n4. **Migrate on read where cheap, on write always.** Old-major files: ship a one-shot `rlat convert`-style upgrader rather than dual codepaths forever; support reading the previous major only.\n5. **Golden-file tests.** Check tiny fixture archives of every supported version into the repo; CI opens them all. This is what actually keeps old files readable.\n\nBump minor liberally, major almost never."
+  },
+  {
+   "id": "k04",
+   "question": "What's a good way to cache encoder outputs so incremental rebuilds only re-embed changed passages?",
+   "blind_answer": "Use a content-addressed embedding cache, separate from the .rlat artifact.\n\nKey: SHA-256 of the canonicalized passage text (post-chunking, post-normalization), prefixed with a namespace hash of everything that changes the output \u2014 model id, pinned HF revision, pooling (CLS), L2-norm flag, max-seq, dim, and runtime (ONNX vs PyTorch can differ at float level; include it or accept tolerance). Encoder upgrades then invalidate automatically.\n\nStorage: one SQLite file (key BLOB PRIMARY KEY, vec BLOB) holding raw float32 \u2014 768d is 3 KB/row, fine to millions of rows, atomic, no server. Put it at ~/.cache/rlat/embeddings.sqlite so all archives and rebuilds share it. LMDB if you outgrow SQLite.\n\nRebuild flow: chunk sources, hash every passage, bulk-lookup, batch-encode only misses (keeps GPU saturated), write back, then assemble the band npz in passage order. Hashing is so cheap that \"what changed\" detection falls out for free \u2014 no mtime tracking needed.\n\nGuards: a determinism test that re-embeds a fixed sample and compares against cached vectors (catches silent runtime drift), and a simple size cap with LRU eviction by last-used timestamp."
+  },
+  {
+   "id": "k05",
+   "question": "How do we test that our ANN index and exact cosine search agree closely enough?",
+   "blind_answer": "Test it as a recall-vs-exact parity gate, plus an end-metric check.\n\n1. Ground truth: for a sample of real queries (100-1000), compute exact cosine top-k by brute-force matmul over the same L2-normalised embedding matrix the index was built from.\n2. Primary metric: recall@10 \u2014 fraction of exact top-10 IDs the ANN top-10 returns, averaged over queries. Gate at >=0.98 (HNSW with efSearch=128 should clear this easily; <0.95 means a config or build bug). Handle score ties by accepting any ID whose exact score is within 1e-6 of the true rank-10 score.\n3. End-metric check: run nDCG@10 on one or two BEIR corpora with ANN on vs off; require delta <= 0.002 absolute. This catches cases where recall looks fine but the misses are exactly the relevant docs.\n4. Run on real corpora, not synthetic \u2014 your own ann.py note shows synthetic high-intrinsic-dim data gives misleadingly low recall. Cover N just above the 5000 ANN threshold and one large corpus.\n5. Make (1)-(2) a fast deterministic test in the harness (fixed seed, cached embeddings); run (3) at stage boundaries."
+  },
+  {
+   "id": "k06",
+   "question": "How should the CLI present retrieval scores to users - raw cosine, normalised, or banded labels?",
+   "blind_answer": "Show banded labels by default; keep raw cosine in JSON.\n\nRaw cosine from gte-modernbert-base clusters in a narrow band (~0.55\u20130.85) and isn't comparable across queries or corpora \u2014 users read 0.71 as \"71% relevant,\" which is wrong. Don't min-max normalise per result list either: the top hit always becomes 1.0, which manufactures false confidence on bad queries.\n\nPractical recipe:\n- Text/human output: 3 bands \u2014 strong / moderate / weak \u2014 with thresholds calibrated once empirically (e.g., score distributions of relevant vs non-relevant pairs on your BEIR runs), not invented. Optionally append the raw value in dim text for debugging.\n- JSON/programmatic output: raw cosine, unaltered, plus the band label. Never transform the number tools consume.\n- Add one relative signal: gap-to-top (top_score \u2212 this_score). A large gap is your most reliable \"this hit is probably noise\" cue, and it's query-local, so it needs no calibration.\n\nDocument that scores rank within one query only \u2014 never compare across queries."
+  },
+  {
+   "id": "k07",
+   "question": "What's a sensible structure for integration tests of a Python CLI with heavy model dependencies?",
+   "blind_answer": "Split tests into three tiers, selected by pytest markers:\n\n1. **Unit/CLI-contract (default, no model).** Test argument parsing, error paths, JSON output schemas, and exit codes with the encoder behind a thin interface. Inject a fake encoder (deterministic seeded `np.random` vectors keyed by text hash, correct 768d + L2 norm) so build\u2192search\u2192profile round-trips run in milliseconds. Most CLI bugs live here.\n\n2. **Integration with a tiny real artifact (marker: `integration`).** Check a pre-built fixture archive (.rlat with ~20 passages, real embeddings) into the repo or a release asset. Tests exercise read paths \u2014 search, compare, convert, refresh \u2014 against real serialized data without loading the encoder. Validates format compatibility cheaply.\n\n3. **Model-real E2E (marker: `model`, opt-in).** A handful of smoke tests that load the actual encoder once via a session-scoped fixture, build a micro-corpus, and assert sanity (known query ranks known passage #1; embedding checksum matches a pinned value for determinism). Run in CI nightly or on encoder/pinned-revision changes only, with the HF model cached.\n\nKey practices: session-scoped model fixture (one load), `tmp_path` for all archives, golden-file assertions on CLI text output, and `--changed`-style selection so tier 3 never blocks the inner loop."
+  },
+  {
+   "id": "k08",
+   "question": "What metadata should we store per passage to support provenance display in results?",
+   "blind_answer": "Store, per passage at build time:\n\n1. **source_file** \u2014 path relative to corpus root (display + re-open).\n2. **char_offset + char_length** \u2014 exact span in the source file, so the UI can show \"file.md, chars 1240\u20131890\" and re-extract the quote. Char coordinates beat line numbers (stable across encoding, cheap to slice).\n3. **content_hash** \u2014 SHA-256 of the passage text at build time. Lets you verify at serve time that the source hasn't drifted; display \"verified\" vs \"drifted\" per hit.\n4. **doc_id / passage_id** \u2014 stable IDs (hash-derived, not positional) so citations survive rebuilds.\n5. **title / section heading** \u2014 nearest heading breadcrumb for human-readable display (\"STORE.md \u203a Format v4.1\").\n6. **build timestamp + source mtime** \u2014 answers \"how old is this evidence.\"\n7. Optional: **source URL** for remote/fetched docs, so provenance links out.\n\nKeep it in the passages JSONL alongside text, not a sidecar \u2014 provenance must travel with the archive. At query time, re-hash the live span against content_hash and attach a drift_status (verified/drifted/missing) to every hit; that's the difference between displaying provenance and proving it. (This is exactly the schema rlat's verified-retrieval layer ships.)"
+  }
+ ],
+ "collateral_served": [
+  {
+   "kind": "collateral_served",
+   "id": "k01",
+   "answer": "Keep your current structure-aware chunker (passage_v1: paragraph-first, merge to \u2265200 chars, sentence-split above 3200) and add one markdown-specific rule: split at heading boundaries first, so no chunk spans two sections, then prepend the heading path (\"Guide > Setup > Auth\") to the *embedded* text only \u2014 store offsets still point at raw source, so verified retrieval is untouched. Heading-path prepending is the cheap, well-evidenced win for markdown: it disambiguates short sections whose text alone is generic.\n\nAvoid pure fixed-token windows with overlap: they cut mid-sentence, duplicate content, and break your non-overlapping char-offset invariant. Avoid pure heading-only chunks: sections vary wildly in size; oversize ones still need your sentence-split fallback, and tiny ones need merging \u2014 which is exactly what passage_v1 already does.\n\nKeep chunks in the ~50\u2013800 token band despite the 8192 max-seq; CLS pooling dilutes long passages.\n\nPer project rules, gate it: A/B the heading-split + path-prefix variant against passage_v1 (the planned Audit 05) on at least two corpus types before changing the default. Note structural-rerank's failure was score blending, not chunk boundaries \u2014 different mechanism, no conflict."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k02",
+   "answer": "Pin the 40-character HF commit SHA \u2014 never \"main\" or a tag \u2014 as a single package constant, and make it the only path to the model. The pattern (already implemented in this repo, src/resonance_lattice/install/encoder.py):\n\n1. One constant, e.g. `PINNED_REVISION`, in the install module. At install time, resolve any symbolic ref (\"main\", a tag) to its concrete SHA via `HfApi().model_info(...).sha`, then `snapshot_download(repo_id, revision=<sha>)` into a per-revision cache directory containing a `revision.txt` marker.\n2. Every encoder load goes through `get_pinned_revision()` \u2014 the constant wins if cached; explicit `Encoder(revision=...)` overrides for dev.\n3. Stamp the same SHA into each archive's `metadata.json` (`backbone.revision`) at build time, so cross-archive ops can refuse or warn on mismatch \u2014 the artifact records what produced it, not just the code.\n4. Guard with a determinism test: encode fixed sentinel strings and compare against stored vectors/checksums (this caught the transformers-5.x/torch-2.12 ONNX export break; the `[build]` extra pins those too).\n\nSHA in code, SHA in artifact, determinism probe in CI. Tags can move; commit hashes cannot."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k03",
+   "answer": "Current code (store/metadata.py, archive.py) uses a single int FORMAT_VERSION = 4 with strict equality \u2014 any change, even additive, strands old files. Replace with major.minor:\n\n1. **Major = breaking, minor = additive.** Store `format_version: \"4.1\"` (you already call it v4.1 in docs but write `4`). Reader rule: refuse if major differs; accept any minor \u2264 or \u2265 its own, ignoring unknown fields.\n\n2. **Tolerant parsing.** Metadata reads must skip unknown JSON keys (raw.get already does this \u2014 keep it a hard rule). New capabilities go in optional ZIP members (you already do this: ann/, source/, manifest.json) \u2014 old readers ignore extra members, new readers probe for them. This is what lets minor bumps stay free.\n\n3. **Never mutate meaning of an existing field.** Rename = new field + major bump.\n\n4. **One migration tool, not N readers.** Extend `rlat convert` to upgrade old majors in place (re-write metadata/layout, reuse embeddings \u2014 same pattern as store-mode convert). Readers only ever support the current major; convert handles history.\n\nSince the product is unreleased, do the int\u2192major.minor switch now, before v4 files exist in the wild."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k04",
+   "answer": "Treat the previous .rlat archive itself as the cache \u2014 no sidecar store needed.\n\n1. Cache key: SHA-256 of the passage text concatenated with an encoder fingerprint (model ID + pinned HF revision + pooling + max-seq + normalization + runtime/precision, e.g. ONNX vs PyTorch). Any fingerprint change invalidates everything, which is correct.\n2. At rebuild: first short-circuit unchanged files by file-level hash/mtime. For changed files, re-chunk deterministically, hash each passage, and look up vectors from the old archive's base.npz via its passages.jsonl hash index. Re-embed only misses; copy hits.\n3. Write the new npz from the merged set, then rebuild the FAISS HNSW index from scratch \u2014 index build is cheap relative to encoding, and incremental HNSW deletes are messy.\n\nTwo cautions: chunking must be deterministic (chunker version belongs in the fingerprint \u2014 boundary changes silently invalidate everything), and verify encoder determinism across runtimes before sharing a cache between them; ONNX and PyTorch outputs differ at float tolerance.\n\nThis is the same delta-apply shape as `rlat refresh` (store/incremental.py) \u2014 extend it rather than adding a parallel cache."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k05",
+   "answer": "Run a parity harness, not unit equality \u2014 HNSW builds are non-deterministic, so never assert identical lists.\n\n1. **Recall@k overlap.** For each query, compute exact top-k (numpy matmul over the base band \u2014 you already have this path, since N\u22645000 uses it) and ANN top-k. Gate on mean |ANN \u2229 exact| / k \u2265 0.99 at k=10, and min per-query \u2265 0.8 to catch pathological queries averages hide.\n\n2. **Score-tolerant misses.** Don't count a miss if its exact cosine is within \u03b5 (~1e-3) of the kth exact score \u2014 near-ties flap order, not quality.\n\n3. **End-to-end check.** On one BEIR corpus, nDCG@10 (ANN) \u2212 nDCG@10 (exact) must be \u2265 \u22120.002. This is the metric that actually matters; recall@k is the diagnostic.\n\n4. **Test above the threshold.** Your ANN only engages at N > 5000, so the fixture corpus must exceed that \u2014 a small synthetic corpus silently tests the exact path. Use real embeddings (or held-out BEIR vectors), not random Gaussians: HNSW recall is geometry-dependent and random vectors flatter it.\n\nPin efSearch=128 in the test so a serialization regression (efSearch not persisting) fails loudly."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k06",
+   "answer": "Show both, with a strict separation:\n\n1. Machine output (`--format json`): raw cosine, full precision, untransformed. Downstream consumers threshold and fuse themselves; any transform destroys information and invites mis-fusion (your EML and lexical-band fusions both died on exactly this kind of score-mixing).\n\n2. Human output (`--format text`): raw cosine to 3 decimals PLUS a relative band computed within the result list \u2014 e.g. \"strong\" if within 0.02 of top-1, \"partial\" if within the top cluster, \"weak\" otherwise. Band on the within-query gap structure, not absolute thresholds: gte-modernbert cosines cluster in a narrow corpus-dependent range (~0.6\u20130.85), so a fixed cutoff like \"0.7 = good\" lies on some corpora.\n\nDo not normalise to 0\u2013100% or call it \"relevance\"/\"confidence\" \u2014 cosine is uncalibrated, and a percentage implies a probability you can't back. Min-max normalisation is worse: it forces the top hit to 100% even when nothing matched.\n\nOne useful absolute signal: when top-1 sits inside the corpus's background-similarity noise floor (measurable at build time), emit a \"no strong match\" warning instead of a band."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k07",
+   "answer": "Split into three tiers, selected by pytest markers:\n\n1. **Fast CLI tests (default, no model).** Run the CLI via `CliRunner` or subprocess with a stub encoder \u2014 a deterministic fake that maps text to fixed 768d vectors (e.g. hashed-seed `np.random`). Inject it via an env var like `RLAT_TEST_ENCODER=stub` checked at encoder-factory level, not by monkeypatching internals, so the test exercises the real argument parsing, archive I/O, store modes, and exit codes. This tier covers ~90% of CLI surface and runs in seconds in CI.\n\n2. **Real-model integration (`@pytest.mark.model`).** A handful of end-to-end tests with the actual gte-modernbert-base: build a tiny corpus (10\u201330 passages), search it, assert known-item retrieval (gold passage in top-3), round-trip refresh/convert. Cache the HF model in CI; skip automatically if weights are absent (`pytest.importorskip` + path check) rather than failing.\n\n3. **Quality gate (separate job, not pytest).** nDCG@10 on the pinned BEIR subset, compared against a stored floor with a tolerance. Run on demand or per stage boundary, never per commit.\n\nKey rules: golden-file assertions on JSON output (with embeddings excluded), one shared session-scoped built archive per tier-2 module, and never assert on float scores \u2014 assert on rank order."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k08",
+   "answer": "Store the minimum that lets a user (or LLM) trace a hit back to its exact source and detect drift \u2014 most of this already shipped in WS3 #292 verified retrieval, so converge on that schema rather than inventing a parallel one:\n\nPer passage:\n1. source_file \u2014 path relative to the archive's source root (works across bundled/local/remote modes).\n2. char_offset + char_length \u2014 exact byte/char span, so the snippet can be re-extracted and a \"quote span\" rendered.\n3. content_hash \u2014 SHA of the passage text at build time; comparing against the live file yields drift_status (fresh/drifted/missing) at query time. Don't store drift_status itself \u2014 it's computed, not stored.\n4. build_timestamp / archive revision \u2014 once per archive in metadata.json, not per passage.\n5. Optional, cheap: line_start/line_end (nicer display than char offsets) and a stable passage_id (hash-derived, survives rebuilds for telemetry joins).\n\nSkip: titles/headings extraction, URL fields, structural metadata \u2014 structural signals were already falsified for ranking, and for display the file path + span is sufficient. Keep it per-mode consistent so --verified-only and freshness checks work unchanged."
+  }
+ ],
+ "verdicts": [
+  {
+   "kind": "coll_blind",
+   "id": "k01",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k02",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k03",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k04",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k05",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k06",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k07",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k08",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k01",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k02",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k03",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k04",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k05",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k06",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k07",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k08",
+   "substantive": true
+  }
+ ]
+}

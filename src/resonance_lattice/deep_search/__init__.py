@@ -20,8 +20,8 @@ Public surface:
       print(hop.kind, hop.query)
 
 The loop is purely additive: the same single-recipe retrieval path is
-reused per hop (`field.retrieve` against the optimised band when
-present, base otherwise). Name-verification is applied across the
+reused per hop (`field.retrieve` against the base band).
+Name-verification is applied across the
 union of all retrieved evidence to the original question — when a
 distinctive token from the question never appears in any hop's
 evidence, the synthesised answer is prefixed with a refusal directive

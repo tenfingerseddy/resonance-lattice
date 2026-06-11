@@ -75,8 +75,8 @@ def open_store(
         root = source_root or contents.metadata.build_config.get("source_root")
         if not root:
             raise ValueError(
-                f"local-mode knowledge model has no recorded source_root and "
-                f"--source-root was not supplied; pass --source-root <dir>"
+                "local-mode knowledge model has no recorded source_root and "
+                "--source-root was not supplied; pass --source-root <dir>"
             )
         return LocalStore(root)
     # Remote mode

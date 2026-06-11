@@ -28,6 +28,12 @@ env/
 .claude/settings.local.json
 .mcp.json
 
+# Local-only working files (secrets, scratch DDL, probe output) — never commit.
+# A SP bearer JWT was found here by the security scanner; keep it out of git.
+.local/
+# Staged encoder artefacts (multi-hundred-MB ONNX binaries + wheels)
+_stage/
+
 # Test / lint / type-check caches
 .pytest_cache/
 .ruff_cache/
@@ -45,9 +51,20 @@ _archive/
 logs/
 .rlat-snapshots/
 
+# _probe/ research scratch — raw per-run output. The probe scripts (.py)
+# and findings (.md/.diff) stay trackable; only the bulk run artifacts
+# are excluded. Already-committed run data (v5_paired1-5) is untouched.
+_probe/**/*.json
+_probe/**/*.txt
+_probe/**/*.err
+_probe/**/*.pid
+_probe/**/*.log
+
 # Per-workspace agent-state (live intent graph, outcome ledger, pending
 # signals). Written by the harness hooks at runtime; never source.
 .rlat-state/
+# Manual backups of a polluted state dir (e.g. .rlat-state.polluted-bak-*).
+.rlat-state.*bak*/
 
 # Local machine state (accidentally written by infra scripts — not source)
 *known_hosts*
@@ -132,6 +149,8 @@ smoke.rlat
 /relaxed_*.log
 /soak_*.log
 /primer_bench.log
+/harness_*.log
+/harness_err.txt
 
 # Claude Code worktrees (auto-created, can be very large)
 .claude/worktrees/
@@ -182,6 +201,8 @@ benchmarks/results/**
 # Headline keepers (alphabetical within each subdir). Each file is the
 # evidence backstop for a memory entry or a documented baseline.
 !benchmarks/results/beir/
+!benchmarks/results/geo2/
+!benchmarks/results/geo2/cell_*.json
 !benchmarks/results/beir/pipeline_*_honest_e5_raw_v1.json
 !benchmarks/results/beir/new_arch/
 !benchmarks/results/beir/new_arch/aggregate_5beir_horizon1_v239.json
@@ -266,9 +287,6 @@ docs/direction/
 website/
 obsidian-plugin/
 
-# Sync scripts (local automation)
-scripts/sync-public.sh
-
 # Kaggle source tarballs (regenerate via `git archive`)
 kaggle/**/*.tar.gz
 resonance_lattice_src.tar.gz
@@ -320,3 +338,17 @@ benchmarks/results/**/p_lora_adapter/adapter_model.safetensors
 benchmarks/results/**/q_lora_adapter/adapter_model.safetensors
 kaggle/datasets/rlat-fabric-corpus/fabric-docs/
 kaggle/datasets/rlat2-beir3-soak-source/resonance_lattice/
+
+# H1 answerability experiment caches (regenerable)
+.h1_ans_*.json
+
+# H1 distillation experiment data (regenerable from h1_distill_datagen.py)
+benchmarks/h1_distill_*.jsonl
+benchmarks/.h1_distill_*.json*
+kaggle/distill-data/*.jsonl
+
+# Holdout-authoring session scratch (underscore-prefixed, beside the locked sets)
+benchmarks/holdouts/_*
+
+# Kaggle dataset staging (regenerable jsonl pulled/pushed by kernels)
+kaggle/lattice-*/

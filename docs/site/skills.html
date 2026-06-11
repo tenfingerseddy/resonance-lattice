@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skills integration — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html" aria-current="page">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>Using rlat with Anthropic Skills</h1>
+  <p class="lede">
+    A <em>skill</em> is a reusable set of execution instructions for an AI
+    assistant. rlat supplies the other half: grounded, query-relevant context.
+    This guide shows how to wire a knowledge model (a <code>.rlat</code> file)
+    into an Anthropic skill so the skill always sees fresh passages with
+    citations — instead of a frozen reference dump.
+  </p>
+
+  <section id="one-line">
+    <h2 id="the-integration">The integration in one line</h2>
+    <p>
+      A skill body uses Anthropic's
+      <a href="https://code.claude.com/docs/en/skills.md#inject-dynamic-context">dynamic-context primitive</a>
+      — a shell command that runs when the skill loads, whose output is spliced
+      into the model's context:
+    </p>
+    <pre><code>!`rlat skill-context fabric-docs.rlat --query "$user_question" --top-k 5`</code></pre>
+    <p>
+      The shell command runs <strong>before the model sees the skill</strong>,
+      and its stdout <em>replaces the placeholder</em> in context. The output is
+      markdown with citation anchors, drift status, and confidence metrics —
+      ready for the model to ground on.
+    </p>
+    <p>
+      That's the entire integration. No new YAML, no hooks, no config. The
+      skill body calls rlat as a normal <code>!command</code> block.
+    </p>
+  </section>
+
+  <section id="example">
+    <div class="section-num">01 — Example</div>
+    <h2 id="complete-example">A complete example</h2>
+    <p>A <code>.claude/skills/fabric-helper/SKILL.md</code> file:</p>
+    <pre><code>---
+name: fabric-helper
+description: Answer Microsoft Fabric questions with grounded citations
+arguments:
+  - user_query: "what the user is asking about Fabric"
+---
+
+# Fabric Helper
+
+You answer Microsoft Fabric questions. The context blocks below are
+grounded passages from the official docs. **Cite every claim using the
+[file:offset] anchors. If no passage covers the question, say so — do
+not invent details.**
+
+## Foundational context (preset queries — always loaded)
+!`rlat skill-context fabric-docs.rlat \
+   --query "Microsoft Fabric workspace fundamentals" \
+   --query "lakehouse vs warehouse decision criteria" \
+   --top-k 3`
+
+## Query-specific context (the user's actual question)
+!`rlat skill-context fabric-docs.rlat --query "$user_query" --top-k 5`</code></pre>
+    <p>When the user invokes this skill, three things happen:</p>
+    <ol>
+      <li>
+        <strong>Preset queries always run.</strong> "Workspace fundamentals"
+        and "lakehouse vs warehouse" passages get pulled — the foundational
+        concepts the skill needs to reason well.
+      </li>
+      <li>
+        <strong>The user's query gets dynamically retrieved.</strong>
+        <code>$user_query</code> interpolates via Anthropic's skill-argument
+        substitution; rlat searches the corpus for that specific question.
+      </li>
+      <li>
+        <strong>Both blocks land in the model's context</strong> with citations
+        and drift status. The model sees passages tagged <code>[verified]</code>
+        (current) or <code>[drifted]</code> (source has changed since build) and
+        can self-judge whether to make strong claims.
+      </li>
+    </ol>
+    <div class="callout callout-tip">
+      <span class="callout-tag">Tip</span>
+      <p>
+        If you add a feature to the Fabric corpus and run
+        <code>rlat refresh fabric-docs.rlat</code>, the very next skill
+        invocation includes that feature — no skill edit required. For
+        zero-friction live skills, run <code>rlat watch</code> in a background
+        terminal: every save under the corpus's recorded source roots triggers a
+        debounced refresh, so the skill's <code>!command</code> always sees
+        current passages without you remembering to refresh manually.
+      </p>
+    </div>
+  </section>
+
+  <section id="injected">
+    <div class="section-num">02 — Output</div>
+    <h2 id="what-gets-injected">What gets injected</h2>
+    <p><code>rlat skill-context</code> outputs markdown that looks like this:</p>
+    <pre><code>&lt;!-- rlat-mode: augment --&gt;
+&gt; **Grounding mode: augment.** Use the passages below as primary context
+&gt; for this corpus's domain. Cite them when answering; prefer them over
+&gt; your training knowledge when the two conflict.
+
+&lt;!-- rlat skill-context query='lakehouse vs warehouse' band=base mode=augment
+     top1_score=0.812 top1_top2_gap=0.124 source_diversity=0.83 drift_fraction=0.00 --&gt;
+## Context for: "lakehouse vs warehouse"
+
+&gt; **source: `docs/fabric/lakehouse-overview.md:1247+512`** — score 0.812 `[verified]`
+&gt;
+&gt; A lakehouse is a unified data store that combines the flexibility of a
+&gt; data lake with the performance characteristics of a data warehouse...
+
+&gt; **source: `docs/fabric/warehouse-decision.md:0+847`** — score 0.778 `[verified]`
+&gt;
+&gt; Choose a warehouse when you need...</code></pre>
+    <p>Four things to notice:</p>
+    <ul class="checklist">
+      <li>
+        <strong>The grounding-mode header</strong> is the consumer LLM's
+        directive. <code>augment</code> (the default) tells the model to treat
+        the passages as primary context for this corpus's domain and prefer them
+        over training when they conflict. See
+        <a href="#grounding-modes">Grounding modes</a> below.
+      </li>
+      <li>
+        <strong>The per-query comment</strong> carries the confidence metrics
+        from the retrieval. The model can read these: low
+        <code>source_diversity</code> means answer cautiously (only one source
+        backs the claim); high <code>drift_fraction</code> means flag the answer
+        as potentially stale.
+      </li>
+      <li>
+        <strong>Each passage</strong> carries a
+        <code>[source_file:char_offset+length]</code> anchor. The skill can
+        instruct the model to cite using exactly this format, and any consumer
+        can quote-verify by reading the file at that offset.
+      </li>
+      <li>
+        <strong><code>[verified]</code></strong> means the source file's content
+        hash still matches what was hashed at build time. The other values are
+        <code>[drifted]</code> (source moved) and <code>[missing]</code> (source
+        file gone).
+      </li>
+    </ul>
+  </section>
+
+  <section id="trust">
+    <div class="section-num">03 — Trust contracts</div>
+    <h2 id="trust-features">Trust features</h2>
+    <p>
+      The integration enforces three trust contracts as the <em>output format
+      itself</em>, not as opt-in flags.
+    </p>
+
+    <h3 id="citations-always-on">Citations are always on</h3>
+    <p>
+      Every passage carries its source anchor. There is no
+      <code>--no-citations</code> flag — a skill that uses
+      <code>rlat skill-context</code> is structurally incapable of grounding on
+      uncited content.
+    </p>
+
+    <h3 id="drift-detection-always-on">Drift detection is always on</h3>
+    <p>
+      If any passage in the result has stale or missing source, the output
+      begins with a warning banner:
+    </p>
+    <pre><code>&gt; DRIFT WARNING: at least one passage below has stale or missing source.
+&gt; Treat content as advisory; refresh with `rlat refresh fabric-docs.rlat`
+&gt; for canonical results.</code></pre>
+    <p>
+      The model sees this banner. Skill instructions can tell it how to react —
+      for example, "if you see a DRIFT WARNING, prepend your answer with 'Note:
+      this answer may not reflect recent corpus changes.'"
+    </p>
+
+    <h3 id="strict-mode">Strict mode for hard requirements</h3>
+    <p>
+      Pass <code>--strict</code> and any drifted or missing source aborts the
+      command non-zero:
+    </p>
+    <pre><code>!`rlat skill-context fabric-docs.rlat --strict --query "$user_query"`</code></pre>
+    <p>
+      The skill load fails. Use this when stale grounding is unacceptable — for
+      example, a skill that answers questions where wrong-but-confident is worse
+      than no answer.
+    </p>
+    <div class="callout callout-note">
+      <p>
+        <code>--strict</code> is a flag on <code>rlat skill-context</code>. The
+        related <code>rlat search</code> command does not have a
+        <code>--strict</code> flag — its trust flags are
+        <code>--verified-only</code> and <code>--strict-names</code>.
+      </p>
+    </div>
+  </section>
+
+  <section id="modes">
+    <div class="section-num">04 — Grounding modes</div>
+    <h2 id="grounding-modes">Grounding modes</h2>
+    <p>
+      <code>--mode</code> controls <em>how the consumer LLM should treat the
+      retrieved passages</em>. It's a directive stamped at the top of the
+      markdown output, paired with a confidence gate that suppresses the dynamic
+      body on weak retrieval. Three modes:
+    </p>
+
+    <h3 id="augment-mode"><code>augment</code> (default) — passages are primary context</h3>
+    <pre><code>!`rlat skill-context fabric-docs.rlat --query "$user_query"`   # mode=augment is the default</code></pre>
+    <p>
+      The header tells the LLM: <em>"Use these passages as primary context.
+      Cite them when answering. Prefer them over your training knowledge when
+      the two conflict."</em> The gate fires when
+      <code>top1_score &lt; 0.30</code> (retrieval has genuinely failed for this
+      query) or <code>drift_fraction &gt; 0.30</code> — on weak retrieval the
+      body is replaced with a <em>no confident evidence</em> marker so the LLM
+      falls back to training instead of grounding on noise.
+    </p>
+    <p>
+      <strong>Default mode.</strong> On the Microsoft Fabric corpus, single-shot
+      with Sonnet 4.6 (a model that partially knows the domain):
+      <strong>76.5% answerable accuracy at 3.9% hallucination, versus 56.9% /
+      19.6% for the LLM alone</strong> — augment adds 19.6 percentage points of
+      correct answers while cutting hallucination by 5×. The right shape for
+      broad domain corpora where the LLM already has solid prior knowledge.
+    </p>
+
+    <h3 id="constrain-mode"><code>constrain</code> — passages are the only source of truth</h3>
+    <pre><code>!`rlat skill-context compliance-rules.rlat --mode constrain --query "$user_query"`</code></pre>
+    <p>
+      The header tells the LLM: <em>"Answer ONLY from these passages. If they do
+      not cover the question, refuse explicitly — do not draw on training
+      knowledge."</em> There is no gate — the body always ships, and refusal on
+      thin evidence is the LLM's job.
+    </p>
+    <p>
+      Single-shot on the Fabric corpus: 66.7% accuracy,
+      <strong>2.0% hallucination, 91.7% distractor refusal</strong> — it trades
+      10 points of answerable accuracy for halving the hallucination rate versus
+      the default, and posts the highest distractor refusal in the suite. Pair
+      with <code>--strict</code> so drifted source aborts the skill load
+      entirely:
+    </p>
+    <pre><code>!`rlat skill-context compliance-rules.rlat --strict --mode constrain --query "$user_query"`</code></pre>
+    <p>
+      The right mode for compliance, regulatory, or audit work — any context
+      where <em>wrong-but-confident is worse than no answer</em>.
+    </p>
+
+    <h3 id="knowledge-mode"><code>knowledge</code> — passages supplement training</h3>
+    <pre><code>!`rlat skill-context fabric-docs.rlat --mode knowledge --query "$user_query"`</code></pre>
+    <p>
+      The header tells the LLM: <em>"These passages supplement your existing
+      knowledge. Ground claims about this corpus's domain in them; you may draw
+      on general knowledge for surrounding context."</em> A lighter gate — it
+      only suppresses on very weak retrieval (<code>top1_score &lt; 0.15</code>);
+      drift is allowed.
+    </p>
+    <p>
+      Use it when the corpus is <em>partial coverage</em> of a domain the LLM
+      already knows reasonably well — for example, a project's bespoke
+      conventions layered on top of general programming knowledge, where you
+      want the LLM to use both.
+    </p>
+
+    <h3 id="picking-a-mode">Picking a mode</h3>
+    <table class="compact">
+      <thead>
+        <tr><th>Mode</th><th>When to use</th><th>Gate fires on</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>augment</code></td><td>Broad domain corpus the LLM partially knows (default)</td><td>top1_score &lt; 0.30 OR drift_fraction &gt; 0.30</td></tr>
+        <tr><td><code>constrain</code></td><td>Fact extraction, compliance, regulatory, audit</td><td>never (the LLM does the refusal)</td></tr>
+        <tr><td><code>knowledge</code></td><td>Partial-coverage corpus on top of an LLM-known domain</td><td>top1_score &lt; 0.15 only</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="budget">
+    <div class="section-num">05 — Token budget</div>
+    <h2 id="token-budget">Token budget</h2>
+    <p>
+      <code>rlat skill-context</code> caps the per-query block portion of the
+      output via <code>--token-budget</code> (default <code>4000</code>). When
+      multiple <code>--query</code> flags add up to more than the budget,
+      <strong>later query blocks are dropped first</strong> — so the skill
+      author's preset queries always survive, and the user's dynamic query gets
+      truncated last. The grounding-mode directive header and the drift banner
+      ship outside the budget; the directive is a small, fixed-size instruction
+      the consumer LLM must always see.
+    </p>
+    <pre><code>!`rlat skill-context fabric-docs.rlat \
+   --query "preset 1" --query "preset 2" --query "$user_query" \
+   --top-k 5 --token-budget 2000`</code></pre>
+    <p>
+      If the budget overflows, the user-query block goes first, then preset 2,
+      then preset 1. The first preset is always preserved — even if it alone
+      overflows the budget. That's the skill author's bug to fix, not rlat's to
+      silently drop.
+    </p>
+  </section>
+
+  <section id="patterns">
+    <div class="section-num">06 — Patterns</div>
+    <h2 id="patterns-h">Patterns</h2>
+
+    <h3 id="preset-plus-user">Preset + user (most common)</h3>
+    <p>Two <code>!command</code> blocks, or one with multiple <code>--query</code> flags:</p>
+    <pre><code>## Foundations
+!`rlat skill-context fabric-docs.rlat --query "core concepts" --top-k 3`
+
+## Query
+!`rlat skill-context fabric-docs.rlat --query "$user_question"`</code></pre>
+
+    <h3 id="decomposed-query">Decomposed user query</h3>
+    <p>
+      If the skill body extracts sub-questions from the user's input, each can
+      hit the corpus separately:
+    </p>
+    <pre><code>!`rlat skill-context fabric-docs.rlat \
+   --query "$entity" --query "$action" --query "$context" --top-k 3`</code></pre>
+
+    <h3 id="strict-cross-corpus">Strict + cross-corpus</h3>
+    <p>
+      A skill that pulls from two <code>.rlat</code> files runs two
+      <code>!command</code> blocks, both <code>--strict</code>:
+    </p>
+    <pre><code>## Fabric context
+!`rlat skill-context fabric-docs.rlat --strict --query "$user_query"`
+
+## Power BI context
+!`rlat skill-context powerbi-developer.rlat --strict --query "$user_query"`</code></pre>
+    <p>If either is drifted, the skill load fails — refresh both before grounding.</p>
+
+    <h3 id="name-aliasing">Name-aliasing protection</h3>
+    <p>
+      <code>--strict-names</code> adds a second safety check: distinctive proper
+      nouns, acronyms, and alphanumeric IDs from the query are presence-checked
+      against the rendered passages. Default behaviour prepends a refusal
+      directive when a token is missing; <code>--strict-names</code> aborts
+      non-zero. Pair it with <code>--strict</code> for compliance work where
+      wrong-named entities must never silently slide through:
+    </p>
+    <pre><code>!`rlat skill-context fabric-docs.rlat --strict --strict-names --query "$user_query"`</code></pre>
+    <p>
+      This catches the failure mode where the user's question mentions a fake or
+      adjacent product (for example <code>MaterializedViewExpress (MVE)</code>)
+      but the corpus only describes a similarly-named real entity
+      (<code>MaterializedLakeView (MLV)</code>). Score-based gating cannot tell
+      these apart on a paraphrase-rich corpus — the name check can.
+    </p>
+
+    <h3 id="multi-hop">Multi-hop research</h3>
+    <p>
+      For hard questions that need cross-file synthesis ("why did we pick X over
+      Y?", "summarise the trade-offs", "what's the full history of …"),
+      <code>rlat</code> ships <strong>two surfaces</strong> that run the same
+      plan → retrieve → refine → synthesize loop:
+    </p>
+    <ul class="checklist">
+      <li>
+        <strong>The <code>deep-research</code> skill</strong> drives the loop
+        natively in your Claude Code session. <strong>No API key needed</strong>
+        — your Claude subscription covers the LLM hops. This is the right pick
+        for nearly every Claude Code user.
+      </li>
+      <li>
+        <strong>The <code>rlat deep-search</code> CLI verb</strong> runs the
+        same loop, exposed as a CLI command for non-Claude-Code agents, CI
+        pipelines, and batch jobs. <strong>It requires an Anthropic API
+        key</strong> (about $0.009–0.025 per question). Bench-validated
+        headline: 92.2% accuracy at 0% hallucination on the Microsoft Fabric
+        corpus; the same numbers apply to the skill version because it's the
+        same loop.
+      </li>
+    </ul>
+    <p>
+      If you're in a Claude Code session, just ask the research question; the
+      <code>deep-research</code> skill triggers automatically on cross-file
+      synthesis questions. If you're authoring a skill that runs in a
+      non-Claude-Code agent, or you need a programmatic surface, use the CLI:
+    </p>
+    <pre><code>## Hard question (CLI surface — API key required)
+!`rlat deep-search fabric-docs.rlat "$user_question" --format markdown`</code></pre>
+    <p>
+      See the <a href="api-keys.html">API keys</a> page for when each
+      surface is the right pick.
+    </p>
+  </section>
+
+  <section id="skills-shipped">
+    <div class="section-num">07 — The skills</div>
+    <h2 id="rlat-skills">rlat's skills</h2>
+    <p>
+      <code>rlat</code> does not ship a fixed pair of skills — several skills
+      live under <code>.claude/skills/</code>, each handling a discrete
+      capability. The table lists the skills rlat scaffolds or ships for
+      users; a project may carry its own additional skills alongside them.
+      The ones most relevant to working with a knowledge model:
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Skill</th><th>What it does</th><th>Triggers on</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>rlat</code></td>
+          <td>Executes any rlat CLI workflow on the user's behalf — setup, build, refresh, search, memory recall, compare, convert, skill-context generation, programmatic deep-search.</td>
+          <td>Project-setup signals, build/refresh signals, single-hop fact questions, memory recall, cross-corpus comparison, storage-mode conversion.</td>
+        </tr>
+        <tr>
+          <td><code>deep-research</code></td>
+          <td>Drives the multi-hop research loop (plan → retrieve → refine → synthesize) interactively in the conversation. The in-session, subscription-covered alternative to the CLI <code>rlat deep-search</code>, which needs an <a href="api-keys.html">API key</a>.</td>
+          <td>Cross-file synthesis questions, rationale ("why X over Y"), trade-offs, contradictions across sources, "summarise the X across the codebase", historical "why" questions, follow-ups after a thin single-shot search.</td>
+        </tr>
+        <tr>
+          <td><code>rlat-fabric-search</code></td>
+          <td>A helper skill that <code>rlat fabric add</code> scaffolds into the project for querying team-shared, Fabric-hosted knowledge models. The <code>fabric://</code> routing itself is a CLI feature — <code>rlat search fabric://&lt;alias&gt;[/&lt;km&gt;]</code>; the skill wraps it with the project's registered aliases.</td>
+          <td>Questions against a team-shared corpus hosted on Microsoft Fabric.</td>
+        </tr>
+        <tr>
+          <td><code>rlat-build-on-kaggle</code></td>
+          <td>Walks through building a large corpus on a free Kaggle T4 GPU when there's no local CUDA GPU.</td>
+          <td>"Use Kaggle", "no GPU here", "build remotely", or any corpus too large to encode on CPU in reasonable time.</td>
+        </tr>
+        <tr>
+          <td><code>rlat-gap-scan</code></td>
+          <td>Finds the questions a corpus <em>can't actually answer</em> — judged by your own reading of the retrieved context, no API key, no per-query bill.</td>
+          <td>"What is my corpus missing?", "where are the gaps?", "what can't this <code>.rlat</code> answer?", "what should I add to the docs?".</td>
+        </tr>
+        <tr>
+          <td><code>rlat-contradictions</code></td>
+          <td>Finds conflicting facts <em>inside</em> a corpus — two documents that disagree. Cheap geometry surfaces same-topic cross-document candidates (demand-ranked); you judge which genuinely contradict. Free, surfaces for review.</td>
+          <td>"Are there contradictions in my corpus?", "does my knowledge base disagree with itself?", "which docs contradict each other?".</td>
+        </tr>
+        <tr>
+          <td><code>rlat-refresh-facts</code></td>
+          <td>Re-checks the <em>external</em> (web-fetched) facts in a corpus against the live world by re-fetching their sources — the staleness <code>rlat refresh</code> can't catch. Free; a failed fetch is "uncheckable", never "stale".</td>
+          <td>"Are my fetched facts still current?", "did anything I added from the web go stale?", "re-check my external facts".</td>
+        </tr>
+        <tr>
+          <td><code>rlat-curate</code></td>
+          <td>Human-in-the-loop curation: surfaces the self-audit findings (gaps, contradictions, stale facts) and lets you approve a drafted fill, hand-provide an authoritative source (highest trust tier), or skip — nothing lands without your say-so.</td>
+          <td>"Curate my knowledge base", "let me review before adding", "I'll provide the source", "human in the loop".</td>
+        </tr>
+        <tr>
+          <td><code>rlat-board-ops</code></td>
+          <td>Modifies the project's GitHub Project board — a maintainer workflow rather than a user-facing retrieval skill.</td>
+          <td>Project-board updates.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      The skills don't overlap: <code>rlat</code> orchestrates
+      <strong>CLI workflows</strong>; <code>deep-research</code> orchestrates
+      <strong>the multi-hop research loop in conversation</strong>. A single-hop
+      fact question goes to <code>rlat search</code>; a multi-file synthesis
+      question goes to <code>deep-research</code>. The CLI verb
+      <code>rlat deep-search</code> — the programmatic surface for the same loop,
+      which requires an API key — is documented inside the <code>rlat</code>
+      skill, not as a separate skill, because it's just one more workflow on the
+      rlat surface.
+    </p>
+    <p>
+      This design follows Anthropic's published guidance on composite workflow
+      skills: one skill per discrete capability, positive trigger specificity,
+      and decision-gate-driven bodies that orchestrate sub-workflows internally
+      rather than fragmenting into many narrow-trigger skills. Sources:
+      <a href="https://code.claude.com/docs/en/skills">code.claude.com/docs/en/skills</a>
+      and
+      <a href="https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices">platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices</a>.
+    </p>
+  </section>
+
+  <section id="performance">
+    <div class="section-num">08 — Performance</div>
+    <h2 id="performance-h">Performance</h2>
+    <p>
+      <code>!command</code> blocks run synchronously every time the skill loads.
+      The measured numbers:
+    </p>
+    <ul class="checklist">
+      <li>Warm encoder: <strong>12&nbsp;ms</strong> per query.</li>
+      <li>Search (FAISS HNSW): <strong>under 50&nbsp;ms</strong> for corpora up to roughly 500K passages.</li>
+      <li>Format and I/O: <strong>about 10&nbsp;ms</strong>.</li>
+    </ul>
+    <p>
+      Two queries against a 50K-passage corpus is roughly 120&nbsp;ms total —
+      well inside the budget for an interactive skill load.
+    </p>
+    <p>
+      If you see slow loads, the most likely culprit is encoder cold-start
+      (about 942&nbsp;ms versus 12&nbsp;ms warm). The encoder warms on first use
+      within a session and stays warm; the second and later skill invocations
+      are fast.
+    </p>
+  </section>
+
+  <section id="faq">
+    <div class="section-num">09 — Frequently asked</div>
+    <h2 id="frequently-asked">Frequently asked</h2>
+
+    <h3 id="faq-frontmatter">Do I need to add <code>knowledge:</code> frontmatter?</h3>
+    <p>
+      No. The integration uses Anthropic's existing <code>!command</code>
+      primitive — frontmatter additions are silently ignored by Claude Code
+      (verified safe), but they don't drive any rlat behaviour. The
+      <code>!command</code> blocks are the source of truth.
+    </p>
+
+    <h3 id="faq-no-coverage">What if the corpus doesn't cover the question?</h3>
+    <p>
+      rlat returns the closest passages anyway. The model sees them with their
+      (low) scores in the header line, and skill instructions should tell it to
+      say "I don't know" when scores are weak.
+    </p>
+
+    <h3 id="faq-outside-claude-code">Does this work outside Claude Code?</h3>
+    <p>
+      Yes. The Claude Agent SDK supports skills the same way. The skill body
+      calls <code>rlat skill-context</code> as a <code>!command</code> block —
+      same retrieval, same trust contracts.
+    </p>
+
+    <h3 id="faq-static-files">What about static reference files?</h3>
+    <p>
+      A skill can mix <code>!command</code> blocks for dynamic context with
+      relative-link references to static guides. Use rlat for anything that
+      benefits from query-relevant retrieval; use static files for stable
+      how-to material.
+    </p>
+  </section>
+
+  <section id="see-also">
+    <h2 id="see-also-h">See also</h2>
+    <ul class="checklist">
+      <li><a href="storage-modes.html">Storage modes</a> — choosing bundled, local, or remote for your <code>.rlat</code>.</li>
+      <li><a href="cli.html">CLI reference</a> — the full <code>rlat skill-context</code> reference.</li>
+    </ul>
+  </section>
+
+  <section id="next">
+    <h2 id="next-h">Where next</h2>
+    <div class="next">
+      <a href="cli.html">
+        <span class="next-label">Next</span><br>
+        <span class="next-title">CLI reference</span>
+      </a>
+      <a href="benchmarks.html">
+        <span class="next-label">Then</span><br>
+        <span class="next-title">Benchmarks</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,134 @@
+{
+ "seeds": 3,
+ "per_seed": [
+  {
+   "r4": {
+    "golds_cut": 0,
+    "golds_cut_facts": [],
+    "wrongs_cut": 0,
+    "first_correct_cut_round": null,
+    "wrongs_observed": 5,
+    "golds_observed": 3
+   },
+   "point": {
+    "golds_cut": 1,
+    "golds_cut_facts": [
+     "The user is running Windows PowerShell 5.1 (not PowerShell 7)."
+    ],
+    "wrongs_cut": 4,
+    "first_correct_cut_round": 0,
+    "wrongs_observed": 5,
+    "golds_observed": 3
+   },
+   "neverhelped": {
+    "golds_cut": 1,
+    "golds_cut_facts": [
+     "The user is running Windows PowerShell 5.1 (not PowerShell 7)."
+    ],
+    "wrongs_cut": 2,
+    "first_correct_cut_round": 0,
+    "wrongs_observed": 5,
+    "golds_observed": 3
+   },
+   "wilson2": {
+    "golds_cut": 1,
+    "golds_cut_facts": [
+     "The user is running Windows PowerShell 5.1 (not PowerShell 7)."
+    ],
+    "wrongs_cut": 3,
+    "first_correct_cut_round": 1,
+    "wrongs_observed": 5,
+    "golds_observed": 3
+   },
+   "_facts_observed": 8,
+   "_serves": 178
+  },
+  {
+   "r4": {
+    "golds_cut": 0,
+    "golds_cut_facts": [],
+    "wrongs_cut": 0,
+    "first_correct_cut_round": null,
+    "wrongs_observed": 6,
+    "golds_observed": 3
+   },
+   "point": {
+    "golds_cut": 1,
+    "golds_cut_facts": [
+     "The user is running Windows PowerShell 5.1 (not PowerShell 7)."
+    ],
+    "wrongs_cut": 4,
+    "first_correct_cut_round": 0,
+    "wrongs_observed": 6,
+    "golds_observed": 3
+   },
+   "neverhelped": {
+    "golds_cut": 0,
+    "golds_cut_facts": [],
+    "wrongs_cut": 3,
+    "first_correct_cut_round": 0,
+    "wrongs_observed": 6,
+    "golds_observed": 3
+   },
+   "wilson2": {
+    "golds_cut": 1,
+    "golds_cut_facts": [
+     "The user is running Windows PowerShell 5.1 (not PowerShell 7)."
+    ],
+    "wrongs_cut": 3,
+    "first_correct_cut_round": 1,
+    "wrongs_observed": 6,
+    "golds_observed": 3
+   },
+   "_facts_observed": 9,
+   "_serves": 179
+  },
+  {
+   "r4": {
+    "golds_cut": 0,
+    "golds_cut_facts": [],
+    "wrongs_cut": 0,
+    "first_correct_cut_round": null,
+    "wrongs_observed": 6,
+    "golds_observed": 3
+   },
+   "point": {
+    "golds_cut": 1,
+    "golds_cut_facts": [
+     "The user is running Windows PowerShell 5.1 (not PowerShell 7)."
+    ],
+    "wrongs_cut": 4,
+    "first_correct_cut_round": 0,
+    "wrongs_observed": 6,
+    "golds_observed": 3
+   },
+   "neverhelped": {
+    "golds_cut": 0,
+    "golds_cut_facts": [],
+    "wrongs_cut": 1,
+    "first_correct_cut_round": 0,
+    "wrongs_observed": 6,
+    "golds_observed": 3
+   },
+   "wilson2": {
+    "golds_cut": 1,
+    "golds_cut_facts": [
+     "The user is running Windows PowerShell 5.1 (not PowerShell 7)."
+    ],
+    "wrongs_cut": 3,
+    "first_correct_cut_round": 1,
+    "wrongs_observed": 6,
+    "golds_observed": 3
+   },
+   "_facts_observed": 9,
+   "_serves": 177
+  }
+ ],
+ "bars": {
+  "safe_zero_golds_every_seed": true,
+  "effective_ge_wilson2_every_seed": false,
+  "strictly_more_in_2_of_3": false,
+  "pass": false,
+  "tie_note": null
+ }
+}

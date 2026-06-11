@@ -12,9 +12,9 @@ upstream since the archive was built. Concrete implementations:
                          the archive's recorded manifest. Detects modified +
                          removed only — cannot discover NEW files.
 
-  GitHubCompareIndex — v2.1+. Uses the GitHub compare API to get the 3-bucket
-                       delta between two refs without re-downloading every file.
-                       Skeleton present; full impl deferred to v2.1.
+  (A GitHub compare-API index — 3-bucket delta between two refs without
+  re-downloading every file — is a possible v2.1+ addition; its placeholder
+  skeleton was removed in the 2026-06 review.)
 
 Audit 07 commit 5/8.
 """
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Callable, IO, Protocol
+from typing import Protocol
 
 from .remote import _NETWORK_ERRORS, UrlOpener, _default_opener
 from .base import sha256_hex
@@ -292,22 +292,3 @@ class HttpManifestIndex:
         if existing is None:
             return None
         return {"url": existing["url"]}
-
-
-# ---------------------------------------------------------------------------
-# GitHubCompareIndex (v2.1+)
-# ---------------------------------------------------------------------------
-
-class GitHubCompareIndex:
-    """Skeleton — full implementation deferred to v2.1.
-
-    Will use the GitHub compare API
-    (`/repos/{org}/{repo}/compare/{base}...{head}`) to get the 3-bucket
-    delta without re-downloading every file. Auth via `GITHUB_TOKEN`.
-    Rate-limit aware (5K/h authenticated, 60/h anonymous).
-    """
-
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError(
-            "GitHubCompareIndex ships in v2.1. Use HttpManifestIndex for now."
-        )

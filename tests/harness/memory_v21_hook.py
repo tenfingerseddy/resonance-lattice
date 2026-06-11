@@ -8,17 +8,17 @@ Pins seven invariants (Sub-MVP slice of Appendix D row D.5 in
       primary polarity selected from the closed `{prefer, avoid, factual}`
       set, scope tags hidden from display.
 
-  (c) Capture is fail-open. `capture()` against a Memory whose `add_row`
+  (c) Capture is fail-open. `capture()` against a store whose `write`
       raises `OSError` / `ValueError` / `portalocker.LockException` returns
-      `CaptureResult(skip_reason="capture failed: <type>", row_id=None)`,
+      `CaptureResult(skip_reason="capture failed: <type>", claim_ids=())`,
       never propagates the exception. The skip_reason carries the
       exception type but never the raw message — exceptions can leak
-      paths or row text the redactor was protecting.
+      paths or claim text the redactor was protecting.
 
   (d) `_MAX_CAPTURED_CHARS` token-budget cap fires on a session whose
-      assistant content exceeds the limit. Captured row text length is
-      exactly `_MAX_CAPTURED_CHARS`; truncation is at row boundary
-      (the cap point), never at encode time.
+      assistant content exceeds the limit. Captured claim text length is
+      exactly `_MAX_CAPTURED_CHARS`, and it keeps the session *tail*
+      (recent work) — the stale head is dropped.
 
   (f) Capture pipeline is fail-open at the pipeline boundary, in addition
       to (c)'s store-failure path. The redactor and the gate are both
@@ -34,9 +34,9 @@ Pins seven invariants (Sub-MVP slice of Appendix D row D.5 in
       `<base>/alice/` and `<base>/bob/` respectively, never overwriting
       one with the other.
 
-  (i) CLI exit codes split deprecated (2) from pending-MVP (3) from
-      user-error (1) from success (0). Verifies one representative of
-      each across the §0.7 surface.
+  (i) CLI exit codes split pending-MVP (3) from user-error (1) from
+      success (0). Verifies one representative of each across the §0.7
+      surface.
 
   (j) Capture-time dedup: same `(text, workspace_tag)` from a different
       session bumps the existing row's recurrence_count instead of
@@ -63,26 +63,53 @@ from ._testutil import ZeroEncoder, patch_zero_encoder, run_cli as _run_cli
 
 
 # ---------------------------------------------------------------------------
-# (a) Row.summary wire-format
+# (a) claim-summary wire-format
 # ---------------------------------------------------------------------------
 
 
-def _check_summary_format() -> int:
-    from resonance_lattice.memory.store import PRIMARY_POLARITY, Row
+def _summary_claim(claim_id: str, *, text: str, primary: str,
+                    recurrence: int, is_bad: bool):
+    """Build one experience `Claim` for the summary wire-format check."""
+    from resonance_lattice.state.claim import Claim, ExperienceFacts
 
-    row = Row(
-        row_id="01HZ8K3M5N7P9Q1R2S3T4V5W6X",
-        text="prefer pytest -xvs <path> for debugging",
-        polarity=["prefer", "workspace:abc123"],
-        recurrence_count=4,
+    return Claim(
+        claim_id=claim_id,
+        source="experience",
+        kind="event",
+        content=text,
         created_at="2026-05-01T12:00:00Z",
-        last_corroborated_at="2026-05-01T12:00:00Z",
-        transcript_hash="manual",
-        is_bad=False,
+        corroboration=2.0,
+        falsification=2.0,
+        trust_as_of="",
+        state="active",
+        parent_ids=(),
+        facts=ExperienceFacts(
+            polarity=(primary, "workspace:abc123"),
+            recurrence_count=recurrence,
+            criticality="normal",
+            created_under_intent_kind="none",
+            transcript_hash="manual",
+            origin="manual",
+            last_corroborated_at="2026-05-01T12:00:00Z",
+            is_bad=is_bad,
+        ),
     )
-    s = row.summary()
-    if row.row_id not in s:
-        print(f"[memory_v21_hook] FAIL (a): row_id absent: {s!r}", file=sys.stderr)
+
+
+def _check_summary_format() -> int:
+    # `cli.memory._claim_summary` is the successor to the old
+    # `Row.summary()` — the §0.4 single-line wire-format.
+    from resonance_lattice.cli.memory import _claim_summary
+    from resonance_lattice.state.claim import PRIMARY_POLARITY
+
+    claim = _summary_claim(
+        "01HZ8K3M5N7P9Q1R2S3T4V5W6X",
+        text="prefer pytest -xvs <path> for debugging",
+        primary="prefer", recurrence=4, is_bad=False,
+    )
+    s = _claim_summary(claim)
+    if claim.claim_id not in s:
+        print(f"[memory_v21_hook] FAIL (a): claim_id absent: {s!r}", file=sys.stderr)
         return 1
     if "[prefer " not in s:
         print(f"[memory_v21_hook] FAIL (a): primary polarity tag absent or "
@@ -97,26 +124,20 @@ def _check_summary_format() -> int:
               f"{s!r}", file=sys.stderr)
         return 1
 
-    bad = Row(
-        row_id="01HZ8K3M5N7P9Q1R2S3T4V5W6Y",
-        text="legacy noise",
-        polarity=["avoid", "workspace:abc123"],
-        recurrence_count=1,
-        created_at="2026-05-01T12:00:00Z",
-        last_corroborated_at="2026-05-01T12:00:00Z",
-        transcript_hash="manual",
-        is_bad=True,
+    bad = _summary_claim(
+        "01HZ8K3M5N7P9Q1R2S3T4V5W6Y",
+        text="legacy noise", primary="avoid", recurrence=1, is_bad=True,
     )
-    if "[bad]" not in bad.summary():
+    if "[bad]" not in _claim_summary(bad):
         print(f"[memory_v21_hook] FAIL (a): is_bad marker absent: "
-              f"{bad.summary()!r}", file=sys.stderr)
+              f"{_claim_summary(bad)!r}", file=sys.stderr)
         return 1
 
     if PRIMARY_POLARITY != frozenset({"prefer", "avoid", "factual"}):
         print(f"[memory_v21_hook] FAIL (a): PRIMARY_POLARITY drifted from §0.3: "
               f"{sorted(PRIMARY_POLARITY)}", file=sys.stderr)
         return 1
-    print("[memory_v21_hook] (a) Row.summary wire-format OK", file=sys.stderr)
+    print("[memory_v21_hook] (a) claim-summary wire-format OK", file=sys.stderr)
     return 0
 
 
@@ -146,13 +167,12 @@ def _check_fail_open() -> int:
             self.exc = exc
 
         def read_all(self):
-            # Capture's same-text dedup probe runs BEFORE add_row; this
-            # stub returns no rows so the dedup miss path falls through
-            # to the explosive add_row, which is what the test exercises.
-            import numpy as np
-            return [], np.zeros((0, 768), dtype=np.float32)
+            # Capture's same-text dedup probe runs BEFORE write; this stub
+            # returns no claims so the dedup-miss path falls through to
+            # the explosive `write`, which is what the test exercises.
+            return []
 
-        def add_row(self, **kwargs: object) -> str:
+        def write(self, claim, **kwargs: object) -> None:
             raise self.exc
 
     redactor = Redactor()
@@ -163,9 +183,9 @@ def _check_fail_open() -> int:
     ]
     for exc in cases:
         result = capture(transcript, store=_ExplodingStore(exc), redactor=redactor)
-        if result.row_id is not None:
-            print(f"[memory_v21_hook] FAIL (c): expected None row_id on "
-                  f"{type(exc).__name__}, got {result.row_id}", file=sys.stderr)
+        if result.claim_ids:
+            print(f"[memory_v21_hook] FAIL (c): expected empty claim_ids on "
+                  f"{type(exc).__name__}, got {result.claim_ids}", file=sys.stderr)
             return 1
         if not result.skip_reason or "capture failed" not in result.skip_reason:
             print(f"[memory_v21_hook] FAIL (c): skip_reason missing prefix on "
@@ -201,34 +221,47 @@ def _check_truncation_cap() -> int:
         capture, Message, ToolCall, Transcript, _MAX_CAPTURED_CHARS,
     )
     from resonance_lattice.memory.redaction import Redactor
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "u"
-        memory = Memory(root=root, encoder=ZeroEncoder())
+        memory = ExperienceClaimStore(root=root, encoder=ZeroEncoder())
         redactor = Redactor()
+        # Distinguishable head + tail so the test proves the *tail* (the
+        # session's recent work) survives and the stale head is dropped.
+        head = "STALE-OPENING-MARKER"
+        tail = "RECENT-WORK-MARKER"
+        filler = "x" * (_MAX_CAPTURED_CHARS + 5_000 - len(head) - len(tail))
         huge = Transcript(
             session_id="huge",
             messages=[
                 Message("user", "ingest this large file please and process it carefully"),
-                Message("assistant", "x" * (_MAX_CAPTURED_CHARS + 5_000),
+                Message("assistant", head + filler + tail,
                         tool_calls=(ToolCall("read", "/tmp/big", "ok"),)),
             ],
             cwd="/proj",
         )
         result = capture(huge, store=memory, redactor=redactor)
-        if result.row_id is None:
-            print(f"[memory_v21_hook] FAIL (d): expected row_id, got skip "
+        if not result.claim_ids:
+            print(f"[memory_v21_hook] FAIL (d): expected claim_ids, got skip "
                   f"({result.skip_reason})", file=sys.stderr)
             return 1
-        rows, _ = memory.read_all()
-        captured = next(r for r in rows if r.row_id == result.row_id)
-        if len(captured.text) != _MAX_CAPTURED_CHARS:
+        claims = memory.read_all()
+        captured = next(c for c in claims if c.claim_id == result.claim_ids[0])
+        if len(captured.content) != _MAX_CAPTURED_CHARS:
             print(f"[memory_v21_hook] FAIL (d): expected text len "
-                  f"{_MAX_CAPTURED_CHARS}, got {len(captured.text)}",
+                  f"{_MAX_CAPTURED_CHARS}, got {len(captured.content)}",
                   file=sys.stderr)
             return 1
-    print(f"[memory_v21_hook] (d) _MAX_CAPTURED_CHARS truncation OK "
+        if not captured.content.endswith(tail):
+            print("[memory_v21_hook] FAIL (d): captured content lost the "
+                  "session tail (recent work)", file=sys.stderr)
+            return 1
+        if head in captured.content:
+            print("[memory_v21_hook] FAIL (d): captured content kept the "
+                  "stale head instead of truncating it", file=sys.stderr)
+            return 1
+    print(f"[memory_v21_hook] (d) _MAX_CAPTURED_CHARS tail truncation OK "
           f"(cap={_MAX_CAPTURED_CHARS})", file=sys.stderr)
     return 0
 
@@ -240,7 +273,7 @@ def _check_truncation_cap() -> int:
 
 def _check_scope_tag_default() -> int:
     from resonance_lattice.memory._common import workspace_tag_for_cwd
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     with tempfile.TemporaryDirectory() as td:
         base = Path(td) / "base"
@@ -259,28 +292,28 @@ def _check_scope_tag_default() -> int:
                   file=sys.stderr)
             return 1
 
-        memory = Memory(root=base / "kane")
-        rows, _ = memory.read_all()
+        memory = ExperienceClaimStore(root=base / "kane", encoder=None)
+        claims = memory.read_all()
         cwd_tag = workspace_tag_for_cwd()
 
-        default = next(r for r in rows if r.text == "default scope")
-        if cwd_tag not in default.polarity:
+        default = next(c for c in claims if c.content == "default scope")
+        if cwd_tag not in default.facts.polarity:
             print(f"[memory_v21_hook] FAIL (g): default-scope row missing cwd tag "
-                  f"{cwd_tag}; polarity={default.polarity}", file=sys.stderr)
+                  f"{cwd_tag}; polarity={default.facts.polarity}", file=sys.stderr)
             return 1
-        if "cross-workspace" in default.polarity:
+        if "cross-workspace" in default.facts.polarity:
             print(f"[memory_v21_hook] FAIL (g): default-scope row leaked "
-                  f"cross-workspace: {default.polarity}", file=sys.stderr)
+                  f"cross-workspace: {default.facts.polarity}", file=sys.stderr)
             return 1
 
-        cross = next(r for r in rows if r.text == "explicit cross")
-        if cwd_tag not in cross.polarity:
+        cross = next(c for c in claims if c.content == "explicit cross")
+        if cwd_tag not in cross.facts.polarity:
             print(f"[memory_v21_hook] FAIL (g): cross-scope row missing cwd "
-                  f"tag {cwd_tag}; polarity={cross.polarity}", file=sys.stderr)
+                  f"tag {cwd_tag}; polarity={cross.facts.polarity}", file=sys.stderr)
             return 1
-        if "cross-workspace" not in cross.polarity:
+        if "cross-workspace" not in cross.facts.polarity:
             print(f"[memory_v21_hook] FAIL (g): cross-scope row missing "
-                  f"cross-workspace: {cross.polarity}", file=sys.stderr)
+                  f"cross-workspace: {cross.facts.polarity}", file=sys.stderr)
             return 1
     print("[memory_v21_hook] (g) cwd workspace tag stamped + cross-workspace "
           "composes alongside OK", file=sys.stderr)
@@ -305,11 +338,11 @@ def _check_root_user_composition() -> int:
             print(f"[memory_v21_hook] FAIL (h): bob add rc={rc}", file=sys.stderr)
             return 1
 
-        if not (base / "alice" / "sidecar.jsonl").exists():
+        if not (base / "alice" / "claims.jsonl").exists():
             print(f"[memory_v21_hook] FAIL (h): alice subdir missing under "
                   f"{base}", file=sys.stderr)
             return 1
-        if not (base / "bob" / "sidecar.jsonl").exists():
+        if not (base / "bob" / "claims.jsonl").exists():
             print(f"[memory_v21_hook] FAIL (h): bob subdir missing under "
                   f"{base}", file=sys.stderr)
             return 1
@@ -352,31 +385,9 @@ def _check_exit_codes() -> int:
                   file=sys.stderr)
             return 1
 
-        # `consolidate` reclaimed in v2.2 for the agent-harness session-end
-        # pass (distil → confidence → forget); `primer` remains deprecated.
-        for name in ["primer"]:
-            rc, _, err = _run_cli(common + [name])
-            if rc != 2:
-                print(f"[memory_v21_hook] FAIL (i): `{name}` rc={rc} "
-                      f"(want 2 — deprecated)", file=sys.stderr)
-                return 1
-            if "removed in v2.1" not in err:
-                print(f"[memory_v21_hook] FAIL (i): `{name}` banner missing "
-                      f"deprecation marker; stderr:\n{err}", file=sys.stderr)
-                return 1
-
-        # `distil` + `feedback` shipped — no longer rc-3 pending stubs.
-        # `distil` over a manual-only store returns before any LLM call
-        # (rc 0 with a key, rc 1 without); either way it is not rc 3.
-        rc, _, err = _run_cli(common + ["distil"])
-        if rc == 3 or "ships in v2.1 MVP" in err:
-            print(f"[memory_v21_hook] FAIL (i): `distil` still a "
-                  f"pending-MVP stub (rc={rc})\n{err}", file=sys.stderr)
-            return 1
-
         # `feedback` logs a vote with no LLM dependency — fully
         # deterministic; verify both verdicts land in feedback.log.
-        from resonance_lattice.memory.feedback import read_feedback
+        from resonance_lattice.memory.feedback import feedback_log_path
         from resonance_lattice.memory.store import path_for_user
         for verdict in ["good", "bad"]:
             rc, _, err = _run_cli(common + ["feedback", verdict])
@@ -384,17 +395,24 @@ def _check_exit_codes() -> int:
                 print(f"[memory_v21_hook] FAIL (i): `feedback {verdict}` "
                       f"rc={rc} (want 0)\n{err}", file=sys.stderr)
                 return 1
-        votes = read_feedback(path_for_user(user_id="test", root=base))
+        log_path = feedback_log_path(
+            path_for_user(user_id="test", root=base)
+        )
+        votes = [
+            json.loads(line)
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
         if [v["verdict"] for v in votes] != ["good", "bad"]:
             print(f"[memory_v21_hook] FAIL (i): feedback.log={votes!r}",
                   file=sys.stderr)
             return 1
 
         # `recall <query>` (one-shot) shipped Day 9-10. Empty store
-        # returns rc=0 with the "(no rows pass...)" message. Bare
+        # returns rc=0 with the "(no claims pass...)" message. Bare
         # `recall` (no query, no --daemon) is rc=1 user error.
         rc, _, err = _run_cli(common + ["recall", "test query"])
-        if rc != 0 or "(no rows pass" not in err:
+        if rc != 0 or "(no claims pass" not in err:
             print(f"[memory_v21_hook] FAIL (i): `recall <query>` rc={rc} "
                   f"(want 0, empty-store gates message); stderr:\n{err}",
                   file=sys.stderr)
@@ -443,7 +461,7 @@ def _check_exit_codes() -> int:
                   file=sys.stderr)
             return 1
         _, out, _ = _run_cli(common + ["list", "--format", "json"])
-        seeded_id = json.loads(out)[0]["row_id"]
+        seeded_id = json.loads(out)[0]["claim_id"]
 
         for flag in ["--bad-vote", "--good-vote", "--corroborate"]:
             rc, _, err = _run_cli(common + ["train", flag, seeded_id])
@@ -463,9 +481,9 @@ def _check_exit_codes() -> int:
             print(f"[memory_v21_hook] FAIL (i): mutually-exclusive flags "
                   f"rc={rc} or banner missing:\n{err}", file=sys.stderr)
             return 1
-    print("[memory_v21_hook] (i) CLI exit codes 0/1/2/3 distinguish "
-          "ok/user-error/deprecated/pending-MVP + train operator flags "
-          "OK", file=sys.stderr)
+    print("[memory_v21_hook] (i) CLI exit codes 0/1/3 distinguish "
+          "ok/user-error/pending-MVP + train operator flags OK",
+          file=sys.stderr)
     return 0
 
 
@@ -484,7 +502,7 @@ def _check_capture_dedup() -> int:
         capture, GateConfig, Message, ToolCall, Transcript,
     )
     from resonance_lattice.memory.redaction import Redactor
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     def _transcript(session_id: str, cwd: str) -> Transcript:
         return Transcript(
@@ -502,14 +520,14 @@ def _check_capture_dedup() -> int:
         )
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
+        memory = ExperienceClaimStore(root=Path(td) / "u", encoder=None)
         redactor = Redactor()
         gate = GateConfig(require_tool_use=True, min_assistant_chars=200)
 
         # First capture from session A in workspace P
         r1 = capture(_transcript("sess-A", "/proj-P"),
                      store=memory, redactor=redactor, gate=gate)
-        if not r1.row_id:
+        if not r1.claim_ids:
             print(f"[memory_v21_hook] FAIL (j): first capture skipped: "
                   f"{r1.skip_reason!r}", file=sys.stderr)
             return 1
@@ -517,36 +535,36 @@ def _check_capture_dedup() -> int:
         # Second capture from a DIFFERENT session but same text + same workspace
         r2 = capture(_transcript("sess-B", "/proj-P"),
                      store=memory, redactor=redactor, gate=gate)
-        if r2.row_id != r1.row_id:
+        if r2.claim_ids != r1.claim_ids:
             print(f"[memory_v21_hook] FAIL (j): same-text-same-workspace "
-                  f"dedup failed; got new row_id {r2.row_id} "
-                  f"vs existing {r1.row_id}", file=sys.stderr)
+                  f"dedup failed; got new row_ids {r2.claim_ids} "
+                  f"vs existing {r1.claim_ids}", file=sys.stderr)
             return 1
 
-        rows, _ = memory.read_all()
-        if len(rows) != 1:
+        claims = memory.read_all()
+        if len(claims) != 1:
             print(f"[memory_v21_hook] FAIL (j): expected 1 row after dedup, "
-                  f"got {len(rows)}", file=sys.stderr)
+                  f"got {len(claims)}", file=sys.stderr)
             return 1
-        if rows[0].recurrence_count != 2:
+        if claims[0].facts.recurrence_count != 2:
             print(f"[memory_v21_hook] FAIL (j): expected recurrence_count=2 "
-                  f"after second capture, got {rows[0].recurrence_count}",
+                  f"after second capture, got {claims[0].facts.recurrence_count}",
                   file=sys.stderr)
             return 1
 
         # Third capture: same text, DIFFERENT workspace → new row
         r3 = capture(_transcript("sess-C", "/proj-Q"),
                      store=memory, redactor=redactor, gate=gate)
-        if r3.row_id == r1.row_id:
+        if r3.claim_ids == r1.claim_ids:
             print(f"[memory_v21_hook] FAIL (j): different-workspace capture "
-                  f"deduped onto workspace-P row {r1.row_id}",
+                  f"deduped onto workspace-P row {r1.claim_ids}",
                   file=sys.stderr)
             return 1
 
-        rows, _ = memory.read_all()
-        if len(rows) != 2:
+        claims = memory.read_all()
+        if len(claims) != 2:
             print(f"[memory_v21_hook] FAIL (j): expected 2 rows after "
-                  f"different-workspace capture, got {len(rows)}",
+                  f"different-workspace capture, got {len(claims)}",
                   file=sys.stderr)
             return 1
     print("[memory_v21_hook] (j) capture dedup bumps recurrence_count + "

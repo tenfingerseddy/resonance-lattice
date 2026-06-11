@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API keys — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html" aria-current="page">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>API keys</h1>
+  <p class="lede">
+    Almost everything <code>rlat</code> does runs on your machine with no
+    key and no internet. A small set of commands call an LLM and need an
+    Anthropic API key — they are opt-in, and each one has a free
+    in-session alternative.
+  </p>
+
+  <section id="what-needs-a-key">
+    <div class="section-num">01 — When you need one</div>
+    <h2>What needs a key</h2>
+    <p>
+      Most commands — <code>rlat build</code>, <code>rlat search</code>,
+      <code>rlat profile</code>, <code>rlat compare</code>,
+      <code>rlat summary</code>, <code>rlat refresh</code>,
+      <code>rlat sync</code>, <code>rlat freshness</code>,
+      <code>rlat convert</code>, <code>rlat skill-context</code>, and
+      most of <code>rlat memory</code> — need no API key, no internet,
+      and no LLM.
+    </p>
+    <p>
+      The commands below call <em>Claude Sonnet 4.6</em> through the
+      Anthropic API. They are advanced, opt-in features for users who
+      want a programmatic surface; everyone else gets the equivalent
+      value through Claude-Code-driven skills at no extra cost.
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Command</th><th>What it does</th><th>Why it needs an LLM</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>rlat deep-search</code></td>
+          <td>Runs a multi-hop research loop (plan &rarr; retrieve &rarr; refine &rarr; synthesize) and returns a faithfully-grounded answer with cited evidence.</td>
+          <td>Calls Sonnet 4.6 for the planner / refiner / synthesizer hops.</td>
+        </tr>
+        <tr>
+          <td><code>rlat reverify</code></td>
+          <td>Re-judges stale insights against their changed source — survivors revive, failures retire.</td>
+          <td>Asks Sonnet whether the updated source still supports each insight.</td>
+        </tr>
+        <tr>
+          <td><code>rlat probe</code></td>
+          <td>Idle-cycle self-probe — re-attempts queries that previously failed to ground.</td>
+          <td>Runs <code>deep-search</code> internally on each weak-zone query.</td>
+        </tr>
+        <tr>
+          <td><code>rlat grow</code></td>
+          <td>One opt-in self-improvement pass — reads the archive's own usage telemetry, finds the most-demanded, worst-covered gaps, and authors a grounded fill for each.</td>
+          <td>Calls Sonnet to author each fill; the faithfulness gate decides whether it lands. <code>--dry-run</code> previews the candidates with no LLM and no writes.</td>
+        </tr>
+        <tr>
+          <td><code>rlat memory verify</code></td>
+          <td>Checks high-criticality memory claims against a corpus knowledge model — confirmed claims rise to <em>verified</em>, contradicted ones drop to <em>low</em>.</td>
+          <td>Asks Sonnet whether the corpus supports each claim. The rest of <code>rlat memory</code> — capture, recall, consolidate, add — is key-free.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Two opt-in memory features degrade silently instead of erroring:
+      passive world-fact mining (<code>RLAT_MINE_ATTRIBUTES=1</code>, set
+      by <code>rlat memory install-hooks --mine</code>) and atomic event
+      extraction (<code>RLAT_ATOMIC_CAPTURE=1</code>) add LLM steps to the
+      session-end capture hook. Each activates only when a key resolves —
+      without one the hook stays silent and capture falls back to its
+      key-free path.
+    </p>
+    <div class="callout callout-note">
+      <p>An <em>insight</em> is an earned, cited summary the knowledge
+      model stores alongside the raw source passages — see the
+      <a href="claim-system.html">claim system</a> page for the full model. The LLM-driven
+      commands above all touch that layer or synthesise answers from it.</p>
+    </div>
+  </section>
+
+  <section id="free-alternatives">
+    <div class="section-num">02 — The free path</div>
+    <h2>Free alternatives</h2>
+    <p>
+      If you do not have an API key, there are three free ways to get
+      <code>rlat deep-search</code>'s value:
+    </p>
+    <ul class="checklist">
+      <li>
+        <strong>The <code>deep-research</code> skill</strong> — drives
+        the same loop natively in your Claude Code session. Same prompts,
+        same hop budget, same name-verification check, same output
+        shape. It pays nothing on top of your existing Claude
+        subscription. <strong>This is what most users should use.</strong>
+      </li>
+      <li>
+        <strong>Single-shot <code>rlat search --format context</code></strong>
+        — one-shot retrieval, zero LLM cost. The benchmark shows 76.5%
+        answerable accuracy at 3.9% hallucination on the Microsoft Fabric
+        corpus, versus 92.2% / 0% for the deep loop — single-shot is
+        enough for the majority of factual lookups.
+      </li>
+      <li>
+        <strong>Manual research with <code>rlat search</code> plus your
+        existing Claude session</strong> — Claude reads passages, decides
+        what to search next, and synthesises. The same loop the skill
+        formalises, just more freeform.
+      </li>
+    </ul>
+  </section>
+
+  <section id="getting-a-key">
+    <div class="section-num">03 — Getting a key</div>
+    <h2>Getting an Anthropic API key</h2>
+    <p>If you decide you want a key for one of the opt-in commands:</p>
+    <ul class="checklist">
+      <li>Sign up at <a href="https://console.anthropic.com/">console.anthropic.com</a> if you do not already have an account.</li>
+      <li>Go to <strong>Settings &rarr; API Keys</strong> and create a new key. The console shows it once — copy it immediately.</li>
+      <li>Add a payment method. Pricing is pay-as-you-go; Sonnet 4.6 is currently $3 per 1M input tokens and $15 per 1M output tokens.</li>
+    </ul>
+    <h3 id="cost-estimates">Cost estimates</h3>
+    <table class="compact">
+      <thead><tr><th>Command</th><th>Typical cost</th></tr></thead>
+      <tbody>
+        <tr><td><code>rlat deep-search</code></td><td>~$0.009&ndash;0.025 per question; a 4-hop loop on a typical question is ~$0.012.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      If those numbers are higher than you want, the in-session skill
+      alternatives above are free and the benchmark data shows they reach
+      the same quality ceiling.
+    </p>
+  </section>
+
+  <section id="setting-the-key">
+    <div class="section-num">04 — Setting the key</div>
+    <h2>Setting the key in your environment</h2>
+    <p><code>rlat</code> looks up the key in this order:</p>
+    <table class="compact">
+      <thead><tr><th>Order</th><th>Variable</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>1</td><td><code>RLAT_LLM_API_KEY_ENV</code></td>
+          <td>The <em>name of another environment variable</em> that holds the key. Use this when your secrets manager stores the key under a different name.</td>
+        </tr>
+        <tr>
+          <td>2</td><td><code>CLAUDE_API_2</code></td>
+          <td>The active key slot for the harness LLM in this project; checked first of the direct names.</td>
+        </tr>
+        <tr>
+          <td>3</td><td><code>CLAUDE_API</code></td>
+          <td>The legacy canonical name; still supported.</td>
+        </tr>
+        <tr>
+          <td>4</td><td><code>ANTHROPIC_API_KEY</code></td>
+          <td>Anthropic's standard variable name; supported for compatibility with their other tooling.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      If none of those is set, <code>rlat</code> also falls back to
+      Kaggle secrets (so notebook builds work). Set whichever variable
+      fits your workflow.
+    </p>
+
+    <h3 id="linux-macos">Linux / macOS (bash, zsh)</h3>
+    <pre><code>export CLAUDE_API="sk-ant-..."
+# Persist by adding the line to ~/.bashrc, ~/.zshrc, or your shell rc file.</code></pre>
+
+    <h3 id="windows-current-session">Windows PowerShell (current session only)</h3>
+    <pre><code>$env:CLAUDE_API = "sk-ant-..."</code></pre>
+
+    <h3 id="windows-persistent">Windows PowerShell (persistent across sessions)</h3>
+    <pre><code>[System.Environment]::SetEnvironmentVariable("CLAUDE_API", "sk-ant-...", "User")
+# New PowerShell sessions will see it; the current session still needs:
+$env:CLAUDE_API = [System.Environment]::GetEnvironmentVariable("CLAUDE_API", "User")</code></pre>
+
+    <h3 id="env-file">.env file (development)</h3>
+    <p>If you use <code>direnv</code> or a <code>.env</code> file loaded by your shell:</p>
+    <pre><code>CLAUDE_API=sk-ant-...</code></pre>
+    <div class="callout callout-warn">
+      <span class="callout-tag">Don't commit secrets</span>
+      <p>Never commit a <code>.env</code> file that contains a key.
+      <code>.gitignore</code> should already exclude it.</p>
+    </div>
+
+    <h3 id="secrets-manager">From a secrets manager (production / CI)</h3>
+    <p>
+      In a CI pipeline or hosted environment, fetch the key from your
+      secrets manager and export it as <code>CLAUDE_API</code> — or set
+      <code>RLAT_LLM_API_KEY_ENV</code> to indirect through whatever name
+      the manager uses:
+    </p>
+    <pre><code># Example: AWS Secrets Manager
+export CLAUDE_API="$(aws secretsmanager get-secret-value \
+  --secret-id anthropic/api-key --query SecretString --output text)"
+rlat deep-search project.rlat "$question"</code></pre>
+  </section>
+
+  <section id="verification">
+    <div class="section-num">05 — Verify &amp; control cost</div>
+    <h2>Verification</h2>
+    <p>Once the key is set, confirm <code>rlat</code> can see it:</p>
+    <pre><code>rlat deep-search myproject.rlat "test question" --max-hops 1</code></pre>
+    <p>
+      If you see <code>error: An LLM API key is required for this
+      command</code>, the key is not in any of the variables
+      <code>rlat</code> checks. Re-run
+      <code>echo $CLAUDE_API</code> (Linux / macOS) or
+      <code>echo $env:CLAUDE_API</code> (PowerShell) to confirm — the
+      value should start with <code>sk-ant-</code>.
+    </p>
+
+    <h3 id="cost-guardrails">Cost guardrails</h3>
+    <ul class="checklist">
+      <li><code>rlat deep-search km.rlat "&lt;q&gt;" --max-hops N</code> — a lower hop count means lower cost.</li>
+    </ul>
+    <p><code>rlat deep-search</code> reports the cost in its output so you can track spend per question:</p>
+    <pre><code>[deep-search] hops=4 in=2143 out=312 cost=$0.0118 evidence=8 passages</code></pre>
+  </section>
+
+  <section id="why-not-free-in-cli">
+    <div class="section-num">06 — Background</div>
+    <h2>Why isn't deep-search free in the CLI too?</h2>
+    <p>
+      Because the CLI verb is a separate process — it cannot reach into a
+      running Claude Code conversation to use your subscription. When you
+      run <code>rlat deep-search</code> from a shell, it spawns Python,
+      loads the knowledge model, and needs a way to call an LLM for the
+      planner / refiner / synthesizer hops. Today that is the Anthropic
+      API.
+    </p>
+    <p>
+      A future option is an <code>rlat deep-search --llm-server &lt;url&gt;</code>
+      flag pointing at a local LLM (Ollama, llama.cpp) so the CLI can use
+      whichever LLM you already have. Until then, the
+      <code>deep-research</code> skill is the answer — the same loop, no
+      extra cost, no API key.
+    </p>
+  </section>
+
+  <section id="next">
+    <h2>What's next</h2>
+    <div class="next">
+      <a href="cli.html">
+        <span class="next-label">Next</span><br>
+        <span class="next-title">CLI reference</span>
+      </a>
+      <a href="getting-started.html">
+        <span class="next-label">Then</span><br>
+        <span class="next-title">Getting started</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

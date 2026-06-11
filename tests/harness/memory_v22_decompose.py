@@ -17,7 +17,7 @@ Pins architecture §"Decomposition guidance for the LLM". Six contracts:
 
   (f) Non-JSON LLM output is treated as refusal, not crash.
 
-Hermetic — synthetic LiveIntent + fake LLM client; no encoder, no network.
+Hermetic — synthetic Intent + fake LLM client; no encoder, no network.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _check_successful_decomposition() -> int:
     with tempfile.TemporaryDirectory() as td:
         store = LiveIntentStore(Path(td))
         task_id = _seed_task(store)
-        parent = next(i for i in store.list_active() if i.intent_id == task_id)
+        parent = next(i for i in store.list_all() if i.intent_id == task_id)
         result = decompose(
             parent,
             llm=_llm_with_steps([
@@ -70,7 +70,7 @@ def _check_successful_decomposition() -> int:
             print(f"[memory_v22_decompose] FAIL (a): {result!r}",
                   file=sys.stderr)
             return 1
-        intents = {i.intent_id: i for i in store.list_active()}
+        intents = {i.intent_id: i for i in store.list_all()}
         children = [intents[cid] for cid in result.child_intent_ids]
         if any(c.level != "step" for c in children):
             print(f"[memory_v22_decompose] FAIL (a): non-step child levels",
@@ -95,7 +95,7 @@ def _check_refuses_non_task_level() -> int:
         store = LiveIntentStore(Path(td))
         step_id = _seed_task(store, level="step")
         step_intent = next(
-            i for i in store.list_active() if i.intent_id == step_id
+            i for i in store.list_all() if i.intent_id == step_id
         )
         result = decompose(
             step_intent,
@@ -107,7 +107,7 @@ def _check_refuses_non_task_level() -> int:
                   file=sys.stderr)
             return 1
         # No new children should have been written.
-        if len([i for i in store.list_active() if i.parent_ids]) != 0:
+        if len([i for i in store.list_all() if i.parent_ids]) != 0:
             print(f"[memory_v22_decompose] FAIL (b): children written",
                   file=sys.stderr)
             return 1
@@ -120,7 +120,7 @@ def _check_fan_out_range() -> int:
     with tempfile.TemporaryDirectory() as td:
         store = LiveIntentStore(Path(td))
         task_id = _seed_task(store)
-        parent = next(i for i in store.list_active() if i.intent_id == task_id)
+        parent = next(i for i in store.list_all() if i.intent_id == task_id)
         # Below min.
         result = decompose(
             parent, llm=_llm_with_steps(["only one"]), store=store,
@@ -148,7 +148,7 @@ def _check_explicit_refusal() -> int:
     with tempfile.TemporaryDirectory() as td:
         store = LiveIntentStore(Path(td))
         task_id = _seed_task(store)
-        parent = next(i for i in store.list_active() if i.intent_id == task_id)
+        parent = next(i for i in store.list_all() if i.intent_id == task_id)
         refuse_llm = lambda system, msgs, tokens: LLMResponse(
             json.dumps({"refuse": True, "reason": "too vague to decompose"}),
             50, 20,
@@ -168,7 +168,7 @@ def _check_step_length_cap() -> int:
     with tempfile.TemporaryDirectory() as td:
         store = LiveIntentStore(Path(td))
         task_id = _seed_task(store)
-        parent = next(i for i in store.list_active() if i.intent_id == task_id)
+        parent = next(i for i in store.list_all() if i.intent_id == task_id)
         long_step = " ".join(["word"] * 50)
         result = decompose(
             parent,
@@ -187,7 +187,7 @@ def _check_non_json_treated_as_refusal() -> int:
     with tempfile.TemporaryDirectory() as td:
         store = LiveIntentStore(Path(td))
         task_id = _seed_task(store)
-        parent = next(i for i in store.list_active() if i.intent_id == task_id)
+        parent = next(i for i in store.list_all() if i.intent_id == task_id)
         garbage_llm = lambda system, msgs, tokens: LLMResponse(
             "not json at all", 10, 5,
         )

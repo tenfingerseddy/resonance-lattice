@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rlat"
-version = "2.1.0a15"
+version = "3.0.0"
 description = "Knowledge-model retrieval for AI assistants — base-first, dense-only, three storage modes"
 readme = "README.md"
 license = {file = "LICENSE.md"}
@@ -47,14 +47,21 @@ dependencies = [
 # — torch doesn't pull it automatically but install_encoder._export_onnx
 # fails ModuleNotFoundError without it (e.g. on Kaggle's torch image).
 build = [
-    "transformers>=4.48",
-    "torch>=2.0",
+    # Ceilings are load-bearing: the transformers 5.x / torch 2.12 export
+    # path emits an sdpa graph with an InsertedPrecisionFreeCast node that
+    # crashes onnxruntime on dynamic-batch buffer reuse ({1,h,s,64} vs
+    # {N,h,s,64}; first caught by CI 2026-06-10, identical on Linux+Windows).
+    # The encoder recipe is pinned by design — re-validate the export
+    # (tests/harness/encoder_determinism.py) before raising either ceiling.
+    "transformers>=4.48,<5",
+    "torch>=2.0,<2.12",
     "onnxscript>=0.1",
 ]
-# MRL optimised training (rlat optimise): synth queries + InfoNCE
-optimise = [
+# LLM-calling read-path commands (deep-search, intent classify, probe,
+# reverify, assess-session, the SessionEnd capture hook). Just the Anthropic
+# SDK — no torch (the MRL trainer that needed it is retired).
+llm = [
     "anthropic>=0.25",
-    "torch>=2.0",
 ]
 # ANN indexing (rlat build for corpora with N > 5000 passages, all queries
 # against indexed knowledge models). FAISS locked at Audit 04 (Phase 1 #14):
@@ -65,9 +72,8 @@ optimise = [
 ann = [
     "faiss-cpu>=1.13",
 ]
-# CUDA / GPU acceleration. Torch comes via [build] or [optimise]; this extra
-# only adds the GPU-specific ONNX runtime, so users compose [build,gpu] or
-# [optimise,gpu] as needed.
+# CUDA / GPU acceleration. Torch comes via [build]; this extra only adds the
+# GPU-specific ONNX runtime, so users compose [build,gpu] as needed.
 #
 # IMPORTANT: `onnxruntime` (CPU, base dep) and `onnxruntime-gpu` (here) provide
 # the same `onnxruntime` Python package and clobber each other. Users wanting
@@ -93,6 +99,9 @@ bench = [
     "chromadb>=0.4",
     "sentence-transformers>=2.5",
     "psutil>=5.9",
+    # Direct dep of benchmarks/h1_gap_gate.py (was riding in transitively;
+    # CI without [bench] crashed the h1_gap_gate suite before its SKIP guard).
+    "scikit-learn>=1.3",
 ]
 # Live filesystem watcher (rlat watch): debounced incremental refresh on
 # every save. Adds watchdog for cross-platform FS event delivery (inotify
@@ -124,7 +133,7 @@ dev = [
 # Convenience: full user-facing surface. Excludes [gpu] only — the
 # onnxruntime/onnxruntime-gpu package clobber means [gpu] users must
 # uninstall onnxruntime first (see [gpu] block).
-all = ["rlat[build,optimise,bench,ann,watch]"]
+all = ["rlat[build,llm,bench,ann,watch]"]
 
 [project.scripts]
 rlat = "resonance_lattice.cli.app:main"

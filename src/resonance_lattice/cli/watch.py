@@ -10,9 +10,14 @@ all of their source roots concurrently. FS events fan out to every archive
 whose source_paths cover the changed path.
 
 Concurrency: each archive holds a `threading.Lock` that serialises
-refreshes. This is non-negotiable — `incremental.apply_delta` writes via
-`<archive>.tmp` + `os.replace`; two concurrent calls share that tmp path
-and the second silently corrupts the first.
+refreshes. `apply_delta` is a read-modify-write of the whole archive, so
+two concurrent in-process calls would each apply their delta against the
+same pre-state and one's update would be lost. The lock prevents that.
+Corruption from concurrent tmp-filename collision is handled in
+`archive.write` itself (per-writer-unique tmp via `_unique_tmp_path`), so
+out-of-process writers (a separate `rlat reverify` against the same
+archive) can't tear the ZIP either — they can still lose updates by the
+same read-modify-write mechanism, which callers must serialise themselves.
 
 Bundled-mode and remote-mode archives are rejected at startup with
 actionable error messages (use `rlat convert` or `rlat sync` respectively).

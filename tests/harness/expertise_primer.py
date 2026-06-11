@@ -29,30 +29,78 @@ from __future__ import annotations
 
 import sys
 
-import numpy as np
 
-
-def _row(
-    row_id: str, *, level: str = "event", text: str = "row text",
+def _claim(
+    claim_id: str, *, level: str = "event", text: str = "row text",
     confidence: str = "medium", recurrence_count: int = 1,
     is_bad: bool = False, polarity: list[str] | None = None,
 ) -> object:
-    from resonance_lattice.memory.store import Row
+    from resonance_lattice.memory.store import seed_tallies_for_rung
+    from resonance_lattice.state.claim import Claim, ExperienceFacts
 
-    return Row(
-        row_id=row_id,
-        text=text,
-        polarity=polarity or ["factual", "workspace:abc123"],
-        recurrence_count=recurrence_count,
+    # `confidence` is a derived view over the Beta tallies — seed the
+    # tallies for the requested rung rather than passing confidence.
+    corroboration, falsification = seed_tallies_for_rung(confidence)
+    return Claim(
+        claim_id=claim_id,
+        source="experience",
+        kind=level,
+        content=text,
         created_at="2026-05-01T00:00:00Z",
-        last_corroborated_at="2026-05-01T00:00:00Z",
-        transcript_hash="manual",
-        is_bad=is_bad,
-        level=level,
-        criticality="normal",
-        confidence=confidence,
-        parent_ids=[],
-        origin="manual",
+        corroboration=corroboration,
+        falsification=falsification,
+        trust_as_of="",
+        state="active",
+        parent_ids=(),
+        facts=ExperienceFacts(
+            polarity=tuple(polarity or ["factual", "workspace:abc123"]),
+            recurrence_count=recurrence_count,
+            criticality="normal",
+            created_under_intent_kind="none",
+            transcript_hash="manual",
+            origin="manual",
+            last_corroborated_at="2026-05-01T00:00:00Z",
+            is_bad=is_bad,
+        ),
+    )
+
+
+def _corpus_claim(
+    claim_id: str, *, text: str = "corpus fact", confidence: str = "high",
+    state: str = "active", kind: str = "synthesis",
+) -> object:
+    """A source=corpus Claim (CorpusFacts) for the source-aware render test.
+
+    CorpusFacts is disjoint from ExperienceFacts — no polarity/recurrence/
+    is_bad — so a corpus claim routed through the primer must render core-only
+    and drop on state, not on is_bad.
+    """
+    from resonance_lattice.memory.store import seed_tallies_for_rung
+    from resonance_lattice.state.claim import Claim, CorpusFacts
+
+    corroboration, falsification = seed_tallies_for_rung(confidence)
+    return Claim(
+        claim_id=claim_id,
+        source="corpus",
+        kind=kind,
+        content=text,
+        created_at="2026-05-01T00:00:00Z",
+        corroboration=corroboration,
+        falsification=falsification,
+        trust_as_of="",
+        state=state,
+        parent_ids=(),
+        facts=CorpusFacts(
+            citations=(),
+            content_fingerprint=claim_id,
+            source_model_hash="model-x",
+            source_passage_hashes=(),
+            verdict_signals=(),
+            query="q",
+            intent_context=None,
+            stale_if_sources_drift=True,
+            encoder_version="gte-mb-768",
+        ),
     )
 
 
@@ -60,9 +108,9 @@ def _intent(
     intent_id: str, *, level: str = "task", text: str = "do the thing",
     status: str = "active", created_at: str = "2026-05-09T00:00:00Z",
 ) -> object:
-    from resonance_lattice.state.intent import LiveIntent
+    from resonance_lattice.state.intent import Intent
 
-    return LiveIntent(
+    return Intent(
         intent_id=intent_id,
         level=level,
         text=text,
@@ -142,29 +190,26 @@ def _check_intent_filtering_and_order() -> int:
 
 
 def _check_memory_filtering_and_order() -> int:
-    """(d) intent-shaped levels + is_bad filtered; (e) confidence × level
-    × recurrence ordering."""
+    """(d) is_bad rows filtered; (e) confidence × level × recurrence
+    ordering."""
     from resonance_lattice.expertise import render_expertise_primer
 
     rows = [
-        _row("01HZTASK", level="task", text="intent-shaped task"),
-        _row("01HZGOAL", level="goal", text="intent-shaped goal"),
-        _row("01HZBAD", text="bad-row", is_bad=True),
-        _row("01HZP1", level="principle", text="verified-principle",
-             confidence="verified", recurrence_count=1),
-        _row("01HZL1", level="learning", text="high-learning",
-             confidence="high", recurrence_count=1),
-        _row("01HZE1", level="event", text="medium-event-recur5",
-             confidence="medium", recurrence_count=5),
-        _row("01HZE2", level="event", text="medium-event-recur1",
-             confidence="medium", recurrence_count=1),
+        _claim("01HZBAD", text="bad-row", is_bad=True),
+        _claim("01HZP1", level="principle", text="verified-principle",
+               confidence="verified", recurrence_count=1),
+        _claim("01HZL1", level="learning", text="high-learning",
+               confidence="high", recurrence_count=1),
+        _claim("01HZE1", level="event", text="medium-event-recur5",
+               confidence="medium", recurrence_count=5),
+        _claim("01HZE2", level="event", text="medium-event-recur1",
+               confidence="medium", recurrence_count=1),
     ]
     body = render_expertise_primer(intents=[], memory_rows=rows)
-    for excluded in ("intent-shaped task", "intent-shaped goal", "bad-row"):
-        if excluded in body:
-            print(f"[expertise_primer] FAIL (d): {excluded!r} not filtered\n{body}",
-                  file=sys.stderr)
-            return 1
+    if "bad-row" in body:
+        print(f"[expertise_primer] FAIL (d): is_bad row not filtered\n{body}",
+              file=sys.stderr)
+        return 1
     # (e) verified > high > medium-recur5 > medium-recur1
     expected_order = [
         "verified-principle",
@@ -177,8 +222,67 @@ def _check_memory_filtering_and_order() -> int:
         print(f"[expertise_primer] FAIL (e): wrong memory order\n"
               f"indices={indices}\n{body}", file=sys.stderr)
         return 1
-    print("[expertise_primer] (d) intent-shaped + bad rows filtered + "
+    print("[expertise_primer] (d) is_bad rows filtered + "
           "(e) confidence × level × recurrence order OK", file=sys.stderr)
+    return 0
+
+
+def _check_mixed_source_render() -> int:
+    """(h) S3b source-aware render: a corpus claim (CorpusFacts) renders
+    core-only and drops on non-active state; experience rows render exactly as
+    before (parity); confidence ordering holds ACROSS sources."""
+    from resonance_lattice.expertise import render_expertise_primer
+
+    rows = [
+        _claim("01HZEXP", level="learning", text="experience-lesson",
+               confidence="high", recurrence_count=4),
+        _corpus_claim("c0rpusactivefact", text="active-corpus-fact",
+                      confidence="verified", state="active"),
+        _corpus_claim("c0rpusretired00", text="retired-corpus-fact",
+                      confidence="high", state="retired"),
+    ]
+    body = render_expertise_primer(intents=[], memory_rows=rows)
+
+    if "active-corpus-fact" not in body:
+        print(f"[expertise_primer] FAIL (h): active corpus claim not rendered\n"
+              f"{body}", file=sys.stderr)
+        return 1
+    if "retired-corpus-fact" in body:
+        print(f"[expertise_primer] FAIL (h): non-active corpus claim not "
+              f"dropped (state is the corpus is_bad analogue)\n{body}",
+              file=sys.stderr)
+        return 1
+
+    lines = body.splitlines()
+    corpus_line = next(l for l in lines if "active-corpus-fact" in l)
+    # Corpus line is core-only: source-labelled, no ExperienceFacts tokens.
+    if "*corpus*" not in corpus_line:
+        print(f"[expertise_primer] FAIL (h): corpus line missing source "
+              f"label: {corpus_line!r}", file=sys.stderr)
+        return 1
+    if "recur=" in corpus_line:
+        print(f"[expertise_primer] FAIL (h): corpus line leaked an "
+              f"ExperienceFacts-only recurrence token: {corpus_line!r}",
+              file=sys.stderr)
+        return 1
+
+    # Experience row is unchanged — full polarity + recurrence line (parity).
+    exp_line = next(l for l in lines if "experience-lesson" in l)
+    if "recur=4" not in exp_line or "*factual*" not in exp_line:
+        print(f"[expertise_primer] FAIL (h): experience line lost its "
+              f"polarity/recurrence (parity broken): {exp_line!r}",
+              file=sys.stderr)
+        return 1
+
+    # Confidence dominates across sources: verified corpus before high exp.
+    if body.index("active-corpus-fact") > body.index("experience-lesson"):
+        print(f"[expertise_primer] FAIL (h): cross-source confidence order "
+              f"broke (verified corpus should precede high experience)\n{body}",
+              file=sys.stderr)
+        return 1
+    print("[expertise_primer] (h) source-aware render: corpus core-only + "
+          "state-drop + experience parity + cross-source order OK",
+          file=sys.stderr)
     return 0
 
 
@@ -191,7 +295,7 @@ def _check_caps_respected() -> int:
                 created_at=f"2026-05-09T{i:02d}:00:00Z")
         for i in range(15)
     ]
-    rows = [_row(f"01HZRO{i}", text=f"row-{i}") for i in range(20)]
+    rows = [_claim(f"01HZRO{i}", text=f"row-{i}") for i in range(20)]
     body = render_expertise_primer(
         intents=intents, memory_rows=rows,
         max_intents=3, max_memory_rows=4,
@@ -213,7 +317,7 @@ def _check_long_text_ellipsis() -> int:
     from resonance_lattice.expertise import render_expertise_primer
 
     long_text = "a" * 500
-    rows = [_row("01HZLONG", text=long_text)]
+    rows = [_claim("01HZLONG", text=long_text)]
     body = render_expertise_primer(
         intents=[], memory_rows=rows, memory_row_chars=50,
     )
@@ -234,6 +338,7 @@ def run() -> int:
         _check_empty_inputs,
         _check_intent_filtering_and_order,
         _check_memory_filtering_and_order,
+        _check_mixed_source_render,
         _check_caps_respected,
         _check_long_text_ellipsis,
     ]:

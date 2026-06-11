@@ -145,42 +145,6 @@ class CompareResult:
 
 
 @dataclass(frozen=True)
-class ContradictionPair:
-    """A `contradictions` op result — high-cosine, low-lexical pair.
-
-    Heuristic: pairs with `cosine ≥ cosine_threshold` AND `jaccard ≤
-    lexical_threshold` (Jaccard over token-3-grams). The intuition:
-    semantically-near but lexically-disjoint pairs may be paraphrases
-    of opposing claims. Will produce noise — ship as experimental.
-    """
-    citation_a: Citation
-    citation_b: Citation
-    cosine: float
-    jaccard: float
-
-
-@dataclass(frozen=True)
-class AuditReport:
-    """`audit` op result: supporting + potentially-contradicting evidence
-    for a claim, with corpus-level confidence indicators.
-
-    `supporting`: top-K passages with cosine ≥ support_threshold to the
-        claim. These DIRECTLY back the claim.
-    `contradicting`: passages with high cosine to a supporting passage
-        AND low lexical overlap (potentially a paraphrased disagreement).
-    `source_count`: distinct source files in `supporting` — high count
-        means multiple independent sources back the claim; low count
-        means the supporting evidence may be a single source repeated.
-    `drift_fraction`: fraction of supporting passages with non-verified
-        drift_status. High → the supporting evidence is stale.
-    """
-    supporting: list["CitationHit"]
-    contradicting: list["CitationHit"]
-    source_count: int
-    drift_fraction: float
-
-
-@dataclass(frozen=True)
 class ConfidenceMetrics:
     """Calibration metrics for an `evidence` retrieval — beyond raw scores.
 
@@ -197,8 +161,7 @@ class ConfidenceMetrics:
       hits cluster around one source (potential corpus bias).
     - `drift_fraction`: fraction of top-K hits with drift_status != "verified".
       High → the evidence base is stale relative to its sources.
-    - `band_used`: "base" or "optimised" — surfaces which band actually
-      ran the retrieval.
+    - `band_used`: which band actually ran the retrieval (e.g. "base").
     """
     top1_score: float
     top1_top2_gap: float

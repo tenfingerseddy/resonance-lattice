@@ -1,11 +1,18 @@
 # Resonance Lattice — Microsoft Fabric UDF entry point.
 #
-# Three functions exposed to callers:
-#   - search(kmName, query, ...)   → top-K verified hits
+# Functions exposed to callers:
+#   - slice_stream(kmName, query, ...) → deduped business-KEY set (the slicer).
+#         Streams the band out of the .rlat one row-chunk at a time — never
+#         loads the (N,768) band or a FAISS index, so it serves the full 94k
+#         corpus at ~encoder + one chunk (~650 MB) instead of OOMing at ~1.5 GB.
+#         Single file: vectors + keys both from the one .rlat, no sidecar/SQL.
 #   - embed(query)                 → 768-d L2-normalised CLS embedding
 #   - list_kms()                   → discovery endpoint, lists Files/rlat/*.rlat
+#   - search / slice               → bundled-.rlat retrieval (band + FAISS) for
+#         SMALL/medium corpora; OOM-prone on large ones — use slice_stream there.
+#   - probe_runtime()              → dependency-free worker filesystem diagnostic.
 #
-# All three read the bound Lakehouse via the @udf.connection decorator. The
+# They read the bound Lakehouse via the @udf.connection decorator. The
 # kmLakehouse alias must be configured in the Fabric portal under Manage
 # Connections; bind it to the Lakehouse holding Files/rlat/<kmName>.rlat.
 #
@@ -25,6 +32,7 @@
 # encoder tarball needs to live in the Lakehouse.
 
 import os
+import re
 
 # Force the rlat encoder cache onto /tmp before any rlat import — the Fabric
 # UDF runtime's $HOME may be read-only, but /tmp is always writable.
@@ -37,9 +45,27 @@ os.environ.setdefault("XDG_CACHE_HOME", "/tmp/rlat")
 os.environ.setdefault("RLAT_FABRIC_KM_DIR", "rlat")
 
 import fabric.functions as fn
-from resonance_lattice.fabric import bootstrap, embed_query, list_kms_for, search_with_state
+from resonance_lattice.fabric import (
+    bootstrap,
+    embed_query,
+    list_kms_for,
+    search_with_state,
+    slice_stream_native,
+    slice_with_state,
+)
 
 udf = fn.UserDataFunctions()
+
+# kmName flows into OneLake + /tmp file paths; constrain it to a strict
+# allowlist (no path separators or dots) so a caller can't traverse out of
+# Files/<km-dir>/ or /tmp.
+_KM_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _check_km(km_name: str) -> str:
+    if not _KM_NAME_RE.fullmatch(km_name or ""):
+        raise ValueError("invalid kmName (allowed: letters, digits, _ -, 1-64 chars)")
+    return km_name
 
 
 @udf.connection(alias="kmLakehouse", argName="lakehouse")
@@ -54,13 +80,75 @@ def search(
     """Single-shot retrieval against the named knowledge model.
 
     Returns {band: str, cold: bool, hits: [{passage_idx, source_file,
-    char_offset, char_length, content_hash, drift_status, score, text},
-    ...]}. `cold=True` means this call paid the .rlat download + encoder
-    load cost; warm calls are sub-100ms. Hit field names are rlat-internal
-    snake_case; parameter names above are camelCase per Fabric SDK rules.
+    char_offset, char_length, content_hash, drift_status, score, text,
+    key}, ...]}. `cold=True` means this call paid the .rlat download +
+    encoder load cost; warm calls are sub-100ms. `key` is the per-row
+    business key for row-mode (slicer) knowledge models, else null. Hit
+    field names are rlat-internal snake_case; parameter names above are
+    camelCase per Fabric SDK rules.
     """
+    _check_km(kmName)
     state, cold = bootstrap(lakehouse, kmName)
     return search_with_state(state, query, topK, verifiedOnly, cold=cold)
+
+
+@udf.connection(alias="kmLakehouse", argName="lakehouse")
+@udf.function()
+def slice(
+    lakehouse: fn.FabricLakehouseClient,
+    kmName: str,
+    query: str,
+    topK: int = 200,
+    verifiedOnly: bool = True,
+) -> dict:
+    """Semantic-slicer surface — a plain-language query → a business-KEY set.
+
+    The Data App calls this, gets `keys`, and builds
+    `TREATAS({keys}, 'Dim'[Key])` for the Execute DAX Queries API so the
+    semantic model recomputes its measures over the matched rows.
+
+    Returns {band, cold, keys: [<key>, ...], hits: [{key, score, text,
+    drift_status}, ...]}. `keys` is the deduped, score-ordered TREATAS
+    payload; `hits` keeps each key's score + matched snippet (the
+    ranked-confirm receipt). A larger `topK` default than `search` because
+    a slicer wants the whole matched set, not a top-10 read.
+    """
+    _check_km(kmName)
+    state, cold = bootstrap(lakehouse, kmName)
+    return slice_with_state(state, query, topK, verified_only=verifiedOnly, cold=cold)
+
+
+@udf.connection(alias="kmLakehouse", argName="lakehouse")
+@udf.function()
+def slice_stream(
+    lakehouse: fn.FabricLakehouseClient,
+    kmName: str,
+    query: str,
+    topK: int = 200,
+    snippetTopN: int = 50,
+) -> dict:
+    """Semantic slicer over the FULL corpus — single-file, rlat-native, OOM-safe.
+
+    `slice()` opens the bundled .rlat through `bootstrap()`, which loads the
+    whole vector band AND deserializes the FAISS index — peaking at ~1.5 GB on
+    the 94k London corpus and OOMing the worker (see
+    `.claude/plans/slicer-reset-2026-06-07.md`). This streams the base band one
+    row-chunk at a time straight out of the `.rlat` (`store.streaming` via
+    `slice_stream_native`). On the FIRST call the band is decompressed once to an
+    uncompressed `/tmp` `.npy` and mmap'd; every warm query is then encode + one
+    GEMV over the mmap (~ms, measured) — no per-call decompress, no key re-parse,
+    no band in the process heap. Exact full scan, ranked by `(cosine, key)`
+    descending. **Single file**: vectors + keys both come from the one `.rlat` — no
+    parquet sidecar, no FAISS, no SQL.
+
+    Returns {keys: [...], hits: [{key, score, text}, ...]} — `keys` is the deduped,
+    score-ordered TREATAS payload the Data App passes to the Execute DAX Queries API;
+    the top `snippetTopN` hits also carry `text` (the matched description, the slice
+    receipt, read from the bundled source/ in the same .rlat). The matched aggregates
+    come from the semantic model via DAX; the snippet shows WHY each row matched.
+    """
+    _check_km(kmName)
+    return slice_stream_native(lakehouse, kmName, query, topK, snippetTopN)
 
 
 @udf.connection(alias="kmLakehouse", argName="lakehouse")

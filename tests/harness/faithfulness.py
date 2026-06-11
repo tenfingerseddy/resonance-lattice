@@ -20,28 +20,8 @@ Guarantees:
 from __future__ import annotations
 
 import sys
-from collections import namedtuple
 
-
-_StubContent = namedtuple("_StubContent", "text")
-_StubResponse = namedtuple("_StubResponse", "content")
-
-
-class _StubClient:
-    """Anthropic-shaped client replaying one scripted JSON response.
-    Counts calls so a guarantee can assert the LLM was NOT invoked."""
-
-    def __init__(self, response_text: str):
-        self._text = response_text
-        self.calls = 0
-        outer = self
-
-        class _Messages:
-            def create(self, **kwargs):
-                outer.calls += 1
-                return _StubResponse(content=[_StubContent(text=outer._text)])
-
-        self.messages = _Messages()
+from ._testutil import StubJudgeClient as _StubClient
 
 
 _PASSAGES = [

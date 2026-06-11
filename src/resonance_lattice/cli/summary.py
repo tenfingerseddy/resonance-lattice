@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 from ..config import MaterialiserConfig
-from ..field import ann, retrieve
+from ..field import ann, capture, retrieve
 from ..field.algebra import centroid
 from ..field.encoder import Encoder
 from ..store.archive import ArchiveContents, BandHandle
@@ -125,10 +125,14 @@ def _build_primer(
     config: MaterialiserConfig,
 ) -> str:
     corpus_centroid = centroid(handle.band)
-    landscape_hits = verify_hits(
-        retrieve(corpus_centroid, handle, ann_index, contents.registry, top_k=10),
-        store, contents.registry,
-    )
+    # Internal machinery — a corpus-centroid landscape probe + per-section
+    # primer queries, not user intent. Raise the hand so the capture heart
+    # tags these is_user_query=False (capture.md §3).
+    with capture.internal_retrieval():
+        landscape_hits = verify_hits(
+            retrieve(corpus_centroid, handle, ann_index, contents.registry, top_k=10),
+            store, contents.registry,
+        )
 
     evidence: list[tuple[str, list[VerifiedHit]]] = []
     if queries:
@@ -139,12 +143,13 @@ def _build_primer(
         # regression on Sonnet-class workflows that load + summarise.
         encoder = Encoder()
         query_embs = encoder.encode(list(queries))
-        for q, q_emb in zip(queries, query_embs):
-            hits = verify_hits(
-                retrieve(q_emb, handle, ann_index, contents.registry, top_k=5),
-                store, contents.registry,
-            )
-            evidence.append((q, hits))
+        with capture.internal_retrieval():
+            for q, q_emb in zip(queries, query_embs):
+                hits = verify_hits(
+                    retrieve(q_emb, handle, ann_index, contents.registry, top_k=5),
+                    store, contents.registry,
+                )
+                evidence.append((q, hits))
 
     cpt = config.chars_per_token
     md_parts: list[str] = []

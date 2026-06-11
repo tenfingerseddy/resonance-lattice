@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Storage modes — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html" aria-current="page">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>Storage modes</h1>
+  <p class="lede">
+    A knowledge model points its passages back at source files.
+    <strong>Where those source files live</strong> is the storage mode —
+    chosen at build time and recorded inside the <code>.rlat</code>.
+  </p>
+
+  <section id="overview">
+    <div class="section-num">01 — Overview</div>
+    <h2>The three modes</h2>
+    <table class="compact">
+      <thead><tr><th>Mode</th><th>Source lives in</th><th>Pick when</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>bundled</strong></td>
+          <td>inside the <code>.rlat</code> (zstd-framed)</td>
+          <td>shipping a self-contained artefact (HuggingFace Hub, archive, offline)</td>
+        </tr>
+        <tr>
+          <td><strong>local</strong> <em>(default)</em></td>
+          <td>the filesystem, at <code>--source-root</code></td>
+          <td>you are indexing a corpus on disk that you will edit</td>
+        </tr>
+        <tr>
+          <td><strong>remote</strong></td>
+          <td>HTTP(S) URLs with an SHA-pinned manifest</td>
+          <td>source lives at canonical URLs (e.g. a tagged GitHub release)</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      You pick the mode at build time with <code>--store-mode</code>. To
+      switch modes later, run <code>rlat convert &lt;km&gt; --to {bundled|local|remote}</code>
+      — it reshapes the storage mode in place without re-running the
+      encoder. The band, registry, and ANN index are all preserved.
+    </p>
+    <div class="callout callout-note">
+      <p><em>Drift</em> means a source file changed since the knowledge
+      model was built, so an indexed passage no longer matches the bytes
+      on disk. Every <code>rlat search</code> hit carries a per-passage
+      drift status of <code>verified</code>, <code>drifted</code>, or
+      <code>missing</code>.</p>
+    </div>
+  </section>
+
+  <section id="bundled">
+    <div class="section-num">02 — Bundled</div>
+    <h2>Bundled</h2>
+    <pre><code>rlat build ./my-corpus -o my-corpus.rlat --store-mode bundled</code></pre>
+    <p>
+      Source files are zstd-compressed individually inside the
+      <code>.rlat</code>. The result is one self-contained file. Drop it
+      on HuggingFace Hub, mail it as an attachment, ship it in CI —
+      there is nothing else to fetch.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Pro</th><th>Con</th></tr></thead>
+      <tbody>
+        <tr><td>One file, fully reproducible</td><td>Largest on disk (full source plus bands)</td></tr>
+        <tr><td>Works offline</td><td>No live edits — rebuild to re-ingest</td></tr>
+        <tr><td>Drift can only happen by tampering with the <code>.rlat</code> itself</td><td>Bigger to push around</td></tr>
+      </tbody>
+    </table>
+    <p>
+      When <code>rlat search</code> returns a hit from a bundled model,
+      <code>drift_status</code> is almost always <code>verified</code>. A
+      <code>drifted</code> or <code>missing</code> row means the
+      <code>.rlat</code> was edited after build — investigate.
+    </p>
+  </section>
+
+  <section id="local">
+    <div class="section-num">03 — Local</div>
+    <h2>Local <span style="font-weight:normal">(default)</span></h2>
+    <pre><code># build (default --store-mode local)
+rlat build ./my-corpus -o my-corpus.rlat
+
+# query — source-root defaults to where you built from
+rlat search my-corpus.rlat "..."
+rlat search my-corpus.rlat "..." --source-root /different/path</code></pre>
+    <p>
+      The <code>.rlat</code> records
+      <code>(source_file, char_offset, char_length)</code> triples and
+      re-resolves them on disk at query time. The corpus stays in your
+      filesystem; the <code>.rlat</code> just indexes it.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Pro</th><th>Con</th></tr></thead>
+      <tbody>
+        <tr><td>Smallest <code>.rlat</code> (no source bytes)</td><td>The source-root path is part of the runtime contract</td></tr>
+        <tr><td>Live edits — drift detection tells you what changed</td><td>Move or delete a file and that hit shows up as <code>missing</code></td></tr>
+        <tr><td>Cheap to rebuild incrementally (<code>rlat refresh</code>)</td><td>Source is not portable with the <code>.rlat</code></td></tr>
+        <tr><td>Stays live as you edit (<code>rlat watch</code>)</td><td>Watch needs the <code>[watch]</code> extra (<code>pip install rlat[watch]</code>)</td></tr>
+      </tbody>
+    </table>
+    <p>To see only hits whose source still matches the build:</p>
+    <pre><code>rlat search my-corpus.rlat "..." --verified-only</code></pre>
+    <p>
+      To re-ingest drifted files in place, use <code>rlat refresh</code>.
+      To keep the archive live as you edit, use <code>rlat watch</code> —
+      the same incremental pipeline, debounced by filesystem events.
+      <code>rlat watch --once</code> is the synchronous CI / pre-commit
+      shape.
+    </p>
+  </section>
+
+  <section id="remote">
+    <div class="section-num">04 — Remote</div>
+    <h2>Remote</h2>
+    <pre><code>rlat build ./my-corpus -o my-corpus.rlat \
+  --store-mode remote --remote-url-base https://example.com/corpus/v1</code></pre>
+    <p>
+      The <code>.rlat</code> carries a manifest (<code>manifest.json</code>
+      at the top of the ZIP) mapping each <code>source_file</code> to a
+      <code>{url, sha256}</code> pair recorded at build time. The URL is
+      <code>&lt;remote-url-base&gt;/&lt;source_file&gt;</code>
+      (forward-slash-joined). The first time a query touches a passage,
+      the source file downloads to a per-knowledge-model on-disk cache
+      (default <code>~/.cache/rlat/remote/&lt;km-sha&gt;/</code>) and its
+      SHA is pin-verified against the manifest. Later reads hit the cache.
+      The cache is keyed on <code>(source_file, expected_sha)</code>, so a
+      re-pinned file can never serve stale bytes.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Pro</th><th>Con</th></tr></thead>
+      <tbody>
+        <tr><td>Source is centrally hosted — multiple consumers share it</td><td>First query is slower (downloads on a cache miss)</td></tr>
+        <tr><td>SHA pin means a swapped-out URL fails loud, not silent</td><td>Needs network on first access</td></tr>
+        <tr><td>Survives <code>git rm</code> of local files</td><td>Cache verification on every read</td></tr>
+      </tbody>
+    </table>
+    <p>
+      The default download timeout is 30 seconds per file — a stalled
+      upstream cannot hang <code>rlat search</code> indefinitely. An
+      SHA-pin mismatch raises an actionable error pointing at the cache
+      file to delete; if upstream genuinely moved, re-run
+      <code>rlat build --remote-url-base ...</code> to regenerate against
+      the current content.
+    </p>
+    <pre><code>rlat freshness my-corpus.rlat   # read-only: are upstream SHAs still what we pinned?</code></pre>
+    <p>
+      <code>rlat freshness</code> walks every manifest entry, downloads
+      the upstream bytes, hashes them, and reports per-entry status
+      (<code>verified</code> / <code>drifted</code> / <code>missing</code>).
+      It is a read-only drift check — it never changes the archive — and
+      suitable for CI gating: it exits non-zero when any drift is detected.
+      When freshness reports drift, run <code>rlat sync</code> — the
+      delta-apply: it buckets passages on a stable <code>passage_id</code>,
+      re-encodes only the updated and added passages, and writes atomically.
+      The manifest, band, and registry stay internally consistent end to
+      end. <code>rlat refresh</code> is the local-mode sibling — the same
+      incremental delta-apply, run against the filesystem instead of the
+      manifest.
+    </p>
+  </section>
+
+  <section id="cross-mode-rules">
+    <div class="section-num">05 — Cross-mode rules</div>
+    <h2>Cross-mode rules</h2>
+    <ul class="checklist">
+      <li>
+        <code>rlat compare</code> always uses the <strong>base band</strong>,
+        regardless of mode. Two knowledge models built in different modes
+        can be compared as long as their base bands were produced by the
+        same pinned encoder revision.
+      </li>
+      <li>
+        Switching modes is <code>rlat convert &lt;km&gt; --to {bundled|local|remote}</code>
+        — it reshapes the storage mode in place, with embeddings, drift
+        hashes, and the ANN index preserved; nothing is re-encoded. See
+        the CLI reference for the per-transition flag requirements.
+      </li>
+      <li>
+        Drift is per-passage, not per-file: editing one line in a
+        5,000-line file marks only the passages whose character range
+        actually changed.
+      </li>
+    </ul>
+  </section>
+
+  <section id="hosted-fabric">
+    <div class="section-num">06 — Hosted (Fabric UDF)</div>
+    <h2>Hosted on a Fabric UDF</h2>
+    <p>
+      To share a <code>.rlat</code> with a team — a single hosted copy,
+      no per-user download — the <code>.rlat</code> lives in OneLake and
+      queries go through a Microsoft Fabric User Data Function:
+    </p>
+    <pre><code>rlat fabric add team=https://&lt;udf-endpoint-url&gt;
+rlat search fabric://team/team-docs "..."</code></pre>
+    <p>
+      This is <em>not</em> a fourth <code>--store-mode</code>. The
+      <code>.rlat</code> itself stays in any of the three modes above;
+      Fabric hosting layers on top. The UDF reads the <code>.rlat</code>
+      from OneLake, runs retrieval server-side, and returns hits over
+      HTTPS. Authentication is Microsoft Entra (device-code by default,
+      service-principal fallback).
+    </p>
+    <table class="compact">
+      <thead><tr><th>Pro</th><th>Con</th></tr></thead>
+      <tbody>
+        <tr><td>One <code>.rlat</code>, queryable by everyone on the workspace</td><td>Maintainer pays the Fabric capacity-unit cost per call</td></tr>
+        <tr><td>Re-upload the <code>.rlat</code> and the next query sees fresh content</td><td>Requires a Fabric workspace plus a UDF item</td></tr>
+        <tr><td>First-call cold start ~5&ndash;15s; warm calls sub-second</td><td>Fabric UDFs run Python 3.11.9 only</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="picking-a-mode">
+    <div class="section-num">07 — Decision guide</div>
+    <h2>Picking a mode</h2>
+    <p>If you are not sure:</p>
+    <ul class="checklist">
+      <li><strong>Building a knowledge model for yourself, against your own working repo</strong> — use <code>local</code>. You get drift detection and cheap incremental rebuilds as the corpus evolves.</li>
+      <li><strong>Publishing for others to download</strong> — use <code>bundled</code> if the corpus is self-contained (consumers get a single file); use <code>remote</code> if the source belongs at canonical URLs (e.g. a tagged GitHub release — the manifest pins SHAs so a moved or rewritten upstream fails loud).</li>
+      <li><strong>Shipping in CI, a Docker image, or an air-gapped install</strong> — use <code>bundled</code>.</li>
+      <li><strong>Sharing with a team where each user works in Claude Code or a local IDE</strong> — host it on Fabric. The maintainer publishes one UDF, each user runs <code>rlat fabric add</code> and queries via <code>fabric://</code>.</li>
+    </ul>
+    <p>
+      The technical layout — ZIP internals, NPZ band format, manifest
+      schema — is documented in the internal store specification.
+    </p>
+  </section>
+
+  <section id="next">
+    <h2>What's next</h2>
+    <div class="next">
+      <a href="cli.html">
+        <span class="next-label">Next</span><br>
+        <span class="next-title">CLI reference</span>
+      </a>
+      <a href="getting-started.html">
+        <span class="next-label">Then</span><br>
+        <span class="next-title">Getting started</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

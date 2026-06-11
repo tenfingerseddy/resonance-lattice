@@ -6,7 +6,7 @@ output dim 768. Max sequence length 8192 tokens.
 Inference runtime is auto-selected:
 - Intel CPU detected → openvino_runtime
 - Other CPU → onnx_runtime
-- Build / optimise → torch_runtime (always)
+- Build → torch_runtime (always)
 
 Phase 1 deliverable. Base plan §1.
 """
@@ -59,7 +59,7 @@ def get_pinned_revision() -> str:
 
 def _select_runtime(requested: RuntimeName) -> ConcreteRuntime:
     """Resolve "auto" to a concrete runtime. "torch" is never auto-picked —
-    build/optimise paths request it explicitly because it pulls in torch."""
+    build paths request it explicitly because it pulls in torch."""
     if requested != "auto":
         return requested
     # find_spec is faster than try-import (no side-effect import on miss) and

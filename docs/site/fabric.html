@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Microsoft Fabric — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html" aria-current="page">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>Resonance Lattice on Microsoft Fabric</h1>
+  <p class="lede">
+    A team-shared knowledge model. One <code>.rlat</code> file in OneLake,
+    exposed as a Fabric <em>User Data Function</em> (UDF) — a small published
+    Python function anyone on the workspace can call. Query it from the CLI,
+    from Claude Code, or from a Fabric notebook, with no per-user encoder
+    install and no <code>.rlat</code> copies scattered across laptops.
+  </p>
+
+  <section id="overview">
+    <h2 id="overview-h">What this gets you</h2>
+    <p>
+      A <strong>knowledge model</strong> is a single <code>.rlat</code> file:
+      your corpus (docs, code, a knowledge base) packaged for semantic search.
+      Hosted on Fabric, that file lives once in OneLake — Fabric's shared data
+      lake — and a UDF wraps it so every workspace member queries the same
+      copy.
+    </p>
+    <p>
+      Two example notebooks ship with the integration. The demo notebook
+      (<code>fabric_demo_udf.ipynb</code>) queries the UDF and writes telemetry
+      to two Delta tables. A second notebook
+      (<code>fabric_analytics.ipynb</code>) reads those tables and deploys a
+      Direct Lake semantic model you can point Power BI at.
+    </p>
+    <div class="callout callout-note">
+      <p>The whole setup takes about fifteen minutes the first time.</p>
+    </div>
+    <p>
+      For what this unlocks beyond search, read the write-up:
+      <a href="semantic-slicer.html">a slicer that filters by meaning, not by
+      value</a> — type plain language, and a 96,000-row Power BI model
+      recomputes over the listings that match.
+    </p>
+  </section>
+
+  <section id="prerequisites">
+    <div class="section-num">00 — Before you start</div>
+    <h2 id="what-you-need">What you'll need</h2>
+    <ul class="checklist">
+      <li>A Fabric workspace, with a Lakehouse you can write <code>Files/</code> to.</li>
+      <li>About 500&nbsp;MB of OneLake space — your <code>.rlat</code> plus telemetry.</li>
+      <li>An Entra account on the workspace (signs you in once via a device code).</li>
+      <li>Power BI Desktop — optional, only if you want to build visuals on the semantic model.</li>
+    </ul>
+    <p>The end-to-end path:</p>
+    <pre><code>Files/&lt;SRC&gt;/  --fabric_build.ipynb--&gt;  Files/rlat/&lt;KM&gt;.rlat --UDF.search--&gt;  results
+                                                              |
+                                                              v
+                                     fabric_demo_udf.ipynb --&gt; udf_telemetry + udf_hits Delta
+                                                                     |
+                                                                     v
+                                                    fabric_analytics.ipynb
+                                                                     |
+                                                                     v
+                                                rlat-analytics semantic model</code></pre>
+  </section>
+
+  <section id="build">
+    <div class="section-num">01 — Build</div>
+    <h2 id="build-rlat">Build a <code>.rlat</code></h2>
+    <p>You have three options.</p>
+
+    <h3 id="build-in-fabric">A. Build inside Fabric (recommended for ongoing rebuilds)</h3>
+    <p>
+      Drop source files into <code>Files/&lt;SOURCE_DIR&gt;/</code> in your
+      OneLake, then run the <code>notebooks/examples/fabric_build.ipynb</code>
+      notebook. The first run builds; every run after refreshes incrementally —
+      only changed files are re-encoded. Schedule it from a Fabric Pipeline if
+      you want it on a cron.
+    </p>
+
+    <h3 id="build-local">B. Build locally and upload</h3>
+    <p>If you'd rather build from your own machine:</p>
+    <pre><code>rlat build ./your-docs -o team-docs.rlat
+rlat fabric publish-rlat ./team-docs.rlat \
+    --workspace &lt;workspace-id&gt; \
+    --lakehouse &lt;lakehouse-id&gt;</code></pre>
+
+    <h3 id="build-gpu">C. Build on a GPU for big seed corpora</h3>
+    <p>
+      For a first-time build over roughly 10,000 passages, Fabric's CPU is
+      slow. Build on Kaggle, Colab, or a local GPU machine, upload the seed
+      <code>.rlat</code> to <code>Files/rlat/</code>, and let
+      <code>fabric_build.ipynb</code> handle subsequent refreshes inside
+      Fabric.
+    </p>
+
+    <p>
+      Either way, the <code>.rlat</code> ends up at
+      <code>Files/rlat/&lt;KM_NAME&gt;.rlat</code>. Discovery is live: the UDF
+      lists the <code>Files/rlat/</code> directory in OneLake each time, so any
+      upload — from a notebook, a helper, or a drag-drop — shows up on the next
+      discovery call. (The mechanism: Fabric's wrapped lakehouse client has no
+      directory-listing method, so the runtime calls the underlying OneLake
+      List Paths REST endpoint directly. No manifest file to maintain.)
+    </p>
+    <p>
+      If your workspace uses a different folder convention
+      (<code>Files/knowledge/</code>, <code>Files/data/</code>), set
+      <code>RLAT_FABRIC_KM_DIR=&lt;dirname&gt;</code> on the UDF item later. The
+      default is <code>rlat</code>.
+    </p>
+  </section>
+
+  <section id="udf-item">
+    <div class="section-num">02 — UDF item</div>
+    <h2 id="create-udf">Create a User Data Function item</h2>
+    <p>
+      In the Fabric portal: <strong>New → User Data Function</strong>. Pick a
+      name (for example <code>rlat-search</code>).
+    </p>
+    <p>
+      Open the item, then <strong>Manage Connections → add Lakehouse</strong>.
+      Pick the lakehouse from the previous step and set its alias to
+      <code>kmLakehouse</code> — that's the alias the UDF code references.
+    </p>
+  </section>
+
+  <section id="library">
+    <div class="section-num">03 — Library &amp; code</div>
+    <h2 id="add-library">Add the <code>rlat</code> library and publish the code</h2>
+    <p>
+      Still on the UDF item: <strong>Library Management → Public libraries →
+      Add from PyPI</strong>, search for <code>rlat</code>, and install it at
+      workspace scope. Pin whatever version is current (for example
+      <code>==2.1.0a13</code>) so the UDF doesn't drift unexpectedly when a new
+      release lands.
+    </p>
+    <p>
+      Then publish the code from the repo's <code>fabric/udf/</code> directory.
+      The simplest path: open <code>fabric/udf/</code> in VS Code with the
+      Microsoft Fabric extension, sign in, map it to your UDF item, and
+      Publish. The directory holds:
+    </p>
+    <pre><code>fabric/udf/
+  function_app.py    # search + list_kms entry points
+  requirements.txt   # local-emulator fallback</code></pre>
+  </section>
+
+  <section id="test">
+    <div class="section-num">04 — Test</div>
+    <h2 id="test-udf">Test the UDF</h2>
+    <p>
+      In the UDF item, select <code>search</code>, set
+      <code>kmName=&lt;your km&gt;</code>, fill in <code>query</code>, and hit
+      <strong>Run</strong>. You should get back JSON like
+      <code>{band, cold, hits[]}</code>. The first call may take a few seconds
+      (cold load); subsequent calls are sub-second.
+    </p>
+    <div class="callout callout-warn">
+      <span class="callout-tag">If it fails</span>
+      <p>
+        <code>could not stat Files/rlat/&lt;km&gt;.rlat</code> means the upload
+        path or the <code>kmLakehouse</code> alias isn't matching. Check the
+        upload location and Manage Connections.
+      </p>
+    </div>
+  </section>
+
+  <section id="query">
+    <div class="section-num">05 — Query</div>
+    <h2 id="query-from-machine">Query from your machine</h2>
+    <pre><code>pip install 'rlat[fabric]'
+rlat fabric add team=https://&lt;your-udf-endpoint-url&gt;</code></pre>
+    <p>
+      The endpoint URL is on the UDF item under <strong>Properties → Endpoint
+      URL</strong>. The <code>add</code> command writes the alias to
+      <code>~/.config/rlat/fabric.toml</code>. If you're using Claude Code, it
+      also scaffolds a <code>.claude/skills/rlat-fabric-search/</code> entry so
+      the agent sees the hosted knowledge model as a tool.
+    </p>
+    <pre><code>rlat search fabric://team                          # list available KMs
+rlat search fabric://team/team-docs "how do I deploy?"
+rlat search fabric://team/team-docs "..." --format=context</code></pre>
+    <p>
+      The first call prompts an Entra device-code sign-in — a URL and code
+      printed to stderr. Sign in once; the token caches to your OS keyring and
+      subsequent calls are silent.
+    </p>
+  </section>
+
+  <section id="demo-notebook">
+    <div class="section-num">06 — Telemetry</div>
+    <h2 id="run-demo">Run the demo notebook</h2>
+    <p>
+      Upload <code>notebooks/examples/fabric_demo_udf.ipynb</code> into your
+      Fabric workspace and open it. Set:
+    </p>
+    <ul class="checklist">
+      <li><code>UDF_BASE_URL</code> — your UDF's endpoint URL (the part before <code>/functions/&lt;name&gt;/invoke</code>).</li>
+      <li><code>KM_NAME</code> — your knowledge model (for example <code>team-docs</code>).</li>
+      <li><code>DEMO_QUERIES</code> — a list of queries you want logged.</li>
+    </ul>
+    <p>
+      Run it. You'll see retrieval results inline, plus two Delta tables appear
+      in the bound lakehouse:
+    </p>
+    <ul class="checklist">
+      <li><code>udf_telemetry</code> — one row per query (latency, top-1 score, cold/warm flag, refusal flag).</li>
+      <li><code>udf_hits</code> — one row per retrieved passage (rank, source file, drift status).</li>
+    </ul>
+    <p>
+      Re-run any time you want a new batch of telemetry. Both tables are
+      append-only.
+    </p>
+  </section>
+
+  <section id="analytics-notebook">
+    <div class="section-num">07 — Semantic model</div>
+    <h2 id="run-analytics">Run the analytics notebook</h2>
+    <p>
+      Upload <code>notebooks/examples/fabric_analytics.ipynb</code>. Set
+      <code>UDF_BASE_URL</code> to the same endpoint, leave <code>SM_NAME</code>
+      as <code>rlat-analytics</code>, and run.
+    </p>
+    <p>
+      The notebook reads <code>udf_telemetry</code>, <code>udf_hits</code>, and
+      the per-build JSON files under <code>Files/.rlat-builds/</code>. It
+      materialises <code>udf_builds</code>, rebuilds four conformed dimension
+      tables (<code>dim_query</code>, <code>dim_source_file</code>,
+      <code>dim_km</code>, <code>dim_date</code>), and deploys a Direct Lake
+      semantic model named <code>rlat-analytics</code> to your workspace.
+    </p>
+    <p>
+      It is idempotent — re-run after every batch of demo runs or build
+      invocations, or schedule it via a Fabric Pipeline. The dimension tables
+      rebuild from the fact tables each time.
+    </p>
+  </section>
+
+  <section id="power-bi">
+    <div class="section-num">08 — Optional</div>
+    <h2 id="connect-power-bi">Connect Power BI</h2>
+    <p>
+      Open Power BI Desktop → <strong>Get Data → Power BI semantic models →
+      <code>rlat-analytics</code></strong>. The semantic model ships with
+      measures grouped under <code>01 Activity</code>, <code>02 Quality</code>,
+      <code>03 Drift</code>, <code>04 Latency</code>, <code>05 Coverage</code>,
+      and <code>06 Maintenance</code>, joined to <code>dim_query</code>,
+      <code>dim_source_file</code>, <code>dim_km</code>, and
+      <code>dim_date</code>. Drop the measures and dimensions on the canvas to
+      build whatever views your team cares about — top queries, refusal rate,
+      latency percentiles, build cadence.
+    </p>
+    <p>That's the whole loop.</p>
+  </section>
+
+  <section id="freshness">
+    <h2 id="how-it-stays-fresh">How it stays fresh</h2>
+    <p>
+      The UDF caches the triple <code>(.rlat contents, store, encoder)</code>
+      keyed by <code>(kmName, OneLake last_modified)</code>. Every search call
+      stats the OneLake <code>.rlat</code> (cheap); when its
+      <code>last_modified</code> changes, the cache evicts and rebuilds from the
+      new bytes on the next call. Re-upload the <code>.rlat</code> after a
+      <code>rlat build</code> or <code>rlat refresh</code> — or after the build
+      notebook runs — and the next query sees fresh results, with no UDF
+      redeploy.
+    </p>
+    <p>
+      Up to eight distinct <code>(kmName, mtime)</code> tuples are cached at
+      once; older entries fall out, least-recently-used first.
+    </p>
+  </section>
+
+  <section id="cold-start">
+    <h2 id="cold-start-latency">Cold-start latency</h2>
+    <p>
+      The first call after a UDF container recycle pays for:
+    </p>
+    <ul class="checklist x">
+      <li>The <code>.rlat</code> download from OneLake (~100–300&nbsp;MB).</li>
+      <li>The encoder ONNX cache from Hugging Face (~250&nbsp;MB, revision-pinned).</li>
+      <li>The ONNX runtime warm-up and first encode.</li>
+    </ul>
+    <p>
+      Roughly 5–15&nbsp;seconds cold, sub-100&nbsp;ms warm. The UDF returns a
+      <code>cold</code> flag so callers can tell which they paid for.
+    </p>
+  </section>
+
+  <section id="auth">
+    <h2 id="auth-h">Authentication</h2>
+    <p>Two paths, in priority order:</p>
+    <ol>
+      <li>
+        <strong>Service-principal env vars.</strong> If
+        <code>AZURE_CLIENT_ID</code>, <code>AZURE_CLIENT_SECRET</code>, and
+        <code>AZURE_TENANT_ID</code> are all set, a
+        <code>ClientSecretCredential</code> is used silently. This is the right
+        choice for CI or shared machines.
+      </li>
+      <li>
+        <strong>Device-code flow (default).</strong> <code>rlat search</code>
+        prints a URL and a code to stderr. Open the URL, paste the code. The
+        token caches to your OS keyring (libsecret, Keychain, or Credential
+        Manager). It works inside Claude Code: the prompt comes back through the
+        Bash tool's stdout, you complete the browser flow, and the agent's tool
+        call resolves with the search results.
+      </li>
+    </ol>
+    <p>
+      The token cache name is <code>rlat-fabric</code>. The scope is
+      <code>https://analysis.windows.net/powerbi/api/.default</code> — the Power
+      BI scope, used to invoke UDFs, not the Fabric API scope (which is for item
+      CRUD).
+    </p>
+  </section>
+
+  <section id="encoder">
+    <h2 id="encoder-distribution">Encoder distribution</h2>
+    <p>
+      Each <code>.rlat</code> records the encoder revision — a Hugging Face
+      commit SHA — it was built with. At UDF cold-start, the runtime reads that
+      revision from the <code>.rlat</code> metadata and downloads the matching
+      ONNX cache from <a href="https://huggingface.co/tenfingers/rlat-gte-modernbert-base-onnx">tenfingers/rlat-gte-modernbert-base-onnx</a>,
+      revision-pinned. No per-workspace encoder upload.
+    </p>
+    <p>
+      If your tenant blocks egress to huggingface.co, set
+      <code>RLAT_FABRIC_ENCODER_SOURCE=onelake</code> on the UDF environment and
+      stage the encoder cache to
+      <code>Files/rlat-encoders/&lt;revision&gt;.tar.zst</code> instead.
+    </p>
+  </section>
+
+  <section id="split">
+    <h2 id="server-vs-client">What's server-side vs client-side</h2>
+    <table class="compact">
+      <thead>
+        <tr><th>Task</th><th>Server (UDF)</th><th>Client (notebook / CLI)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Single-shot retrieval</td><td>yes</td><td>calls into UDF</td></tr>
+        <tr><td>Discovery (list KMs)</td><td>yes</td><td>calls into UDF</td></tr>
+        <tr><td>Build / incremental refresh</td><td>—</td><td>yes (<code>fabric_build.ipynb</code> in Fabric, or <code>rlat build</code> locally + <code>rlat fabric publish-rlat</code>)</td></tr>
+        <tr><td>Multi-hop deep-search</td><td>—</td><td>yes (drives the loop, calls the UDF for each hop)</td></tr>
+        <tr><td>Compare between hosted KMs</td><td>—</td><td>not yet — both KMs need to be local</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="troubleshooting">
+    <h2 id="troubleshooting-h">Troubleshooting</h2>
+    <ul class="checklist x">
+      <li><code>fabric alias 'team' not registered</code> — run <code>rlat fabric add team=&lt;url&gt;</code>. <code>rlat fabric list</code> shows what's registered.</li>
+      <li>Device-code prompt never resolves — the token cache is stuck. Delete the <code>rlat-fabric</code> entry in your OS keyring and retry, or switch to service-principal env vars for one-shot use.</li>
+      <li><code>could not stat Files/rlat/&lt;km&gt;.rlat</code> — either the <code>.rlat</code> is missing from OneLake at the expected path, or the lakehouse alias <code>kmLakehouse</code> isn't bound on the UDF item.</li>
+      <li><code>km has empty backbone.revision in metadata</code> — the <code>.rlat</code> was built with an older rlat that didn't pin the encoder revision. Rebuild it.</li>
+      <li>Hugging Face 404 or unfamiliar encoder errors — the revision pinned in the <code>.rlat</code> doesn't have a matching commit in <code>tenfingers/rlat-gte-modernbert-base-onnx</code>. Either rebuild the <code>.rlat</code> against a published revision, or push the encoder cache to that repo at the right revision.</li>
+      <li>The new alpha won't show up in Library Management — Fabric's PyPI metadata cache lags. Either wait, or upload the wheel directly via <strong>Library Management → Private libraries</strong>.</li>
+    </ul>
+  </section>
+
+  <section id="see-also">
+    <h2 id="see-also-h">See also</h2>
+    <ul class="checklist">
+      <li><a href="storage-modes.html">Storage modes</a> — where Fabric hosting fits among bundled, local, and remote.</li>
+      <li><a href="cli.html">CLI reference</a> — the <code>fabric://</code> URL form and the <code>rlat fabric add / list / remove / publish-rlat</code> subcommands.</li>
+    </ul>
+    <p>
+      Three example notebooks ship in the repo's
+      <code>notebooks/examples/</code> directory: <code>fabric_build.ipynb</code>
+      (runs the build/refresh against the OneLake filesystem mount, schedulable
+      from a Fabric Pipeline), <code>fabric_demo_udf.ipynb</code> (queries the
+      UDF and writes the two Delta tables), and
+      <code>fabric_analytics.ipynb</code> (deploys the Direct Lake semantic
+      model).
+    </p>
+  </section>
+
+  <section id="next">
+    <h2 id="next-h">Where next</h2>
+    <div class="next">
+      <a href="storage-modes.html">
+        <span class="next-label">Next</span><br>
+        <span class="next-title">Storage modes</span>
+      </a>
+      <a href="skills.html">
+        <span class="next-label">Then</span><br>
+        <span class="next-title">Skills integration</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-05-16 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -362,11 +362,15 @@ def run() -> int:
         print("[skill_context] guarantee 4 (drift strict) OK", file=sys.stderr)
 
         # ---- Guarantee 5: token budget truncates later blocks first ----
-        # Two queries + tight budget → only the first block should survive.
-        # Each query block is ~300-500 chars; budget 200 tokens × 3 chars/tok
-        # = 600 chars, enough for one block but not two.
+        # Two queries + a budget too small for even the first block exercises
+        # the documented carve-out: the highest-priority (first) block is kept
+        # whole, every later block is dropped. Sizing the budget below one
+        # block (10 tok x 4 chars/tok = 40 chars, far under a single block's
+        # ~125-char floor) makes the assertion independent of per-query block
+        # length — which shifts with retrieval ties under concurrent runs.
+        # See the carve-out in `cli/skill_context._truncate_to_budget`.
         queries = ["session management overview", "how does login work"]
-        rc, out = _run_skill_context(km, query=queries, top_k=3, token_budget=200)
+        rc, out = _run_skill_context(km, query=queries, top_k=3, token_budget=10)
         if rc != 0:
             print(f"[skill_context] FAIL guarantee 5: rc={rc}", file=sys.stderr)
             return 1

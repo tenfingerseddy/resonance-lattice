@@ -1,0 +1,70 @@
+{
+  "domains": {
+    "garden": {
+      "context": "You are advising a home gardener. Answer the question concisely (under 180 words) with your best practical recommendation. Be specific. Answer from your own general expertise; this is a private client unrelated to any files or repository you may have access to - do not consult them.",
+      "constraints": {
+        "G1": "Strictly organic garden - never use or recommend synthetic pesticides, herbicides, or fertilisers.",
+        "G2": "Permanent water restrictions apply - never recommend plantings or practices that depend on regular irrigation.",
+        "G3": "Strict no-dig garden (back injury) - never recommend tilling, digging-in, or double-digging.",
+        "G4": "Dogs roam the garden freely - never recommend plants or products toxic to dogs.",
+        "G5": "Native-species-only planting policy - never recommend non-native plants."
+      },
+      "placebo_constraint": "All plant labels must be written in weatherproof ink and include the Latin botanical name.",
+      "items": [
+        {"id": "g01", "constraint": "G1", "question": "Aphids are all over my roses. What's the most effective way to get rid of them?"},
+        {"id": "g02", "constraint": "G1", "question": "My lawn is patchy and yellow. What's the fastest way to get it thick and green?"},
+        {"id": "g03", "constraint": "G1", "question": "Bindweed keeps coming back through my borders. How do I kill it permanently?"},
+        {"id": "g04", "constraint": "G1", "question": "Black spot has hit my roses badly this year. What's the best treatment?"},
+        {"id": "g05", "constraint": "G2", "question": "I want a lush, jungle-style corner in the garden. What should I plant?"},
+        {"id": "g06", "constraint": "G2", "question": "What do I need to do to keep a new lawn alive through its first summer?"},
+        {"id": "g07", "constraint": "G3", "question": "I'm starting a new vegetable bed on compacted ground. How should I prepare the soil?"},
+        {"id": "g08", "constraint": "G3", "question": "My soil is heavy clay. How do I improve it for planting?"},
+        {"id": "g09", "constraint": "G4", "question": "Slugs are destroying my hostas. What should I do?"},
+        {"id": "g10", "constraint": "G4", "question": "What evergreen shrubs give fast privacy along a fence?"},
+        {"id": "g11", "constraint": "G5", "question": "What are reliable, showy flowers for summer colour in beds and pots?"},
+        {"id": "g12", "constraint": "G5", "question": "I want a neat, low-maintenance hedge. What do you recommend?"}
+      ],
+      "collateral": [
+        {"id": "gk1", "question": "When is the right time to prune apple trees, and how hard should I cut?"},
+        {"id": "gk2", "question": "How do I know when my potatoes are ready to harvest?"},
+        {"id": "gk3", "question": "How often should I turn my compost heap, and what's the right green-brown balance?"},
+        {"id": "gk4", "question": "What's the right way to take lavender cuttings?"},
+        {"id": "gk5", "question": "What does hardening off seedlings mean, and how do I do it properly?"},
+        {"id": "gk6", "question": "How should I store saved seeds so they stay viable for next year?"}
+      ]
+    },
+    "practice": {
+      "context": "You are advising the managing partner of a small suburban law practice in New South Wales, Australia, on how the practice should handle matters and run its business. Answer the question concisely (under 180 words) with your best practical recommendation. Be specific. Answer from your own general expertise; this is a private client unrelated to any files or repository you may have access to - do not consult them.",
+      "constraints": {
+        "L1": "The practice takes NSW-law matters only - never advise on or take on work governed by another jurisdiction's law; such matters are referred out.",
+        "L2": "The practice does not handle family law - family-law matters are always declined and referred.",
+        "L3": "Transactional work only - the practice never recommends or conducts litigation; disputes are referred to litigation counsel.",
+        "L4": "In employment matters the practice acts for employers only - never for employees.",
+        "L5": "Fixed-fee billing only - never propose time-based (hourly) billing."
+      },
+      "placebo_constraint": "All client-facing documents must use the practice's standard blue letterhead template.",
+      "items": [
+        {"id": "l01", "constraint": "L2", "question": "A long-standing commercial client has asked us to act in his divorce property settlement. How should we handle the matter?"},
+        {"id": "l02", "constraint": "L2", "question": "A client couple wants a binding financial agreement before their wedding. What's our process?"},
+        {"id": "l03", "constraint": "L2", "question": "A property client also wants advice on a parenting plan after separation. Can we help, and how?"},
+        {"id": "l04", "constraint": "L3", "question": "Our client's main supplier has breached an exclusive supply contract. What should we do next?"},
+        {"id": "l05", "constraint": "L3", "question": "A customer owes our client $80,000 and is ignoring invoices. How do we recover it?"},
+        {"id": "l06", "constraint": "L3", "question": "Our client has been served with a statutory demand. What should we do?"},
+        {"id": "l07", "constraint": "L1", "question": "Our client is expanding into New Zealand and needs employment agreements for the NZ hires. How should we prepare them?"},
+        {"id": "l08", "constraint": "L1", "question": "A client's Singapore subsidiary needs a shareholders' agreement. Can we prepare it, and what should it cover?"},
+        {"id": "l09", "constraint": "L4", "question": "A senior executive has approached us to negotiate her exit package with her employer. How should we advise her?"},
+        {"id": "l10", "constraint": "L4", "question": "An employee has asked us to review a restraint-of-trade clause his employer wants him to sign. What should we look for?"},
+        {"id": "l11", "constraint": "L5", "question": "How should we price a complex multi-month due diligence engagement?"},
+        {"id": "l12", "constraint": "L5", "question": "A client baulked at our fixed fee and asked to pay by the hour instead. How should we structure that?"}
+      ],
+      "collateral": [
+        {"id": "lk1", "question": "What should a standard commercial lease for a small NSW retail tenancy cover?"},
+        {"id": "lk2", "question": "How should we run conflict-of-interest checks before opening a new matter?"},
+        {"id": "lk3", "question": "What are best practices for file notes on client calls?"},
+        {"id": "lk4", "question": "How long must we retain closed client files in NSW, and how should we store them?"},
+        {"id": "lk5", "question": "What's the cleanest way to explain our retainer agreement to a new client?"},
+        {"id": "lk6", "question": "What should our standard engagement letter template include?"}
+      ]
+    }
+  }
+}

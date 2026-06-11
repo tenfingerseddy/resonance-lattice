@@ -1,21 +1,15 @@
 """`rlat convert <km.rlat> --to {bundled|local|remote} [flags]`
 
 Switches a knowledge model between storage modes WITHOUT rebuilding
-embeddings. The bands, registry, ANN index, and optimised W projection
-are storage-mode-independent; conversion is just a metadata + payload
-swap, atomically reshaping the on-disk layout.
+embeddings. The bands, registry, and ANN index are storage-mode-independent;
+conversion is just a metadata + payload swap, atomically reshaping the
+on-disk layout.
 
 Six pairwise transitions, all routed through `store.conversion.convert`:
 
   local    ↔ bundled
   local    ↔ remote
   bundled  ↔ remote
-
-The "two-step optimise on remote" workflow lives here too:
-
-    rlat convert upstream.rlat --to local --source-root ./local/ \\
-                               -o working.rlat
-    rlat optimise working.rlat --corpus-description "..."
 
 Audit 08 commit 4/6.
 """

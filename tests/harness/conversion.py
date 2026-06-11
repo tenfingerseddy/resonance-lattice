@@ -276,6 +276,38 @@ def run() -> int:
                 return 1
         print("[conversion] guarantee 8 (drift error shape) OK", file=sys.stderr)
 
+        # ---- Guarantee 9: convert preserves telemetry + the insight layer ----
+        # Regression: archive.write (the convert rewrite) dropped the append-only
+        # telemetry member AND the insight.jsonl — the latter silently losing the
+        # promoted insight claims (the insight band survived as a dead orphan;
+        # archive.read reads back 0 insights). Both are corpus content and must
+        # survive a mode change.
+        from resonance_lattice.store import archive as _archive
+        from ._testutil import make_corpus_claim as _mk_claim
+        g9_root = root / "corpus_g9"
+        g9_km = _build_bundled(g9_root, _FILES)
+        c_g9 = _read(g9_km)
+        tele = [{"ts": "2026-06-07T00:00:00+00:00", "session": "s", "layer": "source",
+                 "is_user_query": True, "query_emb": [0.1, 0.2],
+                 "ranked": [{"rank": 0, "idx": 0, "score": 0.9}]}]
+        _archive.append_telemetry_in_place(g9_km, tele)
+        ins = [_mk_claim("Auth uses session tokens.",
+                         [c_g9.registry[0].passage_id], [c_g9.registry[0].content_hash],
+                         state="active")]
+        _archive.write_insight_layer_in_place(g9_km, ins, np.zeros((1, 768), dtype="float32"))
+        g9_out = root / "km_g9_local.rlat"
+        convert(g9_km, "local", source_root=root / "extract_g9", output_path=g9_out)
+        c_g9_out = _read(g9_out)  # must not raise — no half-written insight layer
+        if _archive.read_telemetry(g9_out) != tele:
+            print("[conversion] FAIL g9: telemetry dropped by convert", file=sys.stderr)
+            return 1
+        if len(c_g9_out.insights) != 1:
+            print(f"[conversion] FAIL g9: insights dropped by convert "
+                  f"(got {len(c_g9_out.insights)})", file=sys.stderr)
+            return 1
+        print("[conversion] guarantee 9 (telemetry + insights survive convert) OK",
+              file=sys.stderr)
+
     print("[conversion] PASS", file=sys.stderr)
     return 0
 

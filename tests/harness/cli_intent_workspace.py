@@ -109,7 +109,7 @@ def _check_accept_writes_signal() -> int:
         identity = resolve_workspace(Path(td))
         state_root = state_root_for(identity.root)
         store = LiveIntentStore(state_root)
-        intents = {i.intent_id: i for i in store.list_active()}
+        intents = {i.intent_id: i for i in store.list_all()}
         if intents[intent_id].status != "satisfied":
             print(f"[cli_intent_workspace] FAIL (d): status="
                   f"{intents[intent_id].status!r}", file=sys.stderr)
@@ -144,7 +144,7 @@ def _check_reject_writes_signal() -> int:
         identity = resolve_workspace(Path(td))
         state_root = state_root_for(identity.root)
         store = LiveIntentStore(state_root)
-        intents = {i.intent_id: i for i in store.list_active()}
+        intents = {i.intent_id: i for i in store.list_all()}
         if intents[intent_id].status != "abandoned":
             print(f"[cli_intent_workspace] FAIL (e): status="
                   f"{intents[intent_id].status!r}", file=sys.stderr)
@@ -155,6 +155,68 @@ def _check_reject_writes_signal() -> int:
                   f"{signals[0].value!r}", file=sys.stderr)
             return 1
     print("[cli_intent_workspace] (e) reject flips status + writes signal OK",
+          file=sys.stderr)
+    return 0
+
+
+def _check_accept_evaluates_declared_criteria() -> int:
+    """(k) The keystone join end-to-end: an intent with *declared* criteria
+    (one user_confirms, one mechanical) resolves through the real synthesiser,
+    not the old synthetic stub. The outcome record carries one evaluated
+    `CriterionCheck` per declared criterion — the user_confirms criterion
+    satisfied by the accept signal, the mechanical criterion satisfied by a
+    pre-seeded mechanical signal — and the roll-up is their AND.
+    """
+    from resonance_lattice.state import (
+        ClaimOutcomeLog,
+        LiveIntentStore,
+        PendingSignalLog,
+        resolve_state_root,
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        state_root = resolve_state_root(Path(td))
+        store = LiveIntentStore(state_root)
+        intent = store.add_intent(
+            level="task", text="ship S4", stance="do", achievability="medium",
+            success_criteria=[
+                {"text": "the user is happy", "measure": "user_confirms"},
+                {"text": "tests pass", "measure": "mechanical:exit_code==0"},
+            ],
+            constraints=[],
+        )
+        # A mechanical signal the PostToolUse hook would have captured.
+        PendingSignalLog(state_root).append(
+            source="mechanical", tool_name="bash",
+            tool_payload={"exit_code": 0},
+            value={"verdict": "satisfied"}, intent_id=intent.intent_id,
+        )
+        rc, out, err = _run(["intent", "--cwd", td, "accept", intent.intent_id,
+                             "--reason", "done"])
+        if rc != 0:
+            print(f"[cli_intent_workspace] FAIL (k): accept rc={rc} err={err!r}",
+                  file=sys.stderr)
+            return 1
+        records = ClaimOutcomeLog(state_root).read(intent_id=intent.intent_id)
+        if len(records) != 1:
+            print(f"[cli_intent_workspace] FAIL (k): {len(records)} records",
+                  file=sys.stderr)
+            return 1
+        checks = {c.criterion_text: c for c in records[0].details.criterion_checks}
+        ok = (
+            records[0].roll_up_verdict == "satisfied"
+            and set(checks) == {"the user is happy", "tests pass"}
+            and checks["the user is happy"].verdict == "satisfied"
+            and checks["the user is happy"].measure == "user_confirms"
+            and checks["tests pass"].verdict == "satisfied"
+            and checks["tests pass"].measure == "mechanical:exit_code==0"
+        )
+        if not ok:
+            print(f"[cli_intent_workspace] FAIL (k): record="
+                  f"{records[0].details.criterion_checks!r} "
+                  f"roll={records[0].roll_up_verdict!r}", file=sys.stderr)
+            return 1
+    print("[cli_intent_workspace] (k) accept evaluates declared criteria OK",
           file=sys.stderr)
     return 0
 
@@ -350,7 +412,7 @@ def _check_activate_flips_proposed() -> int:
                   f"out={out.getvalue()!r} err={err.getvalue()!r}",
                   file=sys.stderr)
             return 1
-        live = {i.intent_id: i for i in store.list_active()}
+        live = {i.intent_id: i for i in store.list_all()}
         if live[proposed.intent_id].status != "active":
             print(f"[cli_intent_workspace] FAIL (j): status="
                   f"{live[proposed.intent_id].status!r}", file=sys.stderr)
@@ -374,6 +436,7 @@ def run() -> int:
         _check_intent_add_then_list,
         _check_accept_writes_signal,
         _check_reject_writes_signal,
+        _check_accept_evaluates_declared_criteria,
         _check_unknown_intent_user_error,
         _check_path_live_chain,
         _check_path_unknown_id_user_error,

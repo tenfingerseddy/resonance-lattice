@@ -23,8 +23,9 @@ from pathlib import Path
 from typing import Iterable
 
 from ..memory._common import utcnow_iso
-from ..memory.store import Memory, Row
-from ..state.intent import LiveIntent, LiveIntentStore
+from ..memory.claim_store import ExperienceClaimStore
+from ..state.claim import Claim
+from ..state.intent import Intent, LiveIntentStore
 
 # Default caps — engineering-spec parameters; the layer should be terse
 # enough to read on session start without hijacking attention.
@@ -53,7 +54,7 @@ class ExpertiseSection:
         return f"## {self.heading}\n\n{self.body.rstrip()}\n"
 
 
-def _intent_line(intent: LiveIntent, *, max_chars: int) -> str:
+def _intent_line(intent: Intent, *, max_chars: int) -> str:
     text = intent.text.strip().replace("\n", " ")
     if len(text) > max_chars:
         text = text[: max_chars - 1].rstrip() + "…"
@@ -63,18 +64,24 @@ def _intent_line(intent: LiveIntent, *, max_chars: int) -> str:
     )
 
 
-def _memory_line(row: Row, *, max_chars: int) -> str:
-    polarity = row.primary_polarity()
-    text = row.text.strip().replace("\n", " ")
+def _memory_line(claim: Claim, *, max_chars: int) -> str:
+    text = claim.content.strip().replace("\n", " ")
     if len(text) > max_chars:
         text = text[: max_chars - 1].rstrip() + "…"
+    # Source-aware (S3b): a corpus claim carries `CorpusFacts`, which has no
+    # `primary_polarity()` / `recurrence_count` — render the source-agnostic
+    # core only (label by source, confidence + level from the shared spine).
+    # Experience claims keep the full polarity + recurrence line unchanged.
+    if claim.source == "corpus":
+        return f"- *corpus* — {text} ({claim.confidence}, level={claim.kind})"
     return (
-        f"- *{polarity}* — {text} "
-        f"({row.confidence}, recur={row.recurrence_count}, level={row.level})"
+        f"- *{claim.facts.primary_polarity()}* — {text} "
+        f"({claim.confidence}, recur={claim.facts.recurrence_count}, "
+        f"level={claim.kind})"
     )
 
 
-def _rank_intents(intents: Iterable[LiveIntent]) -> list[LiveIntent]:
+def _rank_intents(intents: Iterable[Intent]) -> list[Intent]:
     """Order intents for display: status > level > created_at-desc.
 
     `satisfied` and `abandoned` are excluded — they're terminal and
@@ -96,38 +103,44 @@ def _rank_intents(intents: Iterable[LiveIntent]) -> list[LiveIntent]:
     )
 
 
-def _rank_memory_rows(rows: Iterable[Row]) -> list[Row]:
-    """Order durable memory rows for display: confidence > level > recur.
+def _rank_memory_rows(claims: Iterable[Claim]) -> list[Claim]:
+    """Order durable memory claims for display: confidence > level > recur.
 
-    Filters out intent rows (they live in the live store; the primer
-    surfaces them in the Active intents section). Falsified / is_bad
-    rows are dropped — they exist for the forget pipeline, not for the
-    agent's working surface.
+    Source-aware (S3b): an experience claim is dropped when `is_bad`
+    (the forget-pipeline marker); a corpus claim is dropped unless `active`
+    (retired/stale/candidate earned facts don't reach the working surface) —
+    `is_bad` is `ExperienceFacts`-only, so state is the corpus analogue.
+    Ordering keys are source-agnostic (confidence + kind from the shared
+    spine); `recurrence_count` is `ExperienceFacts`-only so corpus rows sort
+    last on that key (they carry Beta-trust, not recurrence). Experience-only
+    input is ranked identically to before — the parity the primer test pins.
     """
-    out = []
-    for r in rows:
-        if r.is_bad:
-            continue
-        if r.level in ("direction", "goal", "task", "step"):
-            continue  # intent shape — surfaced separately
-        out.append(r)
+    def _kept(c: Claim) -> bool:
+        if c.source == "corpus":
+            return c.state == "active"
+        return not c.facts.is_bad
+
+    def _recur(c: Claim) -> int:
+        return c.facts.recurrence_count if c.source != "corpus" else 0
+
+    out = [c for c in claims if _kept(c)]
     level_rank = {
         "principle": 4, "learning": 3, "pattern": 2, "event": 1,
     }
     return sorted(
         out,
-        key=lambda r: (
-            -_CONFIDENCE_RANK.get(r.confidence, 0),
-            -level_rank.get(r.level, 0),
-            -r.recurrence_count,
+        key=lambda c: (
+            -_CONFIDENCE_RANK.get(c.confidence, 0),
+            -level_rank.get(c.kind, 0),
+            -_recur(c),
         ),
     )
 
 
 def render_expertise_primer(
     *,
-    intents: Iterable[LiveIntent],
-    memory_rows: Iterable[Row],
+    intents: Iterable[Intent],
+    memory_rows: Iterable[Claim],
     max_intents: int = DEFAULT_MAX_INTENTS,
     max_memory_rows: int = DEFAULT_MAX_MEMORY_ROWS,
     memory_row_chars: int = DEFAULT_MEMORY_ROW_CHARS,
@@ -141,13 +154,13 @@ def render_expertise_primer(
     """
     when = now or utcnow_iso()
     ranked_intents = _rank_intents(intents)[:max_intents]
-    ranked_rows = _rank_memory_rows(memory_rows)[:max_memory_rows]
+    ranked_claims = _rank_memory_rows(memory_rows)[:max_memory_rows]
 
     intent_body = "\n".join(
         _intent_line(i, max_chars=memory_row_chars) for i in ranked_intents
     )
     memory_body = "\n".join(
-        _memory_line(r, max_chars=memory_row_chars) for r in ranked_rows
+        _memory_line(c, max_chars=memory_row_chars) for c in ranked_claims
     )
 
     sections = [
@@ -156,7 +169,7 @@ def render_expertise_primer(
             body=intent_body,
         ),
         ExpertiseSection(
-            heading=f"Project memory (top {len(ranked_rows)})",
+            heading=f"Project memory (top {len(ranked_claims)})",
             body=memory_body,
         ),
     ]
@@ -174,7 +187,7 @@ def render_expertise_primer(
 def build_expertise_primer(
     *,
     state_root: Path,
-    memory: Memory,
+    memory: ExperienceClaimStore,
     output_path: Path,
     max_intents: int = DEFAULT_MAX_INTENTS,
     max_memory_rows: int = DEFAULT_MAX_MEMORY_ROWS,
@@ -183,12 +196,12 @@ def build_expertise_primer(
     `(output_path, char_count)` so the CLI can report what landed.
     """
     store = LiveIntentStore(state_root)
-    intents = store.list_active()
-    rows, _band = memory.read_all()
+    intents = store.list_all()
+    claims = memory.read_all()
 
     body = render_expertise_primer(
         intents=intents,
-        memory_rows=rows,
+        memory_rows=claims,
         max_intents=max_intents,
         max_memory_rows=max_memory_rows,
     )

@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FAQ — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html" aria-current="page">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>FAQ</h1>
+  <p class="lede">
+    Short answers to the questions that come up most — what rlat is, how it
+    differs from a plain embedding store, when to reach for each command, and
+    where the API key is and is not needed.
+  </p>
+
+  <section id="basics">
+    <h2 id="the-basics">The basics</h2>
+
+    <h3 id="what-is-rlat">What is rlat?</h3>
+    <p>
+      A retrieval and answer-improvement layer for AI assistants. You point it
+      at a corpus — docs, code, notes, anything text — it builds a
+      <code>.rlat</code> <em>knowledge model</em>, and you query that model. A
+      query can return ranked passages with full source citations and drift
+      status, or — through <code>rlat deep-search</code> and the insight layer —
+      a faithfully-grounded answer where every claim traces back to the corpus.
+    </p>
+    <p>
+      Three layers do the work. The <strong>field</strong> is the encoder plus
+      dense cosine retrieval. The <strong>store</strong> is the on-disk
+      knowledge-model archive plus the verified-retrieval contract. On top of
+      those, rlat composes <strong>grounded synthesis</strong>: it improves
+      answers by grounding them in the corpus, never by asserting what is true
+      in the world. It represents what the corpus says.
+    </p>
+    <div class="callout callout-note">
+      <span class="callout-tag">Note</span>
+      <p>rlat owns <em>grounding</em>, not truth. A grounded answer is faithful
+      to the corpus — it does not claim the corpus itself is correct.</p>
+    </div>
+
+    <h3 id="how-different-from-embedding-store">How is it different from a vanilla embedding store?</h3>
+    <p>
+      <strong>Lossless verified retrieval.</strong> Every passage in every
+      <code>.rlat</code> carries <code>(source_file, char_offset,
+      char_length, content_hash, drift_status)</code>. Most retrievers store
+      opaque embeddings and lose source attribution. rlat does not. Citations
+      are free; drift detection is free; fact-checking workflows compose on top
+      with no extra bookkeeping. And because rlat can see the shape of the whole
+      corpus, a knowledge model also <strong>audits itself</strong> — flagging
+      gaps, contradictions, and stale facts, and growing from verified sources
+      (see <a href="self-improvement.html">Self-improvement</a>).
+    </p>
+
+    <h3 id="learn-my-world">Does rlat learn about <em>my</em> world?</h3>
+    <p>
+      Yes. Alongside your documents, a knowledge model can carry three kinds
+      of learned knowledge about the world they describe: stable facts (the
+      tenant's capacity, the garden's water restrictions), standing
+      constraints (no preview features, organic-only), and what was tried and
+      failed. All three are proven to change answers — receipts on the
+      <a href="benchmarks.html">Benchmarks</a> page.
+    </p>
+    <p>
+      Capture is opt-in. Passive capture reads what <em>you</em> said in a
+      session and extracts world facts through four gates; the fourth is a
+      privacy gate — facts about a person (your role, your machine, your
+      habits) are dropped. The gate is prompt-level, validated rather than
+      architecturally guaranteed: zero person facts landed across every trap
+      in the pre-registered bench
+      (<a href="benchmarks.html#e2c-capture-gate">E2c</a>). You can also
+      record a fact deliberately with <code>rlat capture-attribute my.rlat
+      "..." --kind attribute|constraint|falsified</code> (or auto-probe with
+      <code>rlat capture-env</code>), and review or remove what has landed
+      with <code>rlat lens</code> / <code>rlat profile</code>
+      (<code>rlat audit</code> and <code>rlat trace</code> show the full
+      trail).
+    </p>
+
+    <h3 id="what-encoder">What encoder do you use?</h3>
+    <p>
+      <code>Alibaba-NLP/gte-modernbert-base</code> at 768d, CLS-pooled,
+      L2-normalised, with a maximum sequence length of 8192 tokens. It is pinned
+      to a specific Hugging Face commit so a fresh machine reproduces the same
+      embedding distribution that produced the locked BEIR-5 floor.
+    </p>
+    <p>
+      Validated against BGE-large-v1.5 (rlat wins by +0.026 nDCG@10) and
+      E5-large-v2 (+0.081 nDCG@10) — apples-to-apples, same chunker, ANN, and
+      scoring — plus Qwen3-Embedding-8B at +0.014 nDCG@10 mean on its own stack.
+      See the <a href="benchmarks.html">Benchmarks</a> page for the comparison
+      table.
+    </p>
+
+    <h3 id="why-no-rerankers">Why no rerankers, lexical sidecar, or auto-router?</h3>
+    <p>
+      Measured. Cross-encoder rerankers regressed gte-modernbert-base on 4 of 5
+      BEIR corpora — a training-distribution mismatch with strong dense top-k.
+      A lexical V1 band failed parity on 4 of 5 corpora. Auto-mode routers add
+      latency without a quality gain. A single recipe wins on quality,
+      simplicity, and reproducibility.
+    </p>
+    <p>
+      The same discipline applies to learned facts. Automatic suppression of
+      disproven facts was tested three ways and falsified — in the live run it
+      suppressed a fact that was still right, failing the pre-registered
+      safety bar. So corrections stay explicit: a disproven fact is corrected
+      on the record, never silently dropped. The published record is at
+      <a href="benchmarks.html#r4-suppression">R4</a>.
+    </p>
+  </section>
+
+  <section id="storage">
+    <h2 id="storage-questions">Storage modes</h2>
+
+    <h3 id="bundled-local-remote">Bundled vs. local vs. remote storage mode?</h3>
+    <table class="compact">
+      <thead><tr><th>Mode</th><th>Where source lives</th><th>Use when</th></tr></thead>
+      <tbody>
+        <tr><td><code>local</code> (default)</td><td>On disk; the <code>.rlat</code> carries embeddings + coordinates</td><td>You are indexing a working repo you will edit</td></tr>
+        <tr><td><code>bundled</code></td><td>zstd-compressed inside the <code>.rlat</code></td><td>Shipping a self-contained artefact — Hugging Face Hub, archive, offline distribution</td></tr>
+        <tr><td><code>remote</code></td><td>Resolved over HTTP(S) against a SHA-pinned manifest baked in at build time</td><td>Source belongs at canonical URLs, e.g. a tagged GitHub release</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Remote mode is set with <code>--store-mode remote --remote-url-base
+      &lt;prefix&gt;</code>. The first query downloads cited source to a
+      per-knowledge-model cache, with SHA-pin verification on every read. See
+      the <a href="storage-modes.html">Storage modes</a> page.
+    </p>
+
+    <h3 id="switch-storage-modes">How do I switch storage modes without rebuilding?</h3>
+    <p>
+      <code>rlat convert &lt;km.rlat&gt; --to {bundled|local|remote}</code>.
+      It reshapes the storage mode in place without re-running the encoder —
+      the band, registry, and ANN index are
+      storage-mode-independent and flow through unchanged.
+    </p>
+    <pre><code># hand off a working knowledge model as self-contained
+rlat convert my.rlat --to bundled
+
+# open a downloaded handout for editing
+rlat convert handout.rlat --to local --source-root ./extracted/
+
+# publish a private corpus to HTTP
+rlat convert internal.rlat --to remote --remote-url-base https://docs.example.com/v1/</code></pre>
+    <p>
+      Conversion validates every passage's <code>content_hash</code> against
+      live bytes before writing. If any have drifted, conversion aborts with the
+      drift report; run <code>rlat refresh</code> or <code>rlat sync</code>
+      first, then retry.
+    </p>
+  </section>
+
+  <section id="grounding">
+    <h2 id="grounding-and-search">Grounding and search</h2>
+
+    <h3 id="tell-llm-how-to-use">How do I tell the LLM how to use the retrieved passages?</h3>
+    <p>
+      <code>rlat skill-context</code> and <code>rlat search --format
+      context</code> both take a <code>--mode</code> flag that stamps a
+      directive at the top of the markdown output. The directive header always
+      ships, even when a weak-retrieval gate suppresses the dynamic body — the
+      LLM always sees the instruction.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Mode</th><th>Posture</th><th>Single-shot bench (Microsoft Fabric)</th></tr></thead>
+      <tbody>
+        <tr><td><code>augment</code> (default)</td><td>Passages are primary context, blended with the LLM's training. Body suppressed on weak retrieval so the LLM falls back to training rather than grounding on noise.</td><td>76.5% accuracy / 3.9% hallucination (vs 56.9% / 19.6% for the LLM alone)</td></tr>
+        <tr><td><code>constrain</code></td><td>Passages are the only source of truth; the LLM is told to refuse when evidence is thin. Pair with <code>--strict</code> on <code>skill-context</code> so drifted source aborts the load.</td><td>66.7% accuracy / 2.0% hallucination / 91.7% distractor refusal</td></tr>
+        <tr><td><code>knowledge</code></td><td>Passages supplement training. Lighter gate, because the directive already tells the LLM to lean on training.</td><td>70.6% accuracy / 5.9% hallucination</td></tr>
+      </tbody>
+    </table>
+    <pre><code>rlat skill-context fabric.rlat --query "$user_query" --mode constrain --strict
+rlat search compliance.rlat "what's our SOX retention policy?" --format context --mode constrain</code></pre>
+    <p>
+      Pick <code>constrain</code> for fact extraction, compliance, and audit
+      work where wrong-but-confident is worse than no answer. Pick
+      <code>augment</code> for broad documentation corpora where the LLM has
+      solid prior knowledge.
+    </p>
+
+    <h3 id="deep-search-vs-search">When should I use <code>deep-search</code> vs <code>rlat search</code>?</h3>
+    <div class="callout callout-tip">
+      <span class="callout-tag">Heads up</span>
+      <p><code>rlat deep-search</code> needs an Anthropic API key. In a Claude
+      Code session, the <code>deep-research</code> skill runs the same loop
+      natively in your conversation — same prompts, same hop budget, same
+      name-verification check — with no extra cost. Use the skill in nearly
+      every interactive scenario; reach for the CLI verb when you need a
+      programmatic, batch, or non-Claude-Code surface.</p>
+    </div>
+    <p>
+      <code>rlat search</code> is single-shot — one query, top-k passages,
+      return. No LLM at all (just the deterministic encoder, cosine, and ANN),
+      fully local, instant, and fine for one-hop fact lookups.
+    </p>
+    <p>
+      <code>rlat deep-search</code> (or the <code>deep-research</code> skill)
+      runs an internal multi-hop loop — plan, retrieve, refine, retrieve again,
+      synthesize — and returns a final answer plus the evidence union. It is
+      pricier and slower, but more thorough:
+    </p>
+    <table class="compact">
+      <thead><tr><th>Surface</th><th>Accuracy</th><th>Hallucination</th><th>Cost / q</th></tr></thead>
+      <tbody>
+        <tr><td><code>rlat search --format context</code> (single-shot, augment)</td><td>76.5%</td><td>3.9%</td><td>$0.004</td></tr>
+        <tr><td><code>rlat deep-search</code></td><td>92.2%</td><td>2.0%</td><td>$0.010</td></tr>
+      </tbody>
+    </table>
+    <p>Pick <code>deep-search</code> when the question spans multiple files, when correctness matters more than latency or spend, or when you want a synthesised answer with citations rather than a list of passages. Stick with <code>search</code> for single-hop lookups, when you drive synthesis yourself downstream, or when latency and cost dominate.</p>
+
+    <h3 id="strict-names">What is <code>--strict-names</code>?</h3>
+    <p>
+      A safety check, independent of grounding mode, on <code>rlat
+      skill-context</code>, <code>rlat search --format context</code>, and
+      <code>rlat deep-search</code>. It extracts distinctive proper nouns,
+      acronyms, and alphanumeric IDs from the question, then verifies each
+      appears verbatim in at least one retrieved passage. When a distinctive
+      token is missing from every passage:
+    </p>
+    <ul class="checklist x">
+      <li><strong>Default</strong> — prepend a refusal directive to the body, so
+      the LLM sees a "the corpus may describe a different entity" warning.</li>
+      <li><strong><code>--strict-names</code></strong> — exit non-zero
+      (<code>rc=3</code>). Skill loaders and scripts gate on this.</li>
+    </ul>
+    <p>
+      This catches the name-aliasing failure that score-based gating cannot —
+      e.g. a question about <code>MaterializedViewExpress (MVE)</code> when the
+      corpus only describes the adjacent <code>MaterializedLakeView
+      (MLV)</code>. On paraphrase-rich documentation corpora, score and gap
+      distributions overlap completely between answerable and distractor
+      questions, so any score-floor gate is statistically falsified — the
+      name-check is the right mitigation.
+    </p>
+
+    <h3 id="cite-a-result">How do I cite a search result?</h3>
+    <p>Citations are built into every result.</p>
+    <pre><code>rlat search my.rlat "query" --format json | jq '.[] | {file:.source_file, offset:.char_offset, drift:.drift_status, score:.score}'</code></pre>
+    <p>From Python, the <code>evidence</code> op carries the same coordinates:</p>
+    <pre><code>from resonance_lattice.rql import evidence
+report = evidence(contents, store, query_emb)
+for hit in report.hits:
+    c = hit.citation
+    print(f"{c.source_file}:{c.char_offset}-{c.char_offset + c.char_length}  ({hit.score:.3f})")</code></pre>
+    <p>
+      <code>evidence</code> also returns calibration data — top1 score, source
+      diversity, drift fraction — that the caller can act on, for instance to
+      abstain when separation is thin.
+    </p>
+  </section>
+
+  <section id="keeping-fresh">
+    <h2 id="freshness">Keeping a knowledge model fresh</h2>
+
+    <h3 id="source-files-change">What if my source files change?</h3>
+    <p>Three ways to recover, all landing on the same incremental delta-apply:</p>
+    <ul class="checklist">
+      <li><strong>Live</strong> — <code>rlat watch</code> runs the same
+      incremental delta-apply as <code>refresh</code> on a debounced timer
+      triggered by filesystem events. Silent by default; zero-arg invocation
+      auto-discovers <code>*.rlat</code> in the current directory. Local mode
+      only. Needs <code>pip install rlat[watch]</code>.</li>
+      <li><strong>Manual</strong> — <code>rlat refresh my.rlat</code> applies an
+      incremental delta: unchanged passages keep their band rows untouched,
+      modified or added passages are re-encoded, removed passages are dropped.
+      Atomic in-place write.</li>
+      <li><strong>CI / pre-commit</strong> — <code>rlat watch --once</code> is a
+      synchronous one-shot reconciliation: it walks every archive, reconciles
+      against current disk state, and exits.</li>
+    </ul>
+    <p>
+      <code>rlat refresh --dry-run</code> reports the delta counts without
+      writing. <code>rlat profile</code> reports drift status without
+      rebuilding.
+    </p>
+
+    <h3 id="remote-repo-changes">What if my source repo (remote) changes?</h3>
+    <p>
+      Run <code>rlat sync my.rlat</code> — the same incremental delta-apply as
+      <code>refresh</code>, but the upstream-state oracle is your remote source
+      instead of the local filesystem. <strong>Catalog mode</strong>
+      (<code>--upstream-manifest &lt;url&gt;</code>) diffs an authoritative
+      upstream JSON manifest and detects added, modified, and removed paths.
+      <strong>Poll mode</strong> (the default) re-fetches every URL in the
+      pinned manifest and detects modifications only — it cannot enumerate new
+      files. Catalog mode is the safe mode for removals, because only an
+      authoritative catalog can tell a deleted file apart from an unreachable
+      one.
+    </p>
+    <p>
+      <code>rlat freshness my.rlat</code> is the read-only check — it walks the
+      manifest, hashes each entry, and reports per-entry status
+      (<code>verified</code> / <code>drifted</code> / <code>missing</code>) with
+      no mutation. Useful as a CI gate before running sync.
+    </p>
+
+    <h3 id="insight-drift">What happens to earned insights when source drifts?</h3>
+    <p>
+      Insights — the cited summaries that live in the insight layer — are tied
+      to the source passages they cite. When a source file changes, the insights
+      built on it are marked stale and drop out of retrieval until re-verified.
+      <code>rlat reverify my.rlat</code> walks those stale insights so you can
+      keep or retire each one. See the <a href="claim-system.html">claim system</a> page for how
+      the source and insight layers relate.
+    </p>
+  </section>
+
+  <section id="scale-and-install">
+    <h2 id="scale-build">Scale and building</h2>
+
+    <h3 id="how-big">How big can a knowledge model get?</h3>
+    <p>
+      Tested comfortably up to ~50K passages. Plain <code>rlat search</code>
+      scales further on FAISS HNSW, but the cross-knowledge-model dedupe
+      operations build an <code>(N, N)</code> cosine matrix — at 50K rows that
+      is roughly 10 GB of float32, the practical ceiling for those operations;
+      above it, pre-shard. Single <code>.rlat</code> files in the wild range
+      from ~10 MB (a small docset) to ~2 GB (a large code repo with bundled
+      source).
+    </p>
+
+    <h3 id="no-gpu">I don't have a GPU. Can I still build a big corpus?</h3>
+    <p>
+      Yes. In a Claude Code session, the <code>rlat-build-on-kaggle</code> skill
+      walks you through using Kaggle's free T4 GPU, which encodes
+      <code>gte-modernbert-base</code> roughly 10–20× faster than ONNX on CPU.
+      Anything over ~10K passages is meaningfully faster on Kaggle. The free tier
+      gives 30 GPU-hours per week. Skip Kaggle if your corpus is small (under
+      ~2K passages, where the round-trip overhead exceeds the encode time) or if
+      you already have a CUDA GPU locally.
+    </p>
+
+    <h3 id="api-key-required">Is the API key required?</h3>
+    <p>
+      Only for the commands that call an LLM. Most of the surface — build,
+      search, profile, compare, summary, skill-context, refresh, watch, sync,
+      freshness, convert, init-project, lens, audit (including
+      <code>--shape</code>/<code>--external</code>), trace, intent, expertise,
+      workspace, capture-env, capture-attribute, consolidate-insights — is offline
+      and LLM-free.
+    </p>
+    <p>An Anthropic API key is needed for:</p>
+    <ul class="checklist">
+      <li><code>rlat deep-search</code> — the multi-hop research loop.</li>
+      <li><code>rlat reverify</code> — re-checks insights whose source drifted.</li>
+      <li><code>rlat probe</code> — the idle-cycle self-probe of weak-zone queries.</li>
+      <li>The LLM-driven memory subcommands — <code>rlat memory verify</code> and
+      <code>rlat memory consolidate</code>. The rest of <code>rlat memory</code>
+      (add, list, recall, corroborate, feedback, gc) needs no key.</li>
+    </ul>
+    <div class="callout callout-tip">
+      <span class="callout-tag">Tip</span>
+      <p>In a Claude Code session, the <code>deep-research</code> skill runs the
+      same multi-hop loop as <code>rlat deep-search</code> with no API key —
+      your Claude subscription covers the LLM hops. See the
+      <a href="api-keys.html">API keys</a> page for when each surface is the
+      right pick.</p>
+    </div>
+    <p>
+      API key discovery order: <code>RLAT_LLM_API_KEY_ENV</code> (an indirection
+      pointing at another variable) → <code>CLAUDE_API_2</code> →
+      <code>CLAUDE_API</code> → <code>ANTHROPIC_API_KEY</code> → the Kaggle
+      Secrets vault.
+    </p>
+
+    <h3 id="pypi">Does it ship to PyPI?</h3>
+    <p>
+      Yes — <code>pip install rlat</code>. The base install is ~250 MB; the full
+      encoder and build dependencies (<code>pip install rlat[build]</code>) add
+      torch and transformers, around 2 GB. For most consumers:
+      <code>pip install rlat[build]</code> then
+      <code>rlat install-encoder</code> once.
+    </p>
+  </section>
+
+  <section id="memory-and-intent">
+    <h2 id="memory-intent">Memory and intent</h2>
+
+    <h3 id="what-is-memory">What is memory?</h3>
+    <p>
+      Memory is how an assistant remembers what worked. It is a flat store of
+      short <strong>lessons</strong> — not a tiered log. Each lesson is tagged
+      with a polarity (prefer, avoid, or factual), counts how often it recurs,
+      and carries a <strong>confidence</strong> on a four-step ladder:
+      <code>low → medium → high → verified</code>. A lesson earns its rung from
+      how tasks actually turn out, not from a verdict you give it.
+    </p>
+    <p>
+      Capture, distillation, calibration, and forgetting all run on their own at
+      session end. Lessons that keep proving useful climb the ladder; ones that
+      stay at low confidence and go stale are dropped, so memory stays small and
+      sharp. The only command you usually reach for is <code>rlat memory
+      add</code>, to write a lesson by hand. Memory is scoped to a workspace and
+      is independent from knowledge models — see the
+      <a href="claim-system.html">claim system</a> page for the full model.
+    </p>
+
+    <h3 id="intent-now">Can I declare what I am working on?</h3>
+    <p>
+      Yes — <code>rlat intent</code> ships now. <code>rlat intent add</code>
+      records a live intent, <code>list</code> shows the active ones,
+      <code>path</code> shows how an intent decomposes, <code>activate</code>
+      switches the live one, and <code>accept</code> / <code>reject</code>
+      record a verdict on whether an intent was satisfied. These verdicts are
+      about intent only — they are not a gate on what memory or the insight
+      layer keeps.
+    </p>
+  </section>
+
+  <section id="meta">
+    <h2 id="reporting">Reporting and roadmap</h2>
+
+    <h3 id="report-bugs">Where do I report bugs or feature requests?</h3>
+    <p>
+      On GitHub:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice">tenfingerseddy/resonance-lattice</a>.
+      Issues and discussions are enabled.
+    </p>
+
+    <h3 id="whats-coming">What's coming?</h3>
+    <p>
+      Roadmap-stable but undated: an HTTP server and SDK surface (rlat is
+      CLI-only today), intent operators that boost or suppress retrieval,
+      per-passage origin tracking in merge output, and an ANN attach point for
+      high-QPS federated search. The retrieval substrate is the foundation; the
+      missing pieces compose on top of it.
+    </p>
+  </section>
+
+  <section id="next">
+    <h2 id="where-next">Where to go next</h2>
+    <div class="next">
+      <a href="getting-started.html">
+        <span class="next-label">Start here</span><br>
+        <span class="next-title">Getting started</span>
+      </a>
+      <a href="glossary.html">
+        <span class="next-label">Reference</span><br>
+        <span class="next-title">Glossary</span>
+      </a>
+    </div>
+  </section>
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

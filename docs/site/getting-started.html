@@ -11,13 +11,24 @@
 <header class="site">
   <div class="bar">
     <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
-    <nav class="site">
-      <a href="index.html">Home</a>
-      <a href="getting-started.html" aria-current="page">Getting started</a>
-      <a href="memory.html">Memory</a>
-      <a href="lens.html">Lens</a>
-    </nav>
   </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html" aria-current="page">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
 </header>
 
 <main class="wrap">
@@ -131,7 +142,7 @@ uv pip install 'rlat[build]'</code></pre>
     <table class="compact">
       <thead><tr><th>Corpus</th><th>Source</th><th>Files</th><th>Passages</th><th>Filename</th><th>Mode</th></tr></thead>
       <tbody>
-        <tr><td><code>tenfingers/fabric-docs-rlat</code></td><td>MicrosoftDocs/fabric-docs</td><td>2,435</td><td>67,503</td><td><code>fabric-docs-bundled.rlat</code></td><td>bundled + optimised</td></tr>
+        <tr><td><code>tenfingers/fabric-docs-rlat</code></td><td>MicrosoftDocs/fabric-docs</td><td>2,435</td><td>67,503</td><td><code>fabric-docs-bundled.rlat</code></td><td>bundled</td></tr>
         <tr><td><code>tenfingers/powerbi-developer-rlat</code></td><td>MicrosoftDocs/powerbi-docs</td><td>176</td><td>5,684</td><td><code>powerbi-developer.rlat</code></td><td>remote</td></tr>
         <tr><td><code>tenfingers/powershell-docs-rlat</code></td><td>MicrosoftDocs/PowerShell-Docs</td><td>2,647</td><td>107,033</td><td><code>powershell-docs.rlat</code></td><td>remote</td></tr>
         <tr><td><code>tenfingers/python-stdlib-rlat</code></td><td>python/cpython</td><td>617</td><td>49,179</td><td><code>python-stdlib.rlat</code></td><td>remote</td></tr>
@@ -255,7 +266,7 @@ def build_index(passages):  return faiss.HNSW(passages)</code></pre>
       <code>rlat search</code> retrieves over two layers: the <strong>source
       layer</strong> (the raw passages from your files) and the
       <strong>insight layer</strong> (earned, cited summaries — see the
-      <a href="lens.html">Lens</a> page). Every hit is labelled with the layer
+      <a href="claim-system.html">claim system</a> page). Every hit is labelled with the layer
       it came from. To restrict a query to source passages only, pass
       <code>--source-only</code>; to apply a saved perspective, pass
       <code>--lens &lt;file&gt;</code>.
@@ -264,8 +275,35 @@ def build_index(passages):  return faiss.HNSW(passages)</code></pre>
     <pre><code>rlat search my-project.rlat "..." --format json</code></pre>
   </section>
 
+  <section id="teach">
+    <div class="section-num">06 — Teach it your world</div>
+    <h2>Teach it your world</h2>
+    <p>
+      The knowledge model knows your files. It does not know your rules.
+      Tell it one:
+    </p>
+    <pre><code>rlat capture-attribute my-project.rlat "Deploys to prod happen Tuesday only." --kind constraint</code></pre>
+    <p>Now re-run a query:</p>
+    <pre><code>rlat search my-project.rlat "when can I deploy?" --format context</code></pre>
+    <pre><code>&lt;!-- rlat-mode: augment --&gt;
+&gt; <strong>Grounding mode: augment.</strong> Use the passages below as primary context …
+
+Standing constraints for this environment:
+- Deploys to prod happen Tuesday only.
+
+&lt;!-- SOURCE docs/release.md:212+88 score=0.741 verified --&gt;
+The release pipeline promotes builds from staging …</code></pre>
+    <p>
+      The rule now precedes every passage. Constraints are <em>always
+      served</em> — they render right after the grounding directive on
+      every query rather than depending on a similarity match.
+      <code>rlat lens</code> is where you review or remove what the file
+      has learned.
+    </p>
+  </section>
+
   <section id="assistant">
-    <div class="section-num">06 — Hand it to your assistant</div>
+    <div class="section-num">07 — Hand it to your assistant</div>
     <h2>Give the corpus to an AI assistant</h2>
     <p>
       <code>rlat init-project</code> already wrote
@@ -277,7 +315,7 @@ def build_index(passages):  return faiss.HNSW(passages)</code></pre>
   </section>
 
   <section id="fresh">
-    <div class="section-num">07 — Keep it fresh</div>
+    <div class="section-num">08 — Keep it fresh</div>
     <h2>Keep the model in sync</h2>
     <p>
       When you edit source files, the on-disk content drifts from what was
@@ -305,7 +343,7 @@ rlat reverify my-project.rlat</code></pre>
   </section>
 
   <section id="inspect">
-    <div class="section-num">08 — Inspect &amp; compare</div>
+    <div class="section-num">09 — Inspect &amp; compare</div>
     <h2>Inspect a knowledge model</h2>
     <pre><code>rlat profile my-project.rlat              # human-readable summary
 rlat profile my-project.rlat --format json # JSON for scripts / dashboards
@@ -314,14 +352,14 @@ rlat profile big-corpus.rlat --no-drift    # skip the drift walk on huge corpora
     <pre><code>rlat compare project-old.rlat project-new.rlat</code></pre>
     <p>
       Reports <code>centroid_cosine</code> (a single thematic-alignment number)
-      and asymmetric mutual coverage. It always uses the <strong>base
-      band</strong>, so two corpora optimised differently still compare
+      and asymmetric mutual coverage. It uses the <strong>base band</strong> —
+      the band every knowledge model shares — so any two corpora compare
       correctly.
     </p>
   </section>
 
   <section id="trouble">
-    <div class="section-num">09 — Troubleshooting</div>
+    <div class="section-num">10 — Troubleshooting</div>
     <h2>Where things go wrong</h2>
     <ul class="checklist x">
       <li><code>rlat: command not found</code> — pip did not put the script on
@@ -346,13 +384,13 @@ rlat profile big-corpus.rlat --no-drift    # skip the drift walk on huge corpora
     <h2>What's next</h2>
     <p>You now have the day-one workflow. From here:</p>
     <div class="next">
-      <a href="memory.html">
+      <a href="claim-system.html">
         <span class="next-label">Next</span><br>
-        <span class="next-title">Memory</span>
+        <span class="next-title">The claim system</span>
       </a>
-      <a href="lens.html">
+      <a href="cli.html">
         <span class="next-label">Then</span><br>
-        <span class="next-title">Lens</span>
+        <span class="next-title">CLI reference</span>
       </a>
     </div>
   </section>
@@ -361,7 +399,7 @@ rlat profile big-corpus.rlat --no-drift    # skip the drift walk on huge corpora
 
 <footer class="site">
   <div class="bar">
-    <p>Resonance Lattice documentation · current as of 2026-05-16 ·
+    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
     <a href="index.html">all docs</a>.</p>
   </div>
 </footer>

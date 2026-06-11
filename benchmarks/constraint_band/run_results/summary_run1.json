@@ -1,0 +1,29 @@
+{
+ "blind_full": "15/24",
+ "decisive": [
+  "i02",
+  "i06",
+  "i07",
+  "i09",
+  "i10",
+  "i11",
+  "i12",
+  "i14",
+  "i15",
+  "i16",
+  "i17",
+  "i20",
+  "i21",
+  "i22",
+  "i23"
+ ],
+ "served_rate": 0.06666666666666667,
+ "placebo_rate": 0.9333333333333333,
+ "collateral_blind": 1.0,
+ "collateral_served": 1.0,
+ "bars": {
+  "served_le_third": true,
+  "placebo_ge_90": true,
+  "collateral_lt_10pp": true
+ }
+}

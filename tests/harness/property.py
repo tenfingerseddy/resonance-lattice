@@ -1,13 +1,8 @@
 """Property-based invariants (fixed-seed trials in lieu of Hypothesis).
 
-Field algebra (Phase 1):
-- merge(a, merge(b, c)) == merge(merge(a, b), c)   (associativity)
-- merge(a, empty) == a                              (identity)
-- merge(a, b) == merge(b, a)                        (commutativity)
-- subtract(a, a) == empty
-- intersect(a, b) == intersect(b, a)                (commutativity)
-- diff(a, a) == empty
-- diff(a, b) >= 0 elementwise
+Field geometry (Phase 1): greedy_cluster single-linkage transitivity,
+complete-linkage strictness (the elementwise-algebra invariants left with
+their ops in the 2026-06 review).
 
 RQL ops (Phase 6):
 - compare(a, b).overlap_score == compare(b, a).overlap_score (symmetric)
@@ -67,36 +62,6 @@ def _write_km(
     return archive.read(p)
 
 
-def _check_field_algebra(rng: np.random.Generator, failures: list[str]) -> None:
-    for trial in range(_TRIALS):
-        a = rng.normal(size=_DIM).astype(np.float32)
-        b = rng.normal(size=_DIM).astype(np.float32)
-        c = rng.normal(size=_DIM).astype(np.float32)
-        e = algebra.empty(_DIM)
-        cases = [
-            ("merge_associative",
-             np.allclose(
-                 algebra.merge(algebra.merge(a, b), c),
-                 algebra.merge(a, algebra.merge(b, c)),
-                 atol=_FP_ATOL)),
-            ("merge_identity",
-             np.allclose(algebra.merge(a, e), a, atol=_FP_ATOL)),
-            ("merge_commutative",
-             np.allclose(algebra.merge(a, b), algebra.merge(b, a), atol=_FP_ATOL)),
-            ("subtract_self_empty",
-             np.allclose(algebra.subtract(a, a), e, atol=_FP_ATOL)),
-            ("intersect_commutative",
-             np.allclose(algebra.intersect(a, b), algebra.intersect(b, a), atol=_FP_ATOL)),
-            ("diff_self_empty",
-             np.allclose(algebra.diff(a, a), e, atol=_FP_ATOL)),
-            ("diff_nonnegative",
-             (algebra.diff(a, b) >= 0).all()),
-        ]
-        for name, ok in cases:
-            if not ok:
-                failures.append(f"algebra trial={trial} {name}")
-
-
 def _check_greedy_cluster_transitive(failures: list[str]) -> None:
     """A↔B above threshold AND B↔C above threshold should land all three in
     one cluster even if A↔C is below threshold (single-linkage semantics).
@@ -115,6 +80,30 @@ def _check_greedy_cluster_transitive(failures: list[str]) -> None:
     clusters = algebra.greedy_cluster(embs, threshold=0.95)
     if not (len(clusters) == 1 and sorted(clusters[0]) == [0, 1, 2]):
         failures.append(f"greedy_cluster transitive: {clusters!r}")
+
+
+def _check_complete_linkage_no_chain(failures: list[str]) -> None:
+    """The CONTRAST to single-linkage: A↔B and B↔C above threshold but A↔C below
+    must NOT chain into one cluster under complete-linkage (every cross pair must
+    clear the threshold). And a zero-norm row is its own singleton — never crashing
+    the scipy linkage (the finite-distance guard for sanitised junk embeddings).
+    """
+    v0 = np.array([1.0, 0.0, 0.0] + [0.0] * (_DIM - 3), dtype=np.float32)
+    v1 = np.array([0.97, 0.243, 0.0] + [0.0] * (_DIM - 3), dtype=np.float32)
+    v2 = np.array([0.883, 0.468, 0.0] + [0.0] * (_DIM - 3), dtype=np.float32)
+    zero = np.zeros(_DIM, dtype=np.float32)
+    embs = np.stack([v0, v1, v2, zero])
+    norms = np.linalg.norm(embs, axis=1, keepdims=True)
+    embs = embs / np.where(norms == 0.0, 1.0, norms)  # normalise non-zero rows; zero stays zero
+    sims = embs @ embs.T
+    if not (sims[0, 1] >= 0.95 and sims[1, 2] >= 0.95 and sims[0, 2] < 0.95):
+        return  # fixture didn't land in the chain regime — skip rather than flake
+    clusters = algebra.complete_linkage_cluster(embs, threshold=0.95)
+    sets = [set(c) for c in clusters]
+    if any({0, 1, 2}.issubset(c) for c in sets):
+        failures.append(f"complete_linkage chained (should split): {clusters!r}")
+    if {3} not in sets:
+        failures.append(f"complete_linkage zero-row not a singleton: {clusters!r}")
 
 
 def _check_rql_invariants(rng: np.random.Generator, failures: list[str]) -> None:
@@ -188,9 +177,9 @@ def _check_memory_v21_invariants(rng: np.random.Generator, failures: list[str]) 
     `recall()` returns the same cosine-sorted hit list each time.
     """
     from resonance_lattice.memory._common import workspace_tag_for_cwd
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
     from resonance_lattice.memory.recall import recall
-    from resonance_lattice.memory.store import Memory
-    from ._testutil import FixedEncoder, patch_zero_encoder
+    from ._testutil import FixedEncoder, make_experience_claim, patch_zero_encoder
 
     patch_zero_encoder()
     cwd_tag = workspace_tag_for_cwd("/proj")
@@ -205,13 +194,14 @@ def _check_memory_v21_invariants(rng: np.random.Generator, failures: list[str]) 
         embs = np.zeros((n, _DIM), dtype=np.float32)
         embs[:, 0] = cosines
         embs[:, 1] = np.sqrt(np.maximum(0.0, 1.0 - cosines ** 2))
-        rows_payload = [
-            {
-                "text": f"row {i}",
-                "polarity": ["factual", cwd_tag],
-                "transcript_hash": f"distilled:tx{i:04d}",
-                "embedding": embs[i],
-            }
+        claims = [
+            make_experience_claim(
+                claim_id=f"01HZROW{i:017d}",
+                content=f"row {i}",
+                polarity=["factual", cwd_tag],
+                transcript_hash=f"distilled:tx{i:04d}",
+                recurrence_count=5,  # clears the recurrence gate
+            )
             for i in range(n)
         ]
 
@@ -223,14 +213,14 @@ def _check_memory_v21_invariants(rng: np.random.Generator, failures: list[str]) 
 
         cwd_hash = cwd_tag.removeprefix("workspace:")
         with tempfile.TemporaryDirectory() as td_a, tempfile.TemporaryDirectory() as td_b:
-            mem_a = Memory(root=Path(td_a) / "u", encoder=FixedEncoder(query_vec))
-            mem_b = Memory(root=Path(td_b) / "u", encoder=FixedEncoder(query_vec))
+            mem_a = ExperienceClaimStore(
+                root=Path(td_a) / "u", encoder=FixedEncoder(query_vec))
+            mem_b = ExperienceClaimStore(
+                root=Path(td_b) / "u", encoder=FixedEncoder(query_vec))
             for idx in order_a:
-                row_id = mem_a.add_row(**rows_payload[idx])
-                mem_a.update_row(row_id, recurrence_count=5)
+                mem_a.write(claims[idx], embedding=embs[idx])
             for idx in order_b:
-                row_id = mem_b.add_row(**rows_payload[idx])
-                mem_b.update_row(row_id, recurrence_count=5)
+                mem_b.write(claims[idx], embedding=embs[idx])
             hits_a = recall("anything", store=mem_a, cwd_hash=cwd_hash, top_k=n)
             hits_b = recall("anything", store=mem_b, cwd_hash=cwd_hash, top_k=n)
 
@@ -247,8 +237,8 @@ def _check_memory_v21_invariants(rng: np.random.Generator, failures: list[str]) 
 def run() -> int:
     rng = np.random.default_rng(_SEED)
     failures: list[str] = []
-    _check_field_algebra(rng, failures)
     _check_greedy_cluster_transitive(failures)
+    _check_complete_linkage_no_chain(failures)
     _check_rql_invariants(rng, failures)
     _check_memory_v21_invariants(rng, failures)
     if failures:

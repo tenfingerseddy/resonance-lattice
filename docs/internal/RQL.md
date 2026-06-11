@@ -5,7 +5,7 @@ search`. CLI subcommands wrap a subset of these ops; the rest are
 library-callable from any consumer.
 
 > Source-of-truth code: `src/resonance_lattice/rql/`.
-> Public surface: 14 ops, 5 groups. Every op returns a typed result —
+> Public surface: 12 ops, 4 groups. Every op returns a typed result —
 > never a raw ndarray or untyped tuple.
 
 ## Why these ops, and not others
@@ -29,15 +29,21 @@ v0.11's algebra ops), research artifacts (dynamics, geometric, EML
 retrieval-time scoring — falsified), or intent-only (boost, suppress,
 cascade — defer to v2.1 alongside Intent operators).
 
-## The 14 curated ops
+## The 12 curated ops
 
 ```
 Foundation (4):       locate, profile, neighbors, near_duplicates
 Comparison (3):       compare, unique, intersect
 Composition (2):      compose, merge
 Evidence + drift (3): evidence, drift, corpus_diff
-Experimental (2):     contradictions, audit
 ```
+
+(The experimental `contradictions`/`audit` pair was removed in the 2026-06
+review: both were built on the cosine+Jaccard heuristic the production
+contradiction path abandoned, and were superseded end-to-end —
+`store/self_audit` finds candidate pairs LLM-free at build/refresh and the
+free `rlat-contradictions` skill judges them. The "Experimental" section
+below is kept as the design record.)
 
 ---
 
@@ -201,9 +207,13 @@ cosine well below this.
 
 ---
 
-## Experimental — heuristic surfaces
+## Experimental — heuristic surfaces (REMOVED 2026-06; design record)
 
-Both ops below are HEURISTIC and will produce noise. They ship under the
+> Removed in the 2026-06 review — superseded by `store/self_audit` +
+> the `rlat-contradictions` skill. Kept as the rationale record for the
+> user stories.
+
+Both ops below were HEURISTIC and produced noise. They ship under the
 experimental banner because the underlying user stories are genuinely
 novel under verified retrieval and even imperfect candidate sets are a
 non-trivial product surface — but the lexical heuristic isn't a precise

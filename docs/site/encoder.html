@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The encoder — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html" aria-current="page">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>The encoder</h1>
+  <p class="lede">
+    rlat ships with <strong>one encoder</strong>. No options, no presets, no
+    decision tree. This page explains what it is, how it installs, and why the
+    choice is fixed.
+  </p>
+
+  <section id="what-it-is">
+    <div class="section-num">01 — The recipe</div>
+    <h2>What it is</h2>
+    <p>
+      An <em>encoder</em> is the model that turns a chunk of text into a vector
+      — a list of numbers that captures the text's meaning. rlat uses exactly
+      one, with one fixed configuration:
+    </p>
+    <table class="compact">
+      <tbody>
+        <tr><td>Backbone</td><td><code>Alibaba-NLP/gte-modernbert-base</code></td></tr>
+        <tr><td>Pooling</td><td>CLS — the vector is read from the model's single summary token</td></tr>
+        <tr><td>Output dimension</td><td>768 numbers per vector</td></tr>
+        <tr><td>Max sequence length</td><td>8192 tokens — long passages are encoded whole, not split</td></tr>
+        <tr><td>Normalisation</td><td>L2 — every vector is scaled to unit length, so similarity is plain cosine</td></tr>
+        <tr><td>Revision</td><td>pinned at install time, and recorded inside every knowledge model</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Every knowledge model carries the vectors this encoder produced, in its
+      <code>base</code> band. Cross-model search and <code>rlat compare</code>
+      always operate on these vectors — which is the reason the recipe is
+      locked. Two knowledge models built with the same revision are directly
+      comparable; a per-build encoder choice would break that.
+    </p>
+  </section>
+
+  <section id="installation">
+    <div class="section-num">02 — Installation</div>
+    <h2>Installing the encoder</h2>
+    <p>
+      The encoder is <strong>not</strong> bundled in the pip package — it is
+      downloaded and converted on first use. You install it once per machine.
+    </p>
+
+    <h3 id="automatic">Automatic</h3>
+    <p>
+      The first time you run <code>rlat build</code>,
+      the encoder installs itself. You do not need to do anything.
+    </p>
+    <pre><code>pip install rlat[build]
+rlat build ./docs -o docs.rlat
+# First run: downloads ~700 MB and converts. Later runs reuse the cache.</code></pre>
+
+    <h3 id="manual">Manual</h3>
+    <p>For offline environments, CI runners, or pre-staging a build host:</p>
+    <pre><code>pip install rlat[build]
+rlat install-encoder</code></pre>
+    <p>
+      This downloads the Hugging Face weights, exports them to ONNX, and — on
+      Intel CPUs that have the <code>openvino</code> package available — also
+      converts them to OpenVINO IR.
+    </p>
+
+    <h3 id="pinning-a-revision">Pinning a specific revision</h3>
+    <pre><code>rlat install-encoder --revision 1c7b39da7c5a3f0c92c11d6f5cb6a6e7a3e84c2f</code></pre>
+    <p>
+      You can pass any Hugging Face ref — a commit hash, a branch name, or a
+      tag. Symbolic refs are resolved to a concrete commit hash before caching,
+      so <code>--revision main</code> and <code>--revision &lt;that-hash&gt;</code>
+      land in the same cache directory.
+    </p>
+
+    <h3 id="reinstalling">Reinstalling after a corrupted cache</h3>
+    <p>If a download was interrupted or cache files were modified:</p>
+    <pre><code>rlat install-encoder --force</code></pre>
+    <p>This regenerates everything in place.</p>
+  </section>
+
+  <section id="cache-location">
+    <div class="section-num">03 — The cache</div>
+    <h2>Cache location</h2>
+    <p>The encoder is stored under:</p>
+    <ul class="checklist">
+      <li><strong>Linux / macOS</strong> — <code>~/.cache/rlat/encoders/&lt;revision&gt;/</code></li>
+      <li><strong>Windows</strong> — <code>%USERPROFILE%\.cache\rlat\encoders\&lt;revision&gt;\</code></li>
+    </ul>
+    <p>
+      <code>$XDG_CACHE_HOME</code> is honoured when it is set. You can safely
+      delete the cache; the next <code>rlat build</code> or explicit
+      <code>rlat install-encoder</code> re-creates it.
+    </p>
+
+    <h3 id="whats-in-the-cache">What's in the cache</h3>
+    <p>After a successful install, the revision directory contains:</p>
+    <pre><code>&lt;revision&gt;/
+├── revision.txt          # the pinned HF commit hash
+├── tokenizer.json        # tokenizer used at query time
+├── model.onnx            # ONNX export
+├── torch/                # HuggingFace snapshot (used by build paths)
+└── openvino/             # OpenVINO IR (only on Intel CPUs)</code></pre>
+    <p>
+      The directory name <strong>is</strong> the revision hash. That matters
+      because builds record <code>backbone.revision</code> in
+      <code>metadata.json</code> — a knowledge model built today is
+      byte-comparable to one built tomorrow on a different machine, as long as
+      the revision matches.
+    </p>
+  </section>
+
+  <section id="inference-runtime">
+    <div class="section-num">04 — Runtime selection</div>
+    <h2>Inference runtime</h2>
+    <p>
+      The <em>runtime</em> is the engine that actually runs the encoder. rlat
+      picks it automatically, based on what is installed and what hardware is
+      present:
+    </p>
+    <table class="compact">
+      <thead><tr><th>Your system</th><th>Runtime used</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Intel CPU + <code>openvino</code> installed</td><td>OpenVINO Runtime</td><td>1.5–2× faster than ONNX on Intel, via AVX-512 + OpenMP</td></tr>
+        <tr><td>Other CPU (AMD, ARM, Apple Silicon)</td><td>ONNX Runtime</td><td>2–4× faster than PyTorch on CPU</td></tr>
+        <tr><td>NVIDIA GPU + <code>[gpu]</code> extra installed</td><td>ONNX Runtime (CUDA provider)</td><td>Auto-preferred for build-time batch encoding; helps the query path on very large batches</td></tr>
+        <tr><td><code>rlat build</code></td><td>PyTorch</td><td>Build paths need the transformers forward pass; auto-uses CUDA when available</td></tr>
+      </tbody>
+    </table>
+    <p>
+      You <strong>do not normally choose</strong>. The runtime is a function of
+      what is installed and what hardware is available, and no flag exposes it
+      on the search path. If the OpenVINO IR is not in the cache — say you
+      pre-staged on an AMD host and copied the cache to an Intel host — rlat
+      falls back to ONNX automatically. You keep working, just without the
+      Intel speedup.
+    </p>
+
+    <h3 id="nvidia-gpu">NVIDIA GPU (CUDA)</h3>
+    <p>If you have NVIDIA hardware:</p>
+    <pre><code>pip install rlat[build,gpu]
+rlat install-encoder</code></pre>
+    <p>
+      The <code>[gpu]</code> extra installs <code>onnxruntime-gpu</code>, which
+      exposes the CUDA execution provider. rlat's ONNX path discovers the
+      available providers at load time and prefers CUDA when it is present. For
+      <code>rlat build</code>, the PyTorch path
+      also checks for CUDA and lands the model on the GPU when it can.
+    </p>
+    <div class="callout callout-note">
+      <span class="callout-tag">Query-time GPU</span>
+      <p>For a single query — one text, ~30 tokens — the cost of copying data
+      to the GPU usually outweighs the compute, so CPU runtimes win. CUDA
+      shines on <em>batch</em> encoding: build paths, anything
+      encoding a corpus or many queries at once. The auto-selector never picks
+      the PyTorch runtime for queries, for two reasons: it tends to be slower
+      than ONNX or OpenVINO on single-query work, and <code>torch</code> lives
+      in the optional <code>[build]</code> extra so it cannot be assumed
+      present.</p>
+    </div>
+    <div class="callout callout-warn">
+      <span class="callout-tag">Watch out</span>
+      <p><strong><code>[build]</code> alone is not enough for query-time CUDA.</strong>
+      With <code>[build]</code> you get a PyTorch path that auto-uses CUDA
+      <em>for builds</em>. Query-time searches still go through the
+      auto-selected ONNX path, which on a CPU-only <code>onnxruntime</code>
+      install runs on CPU regardless of whether PyTorch sees a GPU. To get
+      query-time CUDA, install <code>[gpu]</code> as well so the ONNX path picks
+      up the CUDA provider.</p>
+    </div>
+    <p>If you want the PyTorch runtime explicitly, from Python:</p>
+    <pre><code>from resonance_lattice.field.encoder import Encoder
+enc = Encoder(runtime="torch")  # requires the [build] extra; uses CUDA if available</code></pre>
+
+    <h3 id="when-openvino-is-unavailable">When OpenVINO is unavailable</h3>
+    <p>
+      <code>openvino</code> ships in the <code>[build]</code> extra. If you
+      installed plain <code>rlat</code> with no extras, the OpenVINO path is
+      unavailable and rlat uses ONNX everywhere. That is fine for query-time
+      use — you only need <code>[build]</code> to actually build
+      knowledge models.
+    </p>
+  </section>
+
+  <section id="why-its-locked">
+    <div class="section-num">05 — The single-recipe decision</div>
+    <h2>Why it's locked</h2>
+    <p>
+      One encoder, one configuration, no knobs. The reason is the
+      <code>base</code> band: cross-knowledge-model search and
+      <code>rlat compare</code> only work if every model's vectors are
+      byte-comparable. A per-build encoder choice — a different backbone, a
+      different pooling, a projection knob — would produce vectors that cannot
+      be compared, and the comparison would silently return meaningless
+      numbers.
+    </p>
+    <p>
+      Encoder presets, pooling toggles, and projection knobs were measured
+      across BEIR-5 and LongMemEval and dropped. A single locked recipe matches
+      or beats the tuned alternatives while keeping every knowledge model
+      mutually comparable — see the benchmarks page.
+    </p>
+  </section>
+
+  <section id="troubleshooting">
+    <div class="section-num">06 — Troubleshooting</div>
+    <h2>Troubleshooting</h2>
+    <ul class="checklist x">
+      <li><strong>"No encoder cache at …"</strong> — you have not run
+      <code>rlat install-encoder</code> yet, and it has never been triggered
+      automatically. Run it.</li>
+      <li><strong>"OpenVINO IR not found in …"</strong> — the OpenVINO runtime
+      was requested explicitly but the IR is not in the cache. Either install on
+      an Intel host with the <code>openvino</code> package, or omit the explicit
+      runtime so the auto-fallback to ONNX kicks in.</li>
+      <li><strong>Slow first query after a long idle</strong> — that is the
+      lazy load: the tokenizer and runtime only initialise on the first
+      <code>encode()</code> call. Subsequent calls reuse the cached state.</li>
+      <li><strong>Need a different encoder?</strong> — there isn't one. The
+      recipe is locked so every knowledge model stays mutually comparable.</li>
+    </ul>
+  </section>
+
+  <section id="next">
+    <h2>Where to go next</h2>
+    <div class="next">
+      <a href="storage-modes.html">
+        <span class="next-label">Related</span><br>
+        <span class="next-title">Storage modes</span>
+      </a>
+      <a href="getting-started.html">
+        <span class="next-label">Back to</span><br>
+        <span class="next-title">Getting started</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-05-16 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

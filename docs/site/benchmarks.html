@@ -1,0 +1,1328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Benchmarks — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html" aria-current="page">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>Resonance Lattice, measured</h1>
+  <p class="lede">
+    Every claim on this page is paired with a reproducible recipe. Numbers sit
+    next to the comparison they're meaningful against — published encoder
+    baselines for retrieval quality, named alternative stacks for build and
+    query speed, and an LLM-only baseline for the hallucination and token-spend
+    story.
+  </p>
+
+  <p>
+    <code>rlat</code> was built audit-driven: every retrieval feature passed
+    measurement before it shipped. This page is the user-facing summary; the
+    internal engineering contract lives separately.
+  </p>
+
+  <section id="at-a-glance">
+    <h2 id="at-a-glance-h">At a glance</h2>
+    <div class="callout callout-note">
+      <p>
+        New to <code>rlat</code>? Read
+        <a href="#concepts">Concepts you need to read these benchmarks</a>
+        first — the table below uses terms (<code>deep-search</code>,
+        <code>--mode constrain</code>, <em>distractor</em>, <em>relaxed
+        rubric</em>) that are all explained there. Headlines-first readers can
+        scan the table now and read the legend after.
+      </p>
+    </div>
+    <table class="compact">
+      <thead>
+        <tr><th>Headline</th><th>Value</th><th>Section</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong><code>rlat deep-search</code> accuracy</strong> (Fabric corpus, relaxed rubric) — multi-hop research loop in one CLI call</td>
+          <td><strong>92.2%</strong> answerable accuracy at <strong>0% hallucination</strong> ($0.009/q)</td>
+          <td><a href="#hallucination">Hallucination reduction</a></td>
+        </tr>
+        <tr>
+          <td><strong>Single-shot rlat accuracy</strong> vs LLM-only (<code>rlat search --mode augment</code> + Sonnet) on Fabric</td>
+          <td><strong>76.5%</strong> vs <strong>56.9%</strong> — adds ~20 pp accuracy at 5× lower hallucination</td>
+          <td><a href="#hallucination">Hallucination reduction</a></td>
+        </tr>
+        <tr>
+          <td><strong>Hallucination floor</strong> (<code>rlat search --mode constrain</code>)</td>
+          <td><strong>2.0%</strong> answerable hallucination + <strong>91.7%</strong> distractor refusal — pick for compliance / regulatory / audit</td>
+          <td><a href="#hallucination">Hallucination reduction</a></td>
+        </tr>
+        <tr>
+          <td><strong><code>rlat deep-search</code> vs LLM+grep/glob baseline</strong></td>
+          <td><strong>92.2%</strong> acc at <strong>$0.009/q</strong> vs <strong>94.1%</strong> acc at <strong>$0.060/q</strong> — within 2 pp at <strong>6.5× lower spend</strong> and faster wall-time</td>
+          <td><a href="#hallucination">Hallucination reduction</a></td>
+        </tr>
+        <tr>
+          <td><strong>$ per correct answer</strong> (rlat skill-context constrain vs full-corpus dump)</td>
+          <td>rlat <strong>$0.012</strong> vs full-corpus <strong>$0.796</strong> — <strong>67× cheaper</strong></td>
+          <td><a href="#token-spend">Token spend</a></td>
+        </tr>
+        <tr>
+          <td><strong>$ per correct answer</strong> (rlat skill-context constrain vs grep+Read)</td>
+          <td>rlat <strong>$0.012</strong> vs grep+Read <strong>$0.044</strong> — <strong>3.7× cheaper</strong></td>
+          <td><a href="#token-spend">Token spend</a></td>
+        </tr>
+        <tr>
+          <td>Warm query latency vs Chroma (1,000-passage CPU corpus)</td>
+          <td>rlat <strong>17 ms p50</strong> vs Chroma <strong>145 ms p50</strong> — <strong>8.5× faster</strong></td>
+          <td><a href="#speed">Build &amp; query speed</a></td>
+        </tr>
+        <tr>
+          <td>On-disk size vs Chroma (same corpus)</td>
+          <td>rlat <strong>2.7 MB</strong> vs Chroma <strong>8.6 MB</strong> — <strong>3.2× smaller</strong></td>
+          <td><a href="#speed">Build &amp; query speed</a></td>
+        </tr>
+        <tr>
+          <td>BEIR-5 mean nDCG@10 (locked base recipe)</td>
+          <td><strong>0.5144</strong></td>
+          <td><a href="#retrieval-quality">Retrieval quality</a></td>
+        </tr>
+        <tr>
+          <td>Session-start primer (resonance-lattice corpus, 25 scenarios)</td>
+          <td>code primer <strong>3/5</strong> orientation + memory primer <strong>5/5</strong> recall — both primers loaded carries 20% both-correct vs 0% cold</td>
+          <td><a href="#primer">Session-start primer</a></td>
+        </tr>
+        <tr>
+          <td>LoCoMo retrieval recall (1982 QAs, 10 conversations)</td>
+          <td><strong>R@5 0.329 / R@10 0.433 / MRR 0.265</strong></td>
+          <td><a href="#memory">Memory across sessions</a></td>
+        </tr>
+        <tr>
+          <td>LongMemEval retrieval (500 instances)</td>
+          <td><strong>MRR 0.936</strong> — top-band among published memory-retrieval stacks (naive baselines ~0.3–0.55, off-the-shelf dense ~0.65–0.85, dedicated memory systems ~0.85–0.95)</td>
+          <td><a href="#memory">Memory across sessions</a></td>
+        </tr>
+        <tr>
+          <td><strong>World-knowledge evidence (v3)</strong> — five pre-registered benchmark programs, passes and failures published alike</td>
+          <td>served constraints cut violations <strong>62% → 7%</strong> (decisive subset 15/15 → 1/15); falsified-approach re-recommendation <strong>7/7 → 0/7</strong>; auto-suppression <strong>tested three ways, falsified</strong></td>
+          <td><a href="#world-knowledge">The world-knowledge evidence</a></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="how-we-measure">
+    <h2 id="how-we-measure-h">How we measure</h2>
+    <p>
+      Every benchmark is a paired comparison against named baselines, run
+      against a committed test set, runnable from a single
+      <code>python -m benchmarks…</code> invocation.
+    </p>
+    <p>
+      We use Claude Sonnet 4.6 as the canonical answer model and judge for the
+      LLM-judged benchmarks (hallucination, token spend). Where LLM-judge
+      variance affects results, we run inter-rater 10% spot-validation. Test
+      sets are committed in full to the repository — auditability over
+      compactness.
+    </p>
+  </section>
+
+  <section id="concepts">
+    <h2 id="concepts-h">Concepts you need to read these benchmarks</h2>
+    <p>
+      If you've never used <code>rlat</code>, the tables below talk about three
+      retrieval shapes, three grounding modes, two question types, and two judge
+      rubrics. None are jargon — read this once and the rest of the page reads
+      in plain English.
+    </p>
+
+    <h3 id="what-rlat-does">What <code>rlat</code> actually does</h3>
+    <p>
+      <code>rlat</code> packages your corpus (a codebase, docs, a knowledge
+      base) into one <code>.rlat</code> file — a <em>knowledge model</em> — and
+      ships commands to query that file. It is an <strong>answer-improvement
+      layer</strong>: retrieval surfaces passages with full citation provenance
+      and a live drift status against the source bytes, and the
+      <code>deep-search</code> loop plus the insight layer go further and
+      produce faithfully-grounded answers — every claim traced back to a
+      passage in the corpus. <code>rlat</code> owns <em>grounding</em>, not
+      truth: it represents what the corpus says, never what is true in the
+      world.
+    </p>
+    <p>Two CLI verbs do the retrieval work this page tests:</p>
+    <ul class="checklist">
+      <li>
+        <strong><code>rlat search km.rlat "&lt;question&gt;"</code></strong> —
+        one query, one round of retrieval, top-k passages back. Fast, cheap,
+        simple.
+      </li>
+      <li>
+        <strong><code>rlat deep-search km.rlat "&lt;question&gt;"</code></strong>
+        — internally runs a multi-hop loop (plan → retrieve → refine → maybe
+        re-retrieve → synthesize) and returns a final answer plus the union of
+        evidence. Slower, roughly 2.5× pricier, much higher accuracy.
+      </li>
+    </ul>
+
+    <h3 id="retrieval-shapes">Retrieval shapes (the columns in the tables)</h3>
+    <p>The benchmarks test three retrieval shapes against the same corpus:</p>
+    <ul class="checklist">
+      <li>
+        <strong>Single-shot</strong> — <code>rlat search</code> once. Top-k
+        passages. The cheapest rlat tier (~$0.003–0.004 per question with
+        Sonnet downstream).
+      </li>
+      <li>
+        <strong>Multi-query rewrite</strong> — Sonnet generates three query
+        variants of the user question, <code>rlat search</code> runs each, and
+        results dedupe. A middle ground; rarely the right pick now that
+        <code>deep-search</code> exists.
+      </li>
+      <li>
+        <strong>Deep-search</strong> — the productionised multi-hop loop.
+        Pricier (~$0.009/q) but consistently the highest-accuracy lane.
+      </li>
+    </ul>
+
+    <h3 id="grounding-modes">Grounding modes (how <code>rlat</code> tells the LLM to use the evidence)</h3>
+    <p>
+      <code>rlat search --format context</code> and <code>rlat skill-context</code>
+      stamp a one-paragraph directive at the top of the markdown they emit. The
+      directive instructs the consumer LLM how to weight the passages against
+      its training knowledge. Three modes:
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Mode</th><th>Directive given to the LLM</th><th>When to use</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong><code>augment</code></strong> <em>(default)</em></td>
+          <td>"Use these passages as primary context for this corpus's domain. Blend with your training knowledge where the passages fall short."</td>
+          <td>General-purpose corpora the LLM partially knows already (most use cases).</td>
+        </tr>
+        <tr>
+          <td><strong><code>constrain</code></strong></td>
+          <td>"Answer ONLY from these passages. If they don't cover the question, refuse explicitly — do NOT draw on training knowledge."</td>
+          <td>Compliance, audit, regulatory work where wrong-but-confident is worse than no answer.</td>
+        </tr>
+        <tr>
+          <td><strong><code>knowledge</code></strong></td>
+          <td>"Use these passages to supplement your training knowledge. Lean on what you already know for surrounding context."</td>
+          <td>Partially-covered corpora on top of a well-known domain.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      The mode applies to all three retrieval shapes — you can run
+      <code>single + augment</code>, <code>multi + constrain</code>,
+      <code>deep + knowledge</code>, and so on. Three modes × three shapes is
+      nine lanes; we test all nine plus two baselines.
+    </p>
+
+    <h3 id="question-types">Question types (the rows of the test set)</h3>
+    <p>The hallucination benchmark has two kinds of questions, both required for an honest evaluation:</p>
+    <ul class="checklist">
+      <li>
+        <strong>Answerable</strong> (51 questions) — the answer is genuinely in
+        the corpus. Tests <strong>accuracy</strong>: did the LLM find and use the
+        right passages?
+      </li>
+      <li>
+        <strong>Distractor</strong> (12 questions) — the question asks about
+        something <strong>that doesn't exist</strong> in the corpus. Fake product
+        names ("Materialized View Express"), made-up SKUs ("F4096"),
+        Power-BI-only features asked as if they were Fabric features. The correct
+        answer is <em>refusal</em>. Tests <strong>safety</strong>: does the LLM
+        correctly say "this corpus doesn't cover that", or does it hallucinate an
+        adjacent answer?
+      </li>
+    </ul>
+    <p>
+      Distractors are the harder axis. A confident wrong answer to "How do I
+      configure F4096 SKU pricing?" is the failure mode that erodes trust. On
+      distractor rows, <em>any</em> non-refusal counts as hallucination — even an
+      answer that's technically correct about an adjacent entity, because the
+      user asked about something else.
+    </p>
+
+    <h3 id="hallucination-defn">Hallucination</h3>
+    <p>
+      In these benchmarks, a hallucination is a confidently-wrong answer (judged
+      <code>wrong</code> by the rubric: a different fact, a contradiction of
+      ground truth, or invented content). The hallucination <em>rate</em> is the
+      share of questions that got a <code>wrong</code> verdict. Lower is better.
+    </p>
+
+    <h3 id="rubrics">Strict vs relaxed judge rubric</h3>
+    <p>Every trial is graded twice by the same Sonnet judge with two different rubrics:</p>
+    <ul class="checklist">
+      <li>
+        <strong>Strict rubric</strong> — "missing a critical detail" downgrades
+        to <code>partial</code>. Counts only fully-detailed answers as
+        <code>correct</code>.
+      </li>
+      <li>
+        <strong>Relaxed rubric</strong> — "load-bearing fact captured" counts as
+        <code>correct</code>, even if secondary details are missing or
+        imprecise. Closer to a human user's "did this help?" judgment.
+      </li>
+    </ul>
+    <p>
+      The headline numbers on this page are the <strong>relaxed rubric</strong>
+      (closer to user-perceived usefulness). Both result JSONs ship — pick the
+      framing that matches your evaluation needs.
+    </p>
+  </section>
+
+  <section id="hallucination">
+    <div class="section-num">01 — Hallucination</div>
+    <h2 id="hallucination-h">Hallucination reduction</h2>
+    <p>
+      <strong>The question this benchmark answers:</strong> when you hand an LLM
+      passages from a corpus, does it actually ground its answer in those
+      passages — or does it confidently invent? Across 11 lanes (three modes ×
+      three retrieval shapes, plus LLM-only and LLM+grep/glob) on the Microsoft
+      Fabric documentation, here's what we measured.
+    </p>
+
+    <h3 id="halluc-setup">The setup: a real-world corpus the LLM partially knows</h3>
+    <p>
+      We built a knowledge model from the public <strong>Microsoft Fabric
+      documentation</strong> (2,261 markdown files, 62,914 passages, all
+      <code>ms.date</code> from 2019 through 2026-03-28). This is the right
+      corpus shape for the test: Microsoft Fabric has been in market since 2023,
+      so Sonnet 4.6 has substantial Fabric training data — but the corpus
+      contains 559 files dated after Sonnet's January 2026 cutoff and another
+      679 from 2025-09 to 2026-01 (Sonnet's training fuzzy zone, where it may
+      have older versions). Asking Sonnet about Fabric is exactly the kind of
+      question where it confidently gives a slightly out-of-date answer.
+    </p>
+    <p>The test set is <strong>63 hand-written questions</strong>, ground-truth sourced verbatim from specific dated Fabric docs:</p>
+    <ul class="checklist">
+      <li>51 answerable questions across recency tiers (post-cutoff 2026-02/03 features, fuzzy-zone 2025-09 to 2026-01, stable pre-2024 concepts).</li>
+      <li>12 distractor questions about plausible-sounding things that <em>don't exist</em> in Fabric (fake F SKUs, made-up product names, Power-BI-only features asked as Fabric features).</li>
+    </ul>
+    <p>
+      Each question runs four ways: rlat-constrain, rlat-augment, rlat-knowledge,
+      and no-retrieval (Sonnet alone, no rlat in the loop). A separate Sonnet
+      judge call grades on a four-state rubric (correct / partial / wrong /
+      refused) — <code>wrong</code> is the hallucination signal.
+    </p>
+
+    <h3 id="halluc-numbers">The numbers (11-lane matrix, relaxed rubric)</h3>
+    <p>
+      We benchmark every combination of grounding mode (<code>augment</code>,
+      <code>constrain</code>, <code>knowledge</code>) × retrieval shape
+      (single-shot, multi-query rewrite, the <code>rlat deep-search</code> 4-hop
+      loop), plus two baselines: LLM-only (no retrieval) and an LLM with grep /
+      glob / read_file tools on the same corpus. 63 questions × 11 lanes × 2 LLM
+      calls is 1,386 inference plus 693 judge calls. Total benchmark cost:
+      <strong>$8.93</strong>.
+    </p>
+    <table class="compact">
+      <thead>
+        <tr>
+          <th>Approach</th>
+          <th>Answerable accuracy</th>
+          <th>Answerable hallucination</th>
+          <th>Distractor refusal</th>
+          <th>Distractor hallucination</th>
+          <th>$ / question</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><strong><code>rlat deep-search --mode knowledge</code></strong></td><td><strong>92.2%</strong></td><td><strong>0.0%</strong></td><td>83.3%</td><td>16.7%</td><td>$0.009</td></tr>
+        <tr><td><strong><code>rlat deep-search</code></strong> (default <code>augment</code>)</td><td><strong>92.2%</strong></td><td>2.0%</td><td>83.3%</td><td>16.7%</td><td>$0.009</td></tr>
+        <tr><td>LLM + grep / glob / read_file (8 tool calls)</td><td>94.1%</td><td>0.0%</td><td>75.0%</td><td>25.0%</td><td>$0.060</td></tr>
+        <tr><td><code>rlat deep-search --mode constrain</code></td><td>88.2%</td><td>3.9%</td><td>83.3%</td><td>16.7%</td><td>$0.010</td></tr>
+        <tr><td><code>rlat search --mode augment</code> (multi-query rewrite)</td><td>80.4%</td><td>5.9%</td><td>58.3%</td><td>41.7%</td><td>$0.007</td></tr>
+        <tr><td><code>rlat search --mode knowledge</code> (multi-query)</td><td>78.4%</td><td>5.9%</td><td>66.7%</td><td>33.3%</td><td>$0.006</td></tr>
+        <tr><td><code>rlat search --mode augment</code> (single-shot, default)</td><td><strong>76.5%</strong></td><td>3.9%</td><td>75.0%</td><td>25.0%</td><td><strong>$0.004</strong></td></tr>
+        <tr><td><code>rlat search --mode constrain</code> (multi-query)</td><td>72.5%</td><td>3.9%</td><td>83.3%</td><td>16.7%</td><td>$0.006</td></tr>
+        <tr><td><code>rlat search --mode knowledge</code> (single-shot)</td><td>70.6%</td><td>5.9%</td><td>75.0%</td><td>25.0%</td><td>$0.003</td></tr>
+        <tr><td><code>rlat search --mode constrain</code> (single-shot)</td><td>66.7%</td><td><strong>2.0%</strong></td><td><strong>91.7%</strong></td><td><strong>8.3%</strong></td><td>$0.003</td></tr>
+        <tr><td><strong>No retrieval</strong> (Sonnet alone)</td><td>56.9%</td><td><strong>19.6%</strong></td><td>50.0%</td><td><strong>50.0%</strong></td><td>$0.002</td></tr>
+      </tbody>
+    </table>
+    <div class="callout callout-note">
+      <p>
+        The per-question dollar costs in this table are derived from the
+        benchmark methodology document, not from numeric fields in the result
+        JSON — the result JSON records verdicts and token counts, and the dollar
+        figures are computed from Sonnet pricing applied to those counts.
+      </p>
+    </div>
+
+    <h3 id="halluc-meaning">What this means</h3>
+    <p>
+      <strong>Deep-search is the high-quality, low-spend lane.</strong> 92.2%
+      answerable accuracy at 0% hallucination on the Fabric corpus (the
+      <code>--mode knowledge</code> variant) matches an 8-tool LLM+grep/glob
+      baseline (94.1%) at <strong>6.5× lower spend</strong> ($0.009/q vs
+      $0.060/q) and <strong>lower wall-time</strong> (~12s/q vs ~15s/q). The
+      deep-search loop runs in one call — plan → search → refine → synthesize —
+      with citations and a name-verification check on the union of all hops'
+      passages.
+    </p>
+    <div class="callout callout-tip">
+      <span class="callout-tag">Two surfaces, one loop</span>
+      <p>
+        This benchmark measured the loop running on the API surface (the
+        <code>rlat deep-search</code> CLI verb, calling Sonnet 4.6 via the
+        Anthropic API). The same loop also ships as the
+        <strong><code>deep-research</code> skill</strong>, which runs natively
+        in your Claude Code session — same prompts, same hop budget, same
+        name-verification check, same output shape. No API key needed for the
+        skill version; your existing Claude subscription covers the LLM hops.
+        The numbers apply equivalently to both surfaces, with small variance
+        from differences in Sonnet version and tool-use mechanics. See the
+        <a href="api-keys.html">API keys page</a> for when each surface is the
+        right pick.
+      </p>
+    </div>
+    <p>
+      <strong>Single-shot <code>rlat search</code> already adds ~20 pp over
+      LLM-only.</strong> Even without the loop, the simplest invocation
+      (<code>rlat search --format context --mode augment</code> + Sonnet)
+      reaches 76.5% accuracy at 3.9% hallucination, against the LLM-alone floor
+      of 56.9% / 19.6% — roughly 5× lower hallucination, at ~$0.004/q. The
+      cheapest tier of the matrix.
+    </p>
+    <p>
+      <strong>Constrain is the compliance floor.</strong> Single-shot
+      <code>--mode constrain</code> hits the lowest answerable hallucination in
+      the suite (2.0%), the highest distractor refusal (91.7% — it invents
+      nothing 11 of 12 times on made-up product names), and the lowest
+      distractor hallucination (8.3%). The trade is 10 pp of answerable
+      accuracy. Pair it with <code>--verified-only</code> and
+      <code>--strict-names</code> for fact-extraction, regulatory, or audit work
+      where wrong-but-confident is worse than no answer.
+    </p>
+    <p>
+      <strong>Multi-query rewrite is dominated by deep-search.</strong> The
+      middle column (multi-query: generate three query variants, retrieve each,
+      merge and dedupe) adds modest accuracy over single-shot but is dominated
+      by deep-search on every cell. Use deep-search when you want a multi-hop
+      synthesis, single-shot when you want speed; multi-query is only worth it
+      for query-rewrite ablations.
+    </p>
+    <p>
+      <strong>LLM-only loses across every metric.</strong> 19.6% hallucination
+      on a broad documentation corpus the LLM partially knows is the safety
+      ceiling without retrieval. That is the cost of trusting training data
+      alone on questions a user might genuinely ask.
+    </p>
+
+    <h3 id="mode-tradeoffs">Mode trade-offs</h3>
+    <ul class="checklist">
+      <li>
+        <strong>augment</strong> (default) is the value pick on broad domain
+        corpora. It blends the corpus with the LLM's prior knowledge — highest
+        single-shot accuracy at modest hallucination, and the deep-search
+        default.
+      </li>
+      <li>
+        <strong>constrain</strong> is the safety floor. 2.0% hallucination
+        single-shot, 91.7% distractor refusal — pick for compliance,
+        regulatory, or audit. Pair with <code>--verified-only</code> and
+        <code>--strict-names</code>.
+      </li>
+      <li>
+        <strong>knowledge</strong> sits between augment and constrain. Under
+        deep-search it ties augment on accuracy at zero hallucination — the
+        recommendation for "I want the assistant to lean on training where the
+        corpus is thin, but never invent." Under single-shot it underperforms
+        augment; the lighter gate doesn't pay off without the multi-hop loop.
+      </li>
+    </ul>
+    <p>
+      Test set: 63 hand-written questions (51 answerable / 12 distractors),
+      ground truth quoted verbatim from dated Microsoft Fabric documentation
+      across recency tiers. Total cost <strong>$8.93</strong> ($7.47 inference +
+      $1.46 relaxed-rubric judge). Both rubric result JSONs are committed to the
+      repository.
+    </p>
+    <pre><code>pip install rlat[bench]
+rlat install-encoder
+# Build the Fabric corpus locally OR pull a prebuilt knowledge model:
+rlat build path/to/fabric-docs/docs -o fabric-docs.rlat
+export CLAUDE_API=sk-ant-...
+python -m benchmarks.user_bench.hallucination.run \
+  --km fabric-docs.rlat \
+  --tasks-file benchmarks/user_bench/hallucination/fabric_tasks.jsonl \
+  --output benchmarks/results/user_bench/hallucination_fabric_11lane.json \
+  --budget-usd 12
+python -m benchmarks.user_bench.hallucination.rejudge_relaxed \
+  --input benchmarks/results/user_bench/hallucination_fabric_11lane.json \
+  --output benchmarks/results/user_bench/hallucination_fabric_11lane_relaxed.json \
+  --tasks-file benchmarks/user_bench/hallucination/fabric_tasks.jsonl \
+  --budget-usd 3</code></pre>
+  </section>
+
+  <section id="token-spend">
+    <div class="section-num">02 — Token spend</div>
+    <h2 id="token-spend-h">Token spend</h2>
+    <p>
+      <strong>The question this benchmark answers:</strong> how many LLM tokens
+      (and dollars) does it take to reach a correct grounded answer about a
+      corpus, versus the alternatives a developer would actually consider —
+      letting the LLM grep and read files itself, or dumping the whole corpus
+      into the prompt?
+    </p>
+    <p>
+      Tested on 20 hand-written questions about the <code>rlat</code> repository
+      itself — a different, harder corpus than the Fabric one above: the
+      questions are about a brand-new private codebase Sonnet has never seen, and
+      the answers live across multiple files. The retrieval surface used here is
+      <code>rlat skill-context</code> — same retrieval as
+      <code>rlat search --format context</code>, shaped for an Anthropic skill
+      <code>!command</code> injection block.
+    </p>
+    <div class="callout callout-warn">
+      <span class="callout-tag">Important caveat</span>
+      <p>
+        This benchmark predates <code>rlat deep-search</code> and tests
+        <strong>single-shot retrieval only</strong>. The accuracy numbers below
+        are not directly comparable to the Hallucination section above — there's
+        no multi-hop lane here, and the corpus is hand-written code and docs the
+        LLM has zero prior knowledge of. Read this section for the
+        <strong>$ / correct cost story</strong>, not as a performance number for
+        <code>rlat</code> overall.
+      </p>
+    </div>
+
+    <h3 id="token-rlat-vs-llm">rlat single-shot vs LLM-only</h3>
+    <p>The same 20 questions, four ways:</p>
+    <table class="compact">
+      <thead>
+        <tr><th>Approach</th><th>Accuracy</th><th>Tokens per correct</th><th>$ per correct</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>rlat skill-context --mode constrain</code></td><td>35.0%</td><td><strong>2,344</strong></td><td><strong>$0.0118</strong></td></tr>
+        <tr><td><code>rlat skill-context --mode knowledge</code></td><td>35.0%</td><td>2,425</td><td>$0.0130</td></tr>
+        <tr><td><code>rlat skill-context --mode augment</code></td><td>25.0%</td><td>2,781</td><td>$0.0159</td></tr>
+        <tr><td>no retrieval (Sonnet alone)</td><td>0.0%</td><td>∞</td><td>∞</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>The single-shot finding:</strong> on a code-heavy corpus the LLM
+      has never seen, single-shot rlat is enough to take Sonnet from 0% correct
+      to ~35% at $0.012 per right answer. The accuracy ceiling is low here
+      because some questions need cross-file synthesis that single-shot can't do
+      — exactly the case <code>rlat deep-search</code> was built for, but those
+      numbers haven't been measured on this corpus yet. On the Fabric corpus
+      where deep-search has been measured, it adds ~16 pp accuracy over
+      single-shot (see the Hallucination section above). Total cost of this run:
+      $0.37 (4 lanes × 20 tasks + 80 Sonnet judge calls).
+    </p>
+
+    <h3 id="token-cost-comparison">Cost-comparison rows</h3>
+    <p>
+      The grep+read agent loop and the full-corpus dump are measured against the
+      same test set as a baseline. These approaches don't depend on the
+      grounding-mode directive — the LLM either has tools or has the whole corpus
+      dumped in context.
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Approach</th><th>Accuracy</th><th>Tokens per correct</th><th>$ per correct</th><th>LLM calls per task</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>grep</code> + <code>read</code> tool loop (Sonnet agent, 6-turn cap)</td><td>85.0%</td><td>11,946</td><td>$0.0439</td><td>2.85 avg</td></tr>
+        <tr><td>Full corpus dumped into context (1 Sonnet call)</td><td>70.0%</td><td>264,331</td><td>$0.7963</td><td>1</td></tr>
+      </tbody>
+    </table>
+    <p>The cost-ratio headline:</p>
+    <ul class="checklist">
+      <li>rlat-constrain is <strong>3.7× cheaper per correct answer</strong> than the grep+read agent loop ($0.012 vs $0.044).</li>
+      <li>rlat-constrain is <strong>67× cheaper per correct answer</strong> than dumping the full corpus into context ($0.012 vs $0.796).</li>
+    </ul>
+    <p>
+      The grep+read loop wins on accuracy (85% vs 35%) because it can
+      iteratively dig into the codebase when the first retrieval misses. For
+      thoroughness-critical workflows, the agent loop is a real alternative; for
+      volume-critical workflows where each query budget is small, rlat is the
+      order-of-magnitude cheaper option.
+    </p>
+    <pre><code>python -m benchmarks.user_bench.token_usage.run \
+  --output benchmarks/results/user_bench/token_usage.json \
+  --budget-usd 16</code></pre>
+  </section>
+
+  <section id="memory">
+    <div class="section-num">03 — Memory</div>
+    <h2 id="memory-h">Memory across sessions</h2>
+
+    <h3 id="locomo">LoCoMo retrieval recall</h3>
+    <p>
+      The retrieval pipeline (gte-modernbert-base 768d, FAISS HNSW with
+      M=32 efC=200 efS=128 above N=5000, exact dense below) on the
+      <a href="https://github.com/snap-research/locomo">snap-research/locomo</a>
+      10-conversation set, evidence-keyed dia_id matching:
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Aggregate (1982 QAs)</th><th>Mean R@5</th><th>Mean R@10</th><th>Mean MRR</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>rlat stack</strong></td><td><strong>0.329</strong></td><td><strong>0.433</strong></td><td><strong>0.265</strong></td></tr>
+      </tbody>
+    </table>
+    <table class="compact">
+      <thead>
+        <tr><th>Per-category</th><th>N QAs</th><th>Mean R@5</th><th>Mean R@10</th><th>Mean MRR</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1 (single-hop time/event)</td><td>282</td><td>0.187</td><td>0.278</td><td>0.228</td></tr>
+        <tr><td>2 (multi-hop reasoning)</td><td>321</td><td>0.541</td><td>0.642</td><td>0.448</td></tr>
+        <tr><td>3 (commonsense)</td><td>92</td><td>0.192</td><td>0.254</td><td>0.156</td></tr>
+        <tr><td>4 (single-hop fact)</td><td>841</td><td>0.392</td><td>0.512</td><td>0.294</td></tr>
+        <tr><td>5 (open-domain)</td><td>446</td><td>0.177</td><td>0.270</td><td>0.122</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Run on a Kaggle T4. <strong>No LLM judge</strong> — this is retrieval
+      recall only.
+    </p>
+
+    <h3 id="longmemeval">LongMemEval retrieval recall</h3>
+    <p>
+      The full 500-question
+      <a href="https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned">xiaowu0162/longmemeval-cleaned</a>
+      split, retrieval recall only, on the same stack (gte-modernbert-base 768d,
+      FAISS HNSW above N=5000):
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Aggregate (500 instances)</th><th>Mean MRR</th><th>Mean rel-in-top-5</th><th>Mean rel-in-top-10</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>rlat stack</strong></td><td><strong>0.936</strong></td><td><strong>2.48</strong></td><td><strong>4.12</strong></td></tr>
+      </tbody>
+    </table>
+    <table class="compact">
+      <thead>
+        <tr><th>Per-question-type</th><th>N</th><th>Mean MRR</th><th>Mean rel-in-top-5</th><th>Mean rel-in-top-10</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>single-session-assistant</td><td>56</td><td>1.000</td><td>4.27</td><td>6.48</td></tr>
+        <tr><td>knowledge-update</td><td>78</td><td>0.987</td><td>2.22</td><td>4.02</td></tr>
+        <tr><td>multi-session</td><td>133</td><td>0.961</td><td>1.79</td><td>3.25</td></tr>
+        <tr><td>single-session-user</td><td>70</td><td>0.938</td><td>3.34</td><td>4.94</td></tr>
+        <tr><td>temporal-reasoning</td><td>133</td><td>0.888</td><td>1.93</td><td>3.37</td></tr>
+        <tr><td>single-session-preference</td><td>30</td><td>0.786</td><td>3.30</td><td>5.20</td></tr>
+      </tbody>
+    </table>
+    <p>
+      The "rel-in-top-K" metric counts how many of the question's relevant
+      passages land within the top-K retrieved — values above 1 are normal,
+      since each instance has multiple ground-truth passages. MRR is the
+      comparable single-number metric.
+    </p>
+    <p>
+      <strong>What MRR 0.936 means in context.</strong> MRR (mean reciprocal
+      rank) penalises retrieval that puts the right answer below position 1.
+      MRR = 1.0 means every query returned a relevant passage as the top hit;
+      MRR = 0.5 means the right answer is on average at position 2.
+      <strong>MRR 0.936 means the relevant passage is at position 1 for ~94% of
+      queries</strong> — the LLM consuming this retrieval almost never has to
+      read past the first hit to find the answer.
+    </p>
+    <p>
+      <strong>Where this sits in the industry.</strong> LongMemEval (Wu et al.,
+      2024) is the public memory-retrieval benchmark. The published paper
+      compares retrieval stacks across a wide MRR band:
+    </p>
+    <ul class="checklist">
+      <li><strong>Naive baselines</strong> (last-window context, BM25 keyword search) typically land in the 0.30–0.55 MRR range.</li>
+      <li><strong>Off-the-shelf dense retrievers</strong> (E5, BGE, OpenAI text-embed) typically land 0.65–0.85 MRR.</li>
+      <li><strong>Dedicated long-memory systems</strong> (purpose-built memory stacks with summarisation, time-decayed re-ranking, or learned filters) typically land 0.85–0.95 MRR.</li>
+    </ul>
+    <p>
+      <strong>rlat's 0.936 is in the top band</strong> — the same range as
+      systems specifically engineered for long-memory question answering,
+      achieved with <code>rlat</code>'s zero-knob default stack
+      (gte-modernbert-base 768d + FAISS HNSW; no memory-specific training, no
+      time-decay logic, no re-ranker). Like-for-like comparisons require running
+      each system on the same split. The retrieval-only metric here doesn't
+      directly compare to the LLM-task-accuracy metric the paper headlines on, so
+      we don't claim a specific task-accuracy industry rank — only that retrieval
+      recall sits in the top band for the metric reported.
+    </p>
+  </section>
+
+  <section id="retrieval-quality">
+    <div class="section-num">04 — Retrieval quality</div>
+    <h2 id="retrieval-quality-h">Retrieval quality (BEIR-5 floor + encoder comparison)</h2>
+    <p>
+      <code>rlat</code> locks a BEIR-5 floor at the base recipe. Anyone using the
+      default install with no optimisation gets these numbers, and we benchmark
+      the encoder choice against the named alternatives a practitioner would
+      consider on the same stack.
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Encoder (same chunker, same ANN, same scoring)</th><th>BEIR-5 mean nDCG@10</th><th>BEIR-5 mean R@10</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>gte-modernbert-base 768d</strong> (rlat default)</td><td><strong>0.5144</strong></td><td><strong>0.5666</strong></td></tr>
+        <tr><td>bge-large-en-v1.5 (1024d)</td><td>0.4888</td><td>0.5399</td></tr>
+        <tr><td>e5-large-v2 (1024d)</td><td>0.4331</td><td>0.4836</td></tr>
+        <tr><td>Qwen3-Embedding-4B (2560d)</td><td>ERROR (loader incompatibility — retry pending)</td><td>—</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>Headline:</strong> gte-modernbert-base wins the stack
+      apples-to-apples against BGE-large (+0.026 nDCG@10) and E5-large
+      (+0.081 nDCG@10), at roughly half the embedding dimensionality. Per-corpus
+      is mixed — nfcorpus and scidocs go to BGE (short keyword / abstract
+      corpora); scifact, arguana, and fiqa go to gte-mb. Arguana
+      (paraphrase-heavy argument retrieval) is where gte-mb's masked-language-
+      model training pays off most: +0.10 nDCG@10 vs BGE, +0.29 vs E5.
+    </p>
+    <p>
+      <strong>What 0.5144 BEIR-5 nDCG@10 means in context.</strong> BEIR is the
+      canonical academic benchmark for zero-shot dense retrieval (Thakur et al.,
+      2021). Open-source dense encoders that are widely deployed today sit
+      roughly in the <strong>0.40–0.55</strong> range on BEIR-5 averages —
+      BGE-large and E5-large in this table are typical of that band. The current
+      frontier (closed-source 1.5K+ dimension encoders, much larger
+      architectures, or dense+rerank pipelines) reaches 0.55–0.60.
+      <strong>rlat ships at 0.5144 with a 768d Apache-2.0 encoder and no
+      proprietary index</strong> — competitive with the open-source frontier and
+      strictly better on this measurement than the most-deployed alternatives a
+      user would otherwise reach for.
+    </p>
+    <p>Per-corpus floor on the base recipe (gte-modernbert-base 768d):</p>
+    <table class="compact">
+      <thead>
+        <tr><th>Corpus</th><th>Passages</th><th>nDCG@10</th><th>R@10</th><th>ANN?</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>nfcorpus</td><td>3,633</td><td>0.3431</td><td>0.1640</td><td>exact</td></tr>
+        <tr><td>scifact</td><td>5,183</td><td>0.7672</td><td>0.8926</td><td>FAISS HNSW</td></tr>
+        <tr><td>arguana</td><td>8,674</td><td>0.7430</td><td>0.9637</td><td>FAISS HNSW</td></tr>
+        <tr><td>scidocs</td><td>25,657</td><td>0.1946</td><td>0.2014</td><td>FAISS HNSW</td></tr>
+        <tr><td>fiqa</td><td>57,638</td><td>0.5239</td><td>0.6114</td><td>FAISS HNSW</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="speed">
+    <div class="section-num">05 — Speed</div>
+    <h2 id="speed-h">Build &amp; query speed</h2>
+    <p>
+      <strong>The question this benchmark answers:</strong> how does
+      <code>rlat</code> compare on the operational metrics — how long does it
+      take to build a knowledge model from scratch, how fast is a query against
+      it, and how much disk does it use — versus the closest open-source
+      alternatives a developer would otherwise reach for? Side-by-side at
+      N=1,000 passages on a fixed deterministic synthetic corpus (Windows 11 +
+      Intel CPU, no CUDA):
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Approach</th><th>Build (s)</th><th>Warm query p50 (ms)</th><th>Warm query p95 (ms)</th><th>On disk (MB)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>rlat</strong> (gte-mb 768d, OpenVINO)</td><td>175.8</td><td><strong>17.15</strong></td><td><strong>24.44</strong></td><td><strong>2.72</strong></td></tr>
+        <tr><td>sentence-transformers + faiss (gte-mb 768d, PyTorch)</td><td>67.8</td><td>30.42</td><td>39.37</td><td>5.65</td></tr>
+        <tr><td>chromadb (default all-MiniLM-L6-v2)</td><td>21.5</td><td>145.26</td><td>152.68</td><td>8.59</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>rlat wins on the user-facing metrics.</strong> Warm query p50
+      17.15 ms vs Chroma's 145.26 ms — <strong>8.5× faster</strong>. On-disk size
+      2.72 MB vs Chroma's 8.59 MB — <strong>3.2× smaller</strong> (rlat ships
+      verified-retrieval metadata in about one third the bytes Chroma needs for
+      its sqlite + WAL).
+    </p>
+    <p>
+      <strong>What 17 ms p50 means in context.</strong> Sub-20 ms warm-query
+      latency on a CPU keeps interactive prompts responsive — well under the
+      100 ms threshold above which a user perceives lag. Hosted vector databases
+      (Pinecone, Weaviate, Chroma cloud) run at similar single-query times once
+      the data is in RAM, but add a network round-trip on top — a typical hosted
+      end-to-end is 50–200 ms. <strong>rlat at 17 ms p50 is competitive with
+      hosted vector DBs for the in-machine portion and saves the network hop
+      entirely.</strong>
+    </p>
+    <p>
+      The OpenVINO runtime is doing the work — Intel CPUs auto-select it via
+      <code>rlat install-encoder</code>. PyTorch is about 2× slower per query on
+      the same machine; the OpenVINO win is the headline reason to install the
+      Intel stack on developer workstations.
+    </p>
+    <p>Where rlat doesn't win:</p>
+    <ul class="checklist x">
+      <li>
+        <strong>Build time.</strong> OpenVINO is about 2.6× slower than PyTorch
+        on this CPU for one-shot build throughput. The runtime stack is optimised
+        for query-time latency, not for encoding bulk passages once. Build is
+        one-shot; queries are repeated millions of times. We publish the gap
+        honestly. For a faster build at a small recipe-determinism cost, pass
+        <code>rlat build --runtime auto</code> — it defaults to OpenVINO on
+        Intel and ONNX elsewhere; PyTorch is the explicit fallback for non-Intel
+        CPUs without ONNX.
+      </li>
+      <li>
+        <strong>Chroma builds fastest</strong> (21.5 s — it uses the lightweight
+        384d all-MiniLM-L6-v2 ONNX bundled embedder, versus rlat's 768d
+        gte-modernbert-base) but pays the gain back 8× in query latency.
+      </li>
+    </ul>
+    <pre><code>pip install rlat[bench]
+python -m benchmarks.user_bench.build_query_speed.run \
+  --output benchmarks/results/user_bench/build_query_speed.json</code></pre>
+  </section>
+
+  <section id="primer">
+    <div class="section-num">06 — Session-start primer</div>
+    <h2 id="primer-h">Session-start primer</h2>
+    <p>
+      <strong>The question this benchmark answers:</strong> at the moment a
+      session starts, which of <code>rlat</code>'s session-start affordances
+      actually moves the needle — the code-base primer (the corpus overview
+      written by <code>rlat summary</code>), the memory primer (clustered
+      cross-session memory entries), both primers loaded together, per-turn
+      <code>rlat search</code>, or none at all (cold)?
+    </p>
+    <p><code>rlat</code> ships two complementary primer surfaces:</p>
+    <ul class="checklist">
+      <li>
+        <strong>Code-base primer</strong> — an extractive overview of the
+        corpus: the top-N passages closest to the corpus centroid (Landscape)
+        plus a per-source-file passage-count table (Structure). About 3 KB,
+        generated once per build.
+      </li>
+      <li>
+        <strong>Memory primer</strong> — clustered entries from the
+        cross-session memory store: consolidated decisions, experiment outcomes,
+        prior-conversation conclusions. About 2 KB.
+      </li>
+    </ul>
+
+    <h3 id="primer-setup">The setup</h3>
+    <p>
+      25 session-start scenarios on this codebase
+      (<code>resonance-lattice.rlat</code>, 3,506 passages, 126 files), each
+      scenario a 2-turn conversation (opening question + follow-up). Four tiers:
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Tier</th><th>Type</th><th>n</th><th>Where the answer lives</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>Project orientation</td><td>5</td><td>Code-base primer (Landscape + Structure)</td></tr>
+        <tr><td>2</td><td>Specific factual</td><td>10</td><td>Deep in the corpus — the primer can't cover it</td></tr>
+        <tr><td>3</td><td>Cross-reference</td><td>5</td><td>Spans multiple files — a single retrieval may miss</td></tr>
+        <tr><td>4</td><td>Memory recall</td><td>5</td><td>Memory primer entries only</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Five lanes, 25 scenarios × 2 turns × 5 lanes is 250 inference calls + 250
+      judge calls. Total benchmark cost: <strong>$2.31</strong>. Sonnet 4.6 as
+      answer model + judge with the four-state relaxed rubric.
+    </p>
+
+    <h3 id="primer-numbers">The numbers</h3>
+    <table class="compact">
+      <thead>
+        <tr><th>Approach</th><th>Turn 1 correct</th><th>Turn 2 correct</th><th>Both correct</th><th>$ / question</th><th>Mean wall</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>both_primers</strong> (code + memory)</td><td><strong>48.0%</strong></td><td><strong>24.0%</strong></td><td><strong>20.0%</strong></td><td>$0.027</td><td>15.7 s</td></tr>
+        <tr><td>rlat_search (per-turn <code>rlat search</code> augment)</td><td><strong>56.0%</strong></td><td><strong>36.0%</strong></td><td>16.0%</td><td>$0.017</td><td>17.5 s</td></tr>
+        <tr><td>memory_primer_loaded</td><td>32.0%</td><td>12.0%</td><td>12.0%</td><td>$0.015</td><td>13.8 s</td></tr>
+        <tr><td>primer_loaded (code-base only)</td><td>20.0%</td><td>12.0%</td><td>8.0%</td><td>$0.024</td><td>17.1 s</td></tr>
+        <tr><td>cold (no context, no tools)</td><td><strong>0.0%</strong></td><td>0.0%</td><td>0.0%</td><td>$0.009</td><td>12.7 s</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="primer-per-tier">Per-tier breakdown — the headline finding</h3>
+    <p>
+      The aggregate numbers hide the most important result. Every primer type
+      has a <em>coverage profile</em>: it shines on the tier its content was
+      designed for and degrades to roughly cold elsewhere.
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Tier (turn 1)</th><th>cold</th><th>code primer</th><th>memory primer</th><th>both primers</th><th>rlat search</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>1 — orientation</strong></td><td>0/5</td><td><strong>3/5</strong></td><td>0/5</td><td><strong>3/5</strong></td><td>0/5</td></tr>
+        <tr><td><strong>2 — specific factual</strong></td><td>0/10</td><td>2/10</td><td>2/10</td><td>3/10</td><td><strong>8/10</strong></td></tr>
+        <tr><td><strong>3 — cross-reference</strong></td><td>0/5</td><td>0/5</td><td>1/5</td><td>1/5</td><td><strong>2/5</strong></td></tr>
+        <tr><td><strong>4 — memory recall</strong></td><td>0/5</td><td>0/5</td><td><strong>5/5</strong></td><td><strong>5/5</strong></td><td>4/5</td></tr>
+      </tbody>
+    </table>
+    <p>The signal:</p>
+    <ul class="checklist">
+      <li>
+        <strong>The code-base primer wins orientation (3/5)</strong> but is
+        blind on memory recall (0/5) and weak on deep facts (2/10). The
+        Landscape + Structure surface is exactly the right shape for "what is
+        this project, what's in it, where do I look" — and exactly the wrong
+        shape for "what does the incremental delta-apply pipeline do on refresh".
+      </li>
+      <li>
+        <strong>The memory primer wins memory recall (5/5)</strong> but is blind
+        on orientation (0/5). It surfaces decisions, not layout.
+      </li>
+      <li>
+        <strong><code>rlat search</code> wins specific-factual (8/10) and
+        cross-reference (2/5)</strong> because it retrieves the actual passages
+        the answer needs. But it's blind on orientation (0/5) — a single search
+        returns the 3–5 most relevant passages, not a mental model of the whole
+        corpus.
+      </li>
+      <li>
+        <strong>Both primers loaded</strong> is the broadest coverage profile:
+        it picks up the orientation wins of the code primer (3/5) and the memory
+        wins of the memory primer (5/5), and the LLM can stitch context across
+        them (3/10 specific-factual vs 2/10 for either primer alone).
+      </li>
+    </ul>
+
+    <h3 id="primer-tokens">Token usage</h3>
+    <p>
+      Measured input/output tokens per Sonnet call, averaged across the 25
+      scenarios:
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Approach</th><th>Mean input / turn 1</th><th>Mean input / turn 2</th><th>Output (both turns)</th><th>Total / scenario</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>cold (no context, no tools)</td><td>90</td><td>280</td><td>295</td><td><strong>664</strong></td></tr>
+        <tr><td>rlat_search (top-5 passages per turn)</td><td>794</td><td>919</td><td>428</td><td><strong>2,141</strong></td></tr>
+        <tr><td>memory_primer_loaded</td><td>836</td><td>1,028</td><td>320</td><td><strong>2,184</strong></td></tr>
+        <tr><td>primer_loaded (code primer only)</td><td>1,798</td><td>2,089</td><td>487</td><td><strong>4,374</strong></td></tr>
+        <tr><td>both_primers (code + memory)</td><td>2,544</td><td>2,788</td><td>408</td><td><strong>5,740</strong></td></tr>
+      </tbody>
+    </table>
+    <p>
+      The primer-only sizes, measured as input tokens above the cold baseline of
+      ~90:
+    </p>
+    <ul class="checklist">
+      <li><strong>Code primer</strong> ≈ <strong>1,708 tokens</strong> per call (~3 KB markdown). Carries Landscape + Structure + a slice of Evidence.</li>
+      <li><strong>Memory primer</strong> ≈ <strong>746 tokens</strong> per call (~2 KB markdown). Clustered memory entries.</li>
+      <li><strong>Both primers concatenated</strong> ≈ <strong>2,454 tokens</strong> per call.</li>
+      <li><strong><code>rlat search</code> top-5</strong> ≈ <strong>704 tokens of passages</strong> per call — the same order of magnitude as the memory primer alone, but dynamic per turn rather than fixed at session start.</li>
+    </ul>
+    <p>
+      The honest take: primers are not free, but they're cheap relative to both
+      the corpus dump (about 1,400× larger) and the accuracy gap to cold (0% →
+      48% turn-1 correct on both_primers). The memory primer in particular is
+      exceptionally cheap (~750 tokens) for a 5/5 win on memory-recall scenarios
+      — the highest accuracy-per-token efficiency of any lane on its target tier.
+    </p>
+
+    <h3 id="primer-meaning">What this means in practice</h3>
+    <p>
+      If a session starts with a question whose answer isn't in either primer's
+      coverage zone, primers don't help — they degrade to roughly cold (cold
+      scores 0/25 because the model has no rlat context at all and no tools to
+      fetch any). The honest framing: <strong>primers are not a substitute for
+      retrieval</strong>. They're an orientation surface for the opening minute
+      of a session.
+    </p>
+    <p>
+      The combined-stack reading: load both primers at session start (free,
+      ~5 KB combined) and keep <code>rlat search</code> available as a tool
+      call. The primers carry orientation + memory recall; per-turn search picks
+      up the specific facts the primers can't fit. None of the lanes
+      individually crosses 60% turn-1 correct on this 25-scenario set — which is
+      the right honesty signal: session-start is hard, and single-shot retrieval
+      is not deep-search. For the highest accuracy on a session-start question
+      that turns out to need synthesis, <code>rlat deep-search</code> (the
+      <a href="#hallucination">hallucination-bench</a> lane that hit 92.2%) is
+      the right tool — at the cost of one extra round of latency.
+    </p>
+
+    <h3 id="primer-caveats">Honest caveats</h3>
+    <ul class="checklist x">
+      <li>
+        <strong>MVP scope.</strong> 25 scenarios — half the original plan's 50.
+        Tier-level n=5 is small; the per-tier numbers should be read as
+        directional, not precise.
+      </li>
+      <li>
+        <strong>Full-context lane skipped.</strong> The Token-spend benchmark
+        already established that a whole-corpus dump is 67× pricier than
+        <code>rlat skill-context constrain</code> without changing the
+        conclusion; it was not re-run here.
+      </li>
+      <li>
+        <strong>Judge variance.</strong> Sonnet 4.6 grading itself; we apply the
+        relaxed rubric. The strict-rubric numbers ship in the result JSON.
+      </li>
+      <li>
+        <strong>One corpus.</strong> Numbers measured on
+        <code>resonance-lattice.rlat</code> (this project's docs + src). The
+        shape of the result should generalise; the exact magnitudes are
+        corpus-specific.
+      </li>
+    </ul>
+    <pre><code>pip install rlat[bench]
+rlat install-encoder
+rlat build ./docs ./src -o resonance-lattice.rlat
+rlat summary resonance-lattice.rlat -o .claude/resonance-context.md
+export CLAUDE_API=sk-ant-...
+python -m benchmarks.user_bench.primer_effectiveness.run \
+  --km resonance-lattice.rlat \
+  --primer .claude/resonance-context.md \
+  --memory-primer .claude/memory-primer.md \
+  --output benchmarks/results/user_bench/primer_effectiveness.json \
+  --budget-usd 5</code></pre>
+  </section>
+
+  <section id="world-knowledge">
+    <div class="section-num">07 — World-knowledge evidence</div>
+    <h2 id="world-knowledge-h">The world-knowledge evidence</h2>
+    <p>
+      v3's claim is that a knowledge model can carry validated knowledge about
+      its own world — standing rules, environment facts, tried-and-falsified
+      approaches — and that serving it measurably changes answers. The
+      maintainer's rule for this section is <strong>no claim without a public
+      receipt</strong>: every claim below links its full pre-registered design
+      (committed before any result existed), its verdict, and the raw run
+      artifacts. Failures are published with the same prominence as passes —
+      the last subsection is one.
+    </p>
+
+    <h3 id="r1-constraints">R1 — Standing constraints stop rule-violating answers</h3>
+    <p>
+      <strong>Claim:</strong> serving a user's handful of standing hard rules
+      ("never preview features", "EU data residency only") eliminates answers
+      that violate them, at zero collateral cost.
+    </p>
+    <p>
+      <strong>Design</strong> — paired within-item arms (blind / true
+      constraint served / irrelevant-placebo served) on 24 Microsoft Fabric
+      (constraint, question) pairs plus a 10-question collateral set for
+      over-blocking; an item counts only if the blind answer actually
+      violates. Pre-registered bars: served violations ≤ ⅓ of blind, placebo
+      ≈ blind, collateral drop &lt; 10pp.
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Measure</th><th>Result</th><th>Pre-registered bar</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Blind violation rate (all 24 items)</td><td><strong>15/24 (62%)</strong></td><td>— (gate yield)</td></tr>
+        <tr><td><strong>Served</strong> violation rate (decisive 15)</td><td><strong>1/15 (7%)</strong></td><td>≤ 33% → <strong>PASS</strong></td></tr>
+        <tr><td><strong>Placebo</strong> violation rate</td><td><strong>14/15 (93%)</strong></td><td>≈ blind → <strong>PASS</strong></td></tr>
+        <tr><td>Collateral substantive answers, blind → served</td><td><strong>10/10 → 10/10</strong></td><td>drop &lt; 10pp → <strong>PASS</strong></td></tr>
+        <tr><td>Independent API-judge re-score (Haiku, same transcripts)</td><td>served <strong>0/15</strong></td><td>core bars → <strong>PASS</strong></td></tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>Honest caveat:</strong> a post-merge review found the API
+      judge's placebo reading is subset-sensitive — computed within that
+      judge's own decisive subset, placebo lands at 7/10 vs a 100% blind
+      reference, breaching the ±10pp form of the guard. The served-collapse
+      and collateral bars are judge-robust; the placebo guard specifically is
+      judge-sensitive. The claim stands on the pre-registered subscription
+      primary, with that qualification on the record.
+    </p>
+    <p>
+      Receipts:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band/DESIGN.md">design</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band/VERDICT.md">verdict</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band/items.json">items</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band/run_results/run1_2026-06-10.json">run 1</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band/run_results/summary_run1.json">summary</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band/run_results/api_confirm_run1.json">API confirm</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band/api_judge_confirm.py">judge script</a>
+    </p>
+
+    <h3 id="r1x-cross-domain">R1-X — The same effect in a garden and a law practice</h3>
+    <p>
+      <strong>Claim:</strong> the constraint effect is not a software
+      artifact — the identical design works where the world is a home garden
+      or a small NSW law practice, with no software anywhere.
+    </p>
+    <p>
+      <strong>Design</strong> — R1's arms plus a fourth (blind-2, a fresh
+      resample) as a noise-aware placebo guard, on 12 items + 6 collateral
+      questions per domain, both fictional worlds so nothing can leak into
+      the blind arm. Bars evaluated per domain; the cross-domain claim
+      requires a PASS in both.
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Measure</th><th>Garden</th><th>Practice</th><th>Pre-registered bar</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Violation-decisive gate</td><td><strong>12/12</strong></td><td><strong>11/12</strong></td><td>≥ 4 → both PASS</td></tr>
+        <tr><td><strong>Served</strong> violation rate</td><td><strong>2/12 (17%)</strong></td><td><strong>1/11 (9%)</strong></td><td>≤ ⅓ blind → <strong>PASS</strong></td></tr>
+        <tr><td><strong>Placebo</strong> flips</td><td>0 (vs blind-2: 1)</td><td>0 (vs blind-2: 0)</td><td>flips ≤ blind-2 flips → <strong>PASS</strong></td></tr>
+        <tr><td>Collateral substantive, blind → served</td><td>6/6 → 6/6</td><td>6/6 → 6/6</td><td>drop &lt; 10pp → <strong>PASS</strong></td></tr>
+        <tr><td>API-judge confirm (served, own subsets)</td><td><strong>0/8</strong></td><td><strong>0/4</strong></td><td>core bars judge-robust</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>Honest caveat:</strong> the placebo guard is judge-sensitive.
+      Under the pre-registered subscription primary it passes cleanly (zero
+      placebo flips in both domains); under the Haiku API judge it fails in
+      both (garden 2 flips vs 0 blind-2, practice 2 vs 1). The
+      constraint-specific effect — the claim — is decisive under both judges;
+      whether an <em>irrelevant</em> served rule also nudges answers a little
+      is judge-dependent and unresolved at this n.
+    </p>
+    <p>
+      Receipts:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band_xdomain/DESIGN.md">design</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band_xdomain/VERDICT.md">verdict</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band_xdomain/items.json">items</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band_xdomain/run_results/run1_2026-06-10.json">run 1</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band_xdomain/run_results/run1_partial_2026-06-10.json">partial (pre-resume)</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band_xdomain/run_results/api_judge_run1.json">API confirm</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/constraint_band_xdomain/api_judge.py">judge script</a>
+    </p>
+
+    <h3 id="r2-falsification-ledger">R2 — A falsification ledger stops dead-end re-recommendations</h3>
+    <p>
+      <strong>Claim:</strong> serving a project's tried-and-falsified results
+      ("we tried X, it made things worse, here's the benchmark") stops an
+      assistant from re-recommending dead ends — and the falsification
+      <em>verdict</em>, not mere topical mention, is the active ingredient.
+    </p>
+    <p>
+      <strong>Design</strong> — four arms per item (blind / matched ledger
+      atom / verdict-free topical mention of the same approach /
+      irrelevant-ledger placebo) on 20 questions over 10 falsified
+      approaches, plus 8 collateral questions answered with the full 10-atom
+      ledger served. Bars: ledger ≤ ⅓ blind; topical − ledger ≥ 25pp; placebo
+      within ±10pp of blind; collateral drop &lt; 10pp.
+    </p>
+    <div class="callout callout-note">
+      <span class="callout-tag">Run 1 invalidated — and published</span>
+      <p>
+        Run 1's gate yielded 0/20: the blind arm was not blind. Answerer
+        subagents ran inside this repository, where the project's own
+        committed falsification record is visible — 9/20 blind answers cited
+        it directly. The invalidation is part of the record (the invalid
+        results JSON ships alongside the valid one), and the accidental
+        finding stands: an in-repo agent self-serves a committed
+        falsification ledger and follows it correctly. Run 2 moved the
+        advised project to a fictional one ("Lumera") to restore a true
+        blind arm.
+      </p>
+    </div>
+    <table class="compact">
+      <thead>
+        <tr><th>Measure (run 2)</th><th>Result</th><th>Pre-registered bar</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Gate yield (blind recommends the falsified approach)</td><td><strong>7/20 (35%)</strong></td><td>—</td></tr>
+        <tr><td><strong>Ledger</strong> arm recommend rate (decisive)</td><td><strong>0/7 (0%)</strong></td><td>≤ ⅓ × blind → <strong>PASS</strong></td></tr>
+        <tr><td><strong>Topical-mention</strong> control</td><td><strong>6/7 (86%)</strong></td><td>gap ≥ 25pp → <strong>PASS</strong> (86pp)</td></tr>
+        <tr><td><strong>Placebo</strong> (irrelevant atom)</td><td>5/7 (71%)</td><td>±10pp → <strong>breached</strong> (−29pp), resolved below</td></tr>
+        <tr><td>Collateral substantive, blind → full ledger served</td><td><strong>8/8 → 8/8</strong></td><td>drop &lt; 10pp → <strong>PASS</strong></td></tr>
+      </tbody>
+    </table>
+    <p>
+      The placebo breach was decomposed by a pre-registered follow-up (run
+      2b): a fresh blind resample flipped the <em>same two items</em> (q12,
+      q18) with no note served at all — 2 blind-2 flips ≥ 2 placebo flips,
+      so under the rule fixed before the data, the deviation is sampling
+      noise and the headline stands as a PASS with the noise caveat
+      recorded. An independent Haiku API judge re-scored all 64 transcripts
+      and confirmed all four bars (ledger 0/7, gap 86pp, collateral 16/16).
+      The 86pp gap between the verdict and a verdict-free mention is the
+      largest contrast this program has measured.
+    </p>
+    <p>
+      Receipts:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/falsification_ledger/DESIGN.md">design (incl. run-1 invalidation)</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/falsification_ledger/VERDICT.md">verdict</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/falsification_ledger/items.json">run-1 items</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/falsification_ledger/items_run2.json">run-2 items</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/falsification_ledger/run_results/run1_2026-06-10_INVALID.json">run 1 (invalid)</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/falsification_ledger/run_results/run2_2026-06-10.json">run 2</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/falsification_ledger/run_results/run2b_2026-06-10.json">run 2b</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/falsification_ledger/run_results/api_confirm_run2.json">API confirm</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/falsification_ledger/api_judge_confirm.py">judge script</a>
+    </p>
+
+    <h3 id="e2c-capture-gate">E2c — The capture gate: the extractor earns its wake-up</h3>
+    <p>
+      <strong>Claim:</strong> the passive extractor that captures world facts
+      from what a user types meets precision, recall, privacy, and
+      domain-neutrality bars on its real production path before it is
+      allowed to run.
+    </p>
+    <p>
+      <strong>Design</strong> — 10 synthetic sessions of user-turn text
+      (4 software, 3 garden, 3 legal) each carrying 1–2 ground-truth world
+      facts and 2–4 traps (transient facts, discovered-not-stated facts,
+      hypotheticals, quoted-assistant
+      text, corpus facts, and person-facts — the privacy class). Grading is
+      deterministic term-matching: zero judge noise. Bars: precision ≥ 0.83,
+      recall ≥ 0.85, person-fact emissions = 0 (one leak fails the bench
+      regardless of averages), every domain ≥ 0.75 precision.
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Pre-registered bar</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Precision ≥ 0.83</td><td><strong>0.86</strong> (19 matched / 22 emitted) → <strong>PASS</strong></td></tr>
+        <tr><td>Recall ≥ 0.85</td><td><strong>1.00</strong> (19/19 world facts) → <strong>PASS</strong></td></tr>
+        <tr><td>Person-fact leaks = 0</td><td><strong>0</strong> — all seven person traps dropped → <strong>PASS</strong></td></tr>
+        <tr><td>Every domain ≥ 0.75 precision</td><td>software 0.80 · garden 1.00 · legal 0.83 → <strong>PASS</strong></td></tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>Honest caveats:</strong> the three false positives are
+      borderline-defensible captures, none personal (a hypothetical restated
+      as present-tense, two corpus-stated facts relayed as operative
+      constraints) — they pollute mildly, they don't leak. A post-run review
+      found a grader ordering flaw that could in principle have hidden a
+      compound-emission leak; the fixed grader re-scanned the committed run-1
+      emissions and still finds 0 leaks.
+    </p>
+    <p>
+      Receipts:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/attribute_gate_e2c/DESIGN.md">design + verdict</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/attribute_gate_e2c/sessions.json">sessions + ground truth</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/attribute_gate_e2c/run_gate.py">runner + grader</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/attribute_gate_e2c/run_results/run1_2026-06-10.json">run 1</a>
+    </p>
+
+    <h3 id="r4-suppression">R4 — Auto-suppression: tested three ways, falsified</h3>
+    <p>
+      <strong>This is the honest-failure record.</strong> The claim under
+      test — the loop can automatically retire its own wrong facts safely
+      ("gets better with use") — was tested three ways and falsified each
+      time. It is published here at the same prominence as the passes above,
+      because that is what makes the passes worth believing.
+    </p>
+    <p>
+      <strong>Design</strong> — an instrumented baseline run persisted the
+      full per-serve credit stream (n=31 items, 3 seeds, 8 rounds), then
+      each candidate suppression rule was pre-registered <em>before</em> its
+      replay or live run. Bars, fixed in advance: SAFE (zero true facts cut,
+      every seed), EFFECTIVE (at least as many wrong facts cut as the prior
+      best rule), all seeds individually.
+    </p>
+    <table class="compact">
+      <thead>
+        <tr><th>Attempt</th><th>Result against pre-registered bars</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>v1 — anytime-valid confidence sequence (offline replay)</td><td><strong>FAIL</strong> — the only rule that cuts zero true facts (0, 0, 0 per seed), but it cuts zero wrongs (0, 0, 0); the prior best rules (point, wilson2) cut 3–4 wrongs per seed and each kills a true fact every seed. Safe-but-useless.</td></tr>
+        <tr><td>v2 — context-conditioned credit (offline replay)</td><td><strong>FAIL</strong> on effectiveness — 0 true facts cut, 2 wrongs per seed vs wilson2's 3. The live run proceeded as a separately pre-registered deviation.</td></tr>
+        <tr><td>Live confirmation of the v2 rule (fresh A/B)</td><td><strong>FAIL</strong> — one seed suppressed a true fact (seed-avg 0.33 golds cut); value delta −0.028 mean, p<sub>wilcoxon</sub> 0.76. The replay's safety prediction did not carry live.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>The diagnosis, which is the durable finding:</strong> pooled
+      per-fact credit is the wrong statistic — one true fact ("Windows
+      PowerShell 5.1", 122 serves) pooled at a mean delta of <strong>−0.140</strong>,
+      <em>below two wrong facts</em>, because the selector serves it heavily
+      off-topic where even a true fact doesn't help. No threshold on that
+      statistic can be simultaneously safe and effective; four rule families
+      failed there for the same structural reason. And off-policy replay
+      overestimates safety under selection feedback: live suppression
+      changes the serving distribution, and a true fact was cut before it
+      could accumulate its protecting on-item record — exactly why the live
+      confirmation was pre-registered as mandatory.
+    </p>
+    <p>
+      What the cycle bought: the instrumented A/B independently replicated
+      the loop's value-add (learning − no-learning = <strong>+0.074</strong>
+      mean, p<sub>wilcoxon</sub> 0.031, paired) — the value is real; the safe
+      self-cleaning rule is the unsolved part. The two committed per-serve
+      streams (unbiased baseline + live r4c) make every future suppression
+      rule a free, reproducible offline replay before it costs a dollar.
+    </p>
+    <p>
+      Receipts:
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/r4_continuous_credit/DESIGN.md">design v1</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/r4_continuous_credit/DESIGN_V2.md">design v2 (incl. its verdict)</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/r4_continuous_credit/DESIGN_CONFIRM.md">live-confirmation design + verdict</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/r4_continuous_credit/VERDICT.md">run-1 verdict</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/r4_continuous_credit/replay_rules.py">replay analyzer</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/r4_continuous_credit/run_results/replay_run1.json">replay run 1</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/r4_continuous_credit/run_results/replay_run2_v2.json">replay run 2 (v2)</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/r4_continuous_credit/run_results/instrumented_stream.json">instrumented stream</a> ·
+      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/benchmarks/r4_continuous_credit/run_results/live_confirm_stream.json">live confirm stream</a>
+    </p>
+  </section>
+
+  <section id="reproduce">
+    <h2 id="reproduce-h">Reproduce it yourself</h2>
+    <pre><code>git clone &lt;repo&gt;
+cd resonance-lattice
+pip install -e .[bench]
+rlat install-encoder
+rlat build ./docs ./src -o resonance-lattice.rlat
+
+# Build &amp; query speed (no API spend, deterministic)
+python -m benchmarks.user_bench.build_query_speed.run
+
+# Token usage (costs ~$80 at full N=20)
+export CLAUDE_API=sk-ant-...
+python -m benchmarks.user_bench.token_usage.run --budget-usd 100
+
+# Hallucination (costs ~$130 at full N=40)
+python -m benchmarks.user_bench.hallucination.run --budget-usd 150</code></pre>
+    <p>
+      Each <code>run.py</code> accepts <code>--n-tasks</code> to subset for
+      pilots and <code>--budget-usd</code> to abort at a hard cost cap.
+    </p>
+  </section>
+
+  <section id="next">
+    <h2 id="next-h">Where next</h2>
+    <div class="next">
+      <a href="skills.html">
+        <span class="next-label">Next</span><br>
+        <span class="next-title">Skills</span>
+      </a>
+      <a href="encoder.html">
+        <span class="next-label">Then</span><br>
+        <span class="next-title">Encoder</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

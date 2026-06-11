@@ -191,6 +191,32 @@ def _check_pending_signal_since_filter() -> int:
     return 0
 
 
+def _check_pending_signal_ring_trim() -> int:
+    """(f2) the pending-signals log is a ring buffer: on overflow the file
+    trims to the most recent `cache_size` entries (2026-06 review — it was
+    unbounded, appended on every tool call, fully re-parsed on every read)."""
+    from resonance_lattice.state import PendingSignalLog
+
+    with tempfile.TemporaryDirectory() as td:
+        log = PendingSignalLog(Path(td), cache_size=10)
+        for i in range(25):
+            log.append(
+                source="mechanical",
+                tool_name=f"Tool{i}",
+                tool_payload={},
+                value={"verdict": "satisfied"},
+            )
+        kept = log.read()
+    if len(kept) != 10 or kept[-1].tool_name != "Tool24" or kept[0].tool_name != "Tool15":
+        print(f"[state_hooks] FAIL (f2): ring trim wrong — kept={len(kept)} "
+              f"first={kept[0].tool_name if kept else None} "
+              f"last={kept[-1].tool_name if kept else None}", file=sys.stderr)
+        return 1
+    print("[state_hooks] (f2) pending-signal ring trim (oldest dropped) OK",
+          file=sys.stderr)
+    return 0
+
+
 def _check_post_tool_use_payload_redaction() -> int:
     """post-tool-use.py's `_safe_payload` drops raw command bodies, edit
     content, stdout, stderr, and file paths. Persists only verdict-relevant
@@ -297,6 +323,7 @@ def run() -> int:
         _check_recently_resolved_in_primer,
         _check_pending_signal_round_trip,
         _check_pending_signal_since_filter,
+        _check_pending_signal_ring_trim,
         _check_post_tool_use_payload_redaction,
         _check_post_tool_use_verdict_extraction,
     ]:

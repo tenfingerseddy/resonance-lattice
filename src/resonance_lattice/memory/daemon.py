@@ -20,19 +20,43 @@ from __future__ import annotations
 import os
 import secrets
 import socket as _socket
-import sys
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
+from multiprocessing import AuthenticationError as _mp_AuthenticationError
 from multiprocessing import connection as _conn
 from pathlib import Path
 
 from ..field.encoder import Encoder
+from ..state.claim import Claim
 from ._common import workspace_hash
-from .recall import rank_with_diagnostic
-from .store import Memory, Row
+from .claim_store import (
+    BAND_FILE,
+    CLAIMS_FILE,
+    ExperienceClaimStore,
+    _claim_to_row,
+)
+from .recall import _encode_query, rank_with_diagnostic
 
 DEFAULT_IDLE_EXIT_SECONDS = 1800  # 30 min per §0.8
+
+# Corpus band-recall (S3 d3) — how many corpus insight claims to attribute
+# per recall, and the cosine floor below which a corpus claim is too far from
+# the prompt to credit. A lower floor than experience recall's 0.7 default:
+# attribution tiers by rank (top-2 = primary), so only the closest few corpus
+# claims earn weight even at a permissive floor, and the poison guard
+# (verdict_confidence × source × provenance, ≤1.0) + the rank-tier decay + the
+# Beta model's slowness bound a loose match's impact. Note: a single
+# high-confidence user accept still moves a primary corpus claim at full weight
+# — there is no multi-outcome threshold on this path (that bound belongs to the
+# experience confidence pass). The benchmark tunes these; kept conservative
+# (small K) until then.
+_BAND_RECALL_TOP_K = 5
+_BAND_RECALL_COSINE_FLOOR = 0.3
+# Bounded warm cache of corpus insight bands keyed by km path. A user works in
+# a handful of corpora; the cap defends a long-lived per-user daemon that roams
+# many workspaces from unbounded growth (evicts oldest on overflow).
+_CORPUS_CACHE_MAX = 8
 # Client-side timeout: §5.2.1 specs 200ms targeting POSIX (AF_UNIX connect
 # is sub-millisecond). On Windows, `multiprocessing.connection`'s named-pipe
 # `Client(...)` handshake (CreateFileW + WaitNamedPipe + answer_challenge)
@@ -84,11 +108,15 @@ class RecallRequest:
     # exact wire shape every test pins; the UserPromptSubmit hook opts
     # in so a fresh workspace surfaces something rather than nothing.
     auto_tune_cold_start: bool = False
-    # Session-boundary ISO timestamps from the workspace ledger, shipped
-    # by the recall hook. Drives the 5-session arm of rerank's
-    # new-principle protection window. Empty () → only the 30-day arm
-    # fires; the daemon has no state-root access of its own.
-    session_markers: tuple[str, ...] = ()
+    # `km_path` is the workspace's primary `.rlat` corpus, resolved by the
+    # hook via `state.resolve_primary_km(cwd)`. When set, the daemon ALSO
+    # ranks that corpus's insight band (source-agnostic, cosine × trust) with
+    # the same query embedding and returns the top corpus claims in
+    # `RecallReply.band_hits` — the unified-recall link that lets a resolved
+    # intent's attribution carry corpus claim ids (S3 d3). None → the daemon
+    # ranks experience claims only, the pre-d3 behaviour. Default None keeps
+    # the wire shape every existing test pins.
+    km_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +136,30 @@ class RecallReply:
     # runs can attribute misses ("16/20 sessions had no recall" turns
     # into per-gate `dropped_at` counts).
     diagnostic: dict | None = None
+    # Corpus insight-band hits for the request's `km_path` — each a flat
+    # `{claim_id, source, rank, cosine}` (the shape the hook stamps into
+    # `RecallCache.row_metadata`). Source-agnostic + cache-only: these are
+    # NOT injected into the prompt (read-back is H2); they exist so a resolved
+    # intent's attribution carries corpus claim ids and the criterion reducer
+    # moves corpus trust (S3 d3). `rank` is the corpus ranking's OWN 0-based
+    # index (not continued from the experience hits), so the attribution tier
+    # is computed per source. Empty when no `km_path` / no corpus layer.
+    band_hits: list[dict] = field(default_factory=list)
+    # User-world ATTRIBUTE claims from the same insight band, content-bearing
+    # and DEDUPED to the newest value per subject (`serve_band_attributes`).
+    # Unlike `band_hits` (cache-only) these ARE injected at prompt time: a
+    # user-world fact (SKU/role/version/corpus size) is something the agent
+    # needs in hand to answer correctly. Each: `{content, attribute_key,
+    # created_at, score}`. Empty when no `km_path` / no corpus layer / no
+    # attribute claims. Defaulted + last so older clients ignore it.
+    attribute_hits: list[dict] = field(default_factory=list)
+    # Standing-constraint + tried-and-falsified claims from the same band,
+    # served ALL-always (`serve_band_constraints` — the R1-proven design: no
+    # cosine floor, no top-k, zero over-blocking measured). Injected at prompt
+    # time with the kind-framed headings (`store.serve_framing`). Each:
+    # `{claim_id, content, kind, attribute_key, created_at}`. Defaulted +
+    # last so older clients ignore it.
+    constraint_hits: list[dict] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +218,8 @@ def load_or_create_authkey(root: Path) -> bytes:
 class DaemonServer:
     """Long-lived recall server bound to one per-user store.
 
-    The server holds a cached `(rows, band)` snapshot and reloads it
-    when `<root>/memory.npz` mtime changes. Per-request cost is just
+    The server holds a cached `(claims, band)` snapshot and reloads it
+    when `<root>/band.npz` mtime changes. Per-request cost is just
     `rank(...)` over the cached snapshot — sub-millisecond at typical
     band sizes.
     """
@@ -175,7 +227,7 @@ class DaemonServer:
     def __init__(
         self,
         *,
-        store: Memory,
+        store: ExperienceClaimStore,
         encoder: Encoder,
         encoder_revision: str = "unknown",
         address=None,
@@ -191,22 +243,59 @@ class DaemonServer:
         self.idle_exit_seconds = idle_exit_seconds
         self.reload_poll_seconds = reload_poll_seconds
 
-        self._rows: list[Row] = []
+        self._claims: list[Claim] = []
         self._band = None
-        self._band_path = store.root / "memory.npz"
+        self._band_path = store.root / BAND_FILE
         self._band_mtime: float = 0.0
         self._last_request_at: float = time.monotonic()
         self._stop = threading.Event()
         self._listener: _conn.Listener | None = None
+        # Warm cache of per-corpus insight bands (S3 d3): km path → (mtime,
+        # insights, band). Reloaded on the .rlat's mtime change so a `rlat
+        # consolidate`/`refresh` that rewrites the band is picked up; bounded
+        # by `_CORPUS_CACHE_MAX`. Distinct from the per-user experience
+        # snapshot above — the daemon is per-user but ranks whichever corpus
+        # the request's cwd resolved to, never bound to one.
+        self._corpus_cache: dict = {}
 
     # -- snapshot management ----------------------------------------------
 
     def reload_snapshot(self) -> None:
-        rows, band = self.store.read_all()
-        self._rows = rows
+        claims, band = self.store.read_all_with_band()
+        self._claims = claims
         self._band = band
         if self._band_path.exists():
             self._band_mtime = self._band_path.stat().st_mtime
+
+    def _corpus_band(self, km_path: str):
+        """Cached `(insights, band)` for a workspace corpus `.rlat`, reloaded
+        on the archive's mtime change. Returns `None` when the path is
+        unreadable or has no insight layer — corpus recall is best-effort, so
+        a missing/half-built corpus simply yields no band hits, never an
+        error. Reads only the (small) insight band via
+        `archive.read_insight_layer`, not the full archive.
+        """
+        from ..store import archive
+
+        try:
+            mtime = Path(km_path).stat().st_mtime
+        except OSError:
+            return None
+        cached = self._corpus_cache.get(km_path)
+        if cached is not None and cached[0] == mtime:
+            return cached[1], cached[2]
+        try:
+            layer = archive.read_insight_layer(km_path)
+        except Exception:
+            return None
+        if layer is None:
+            return None
+        insights, band = layer
+        if (len(self._corpus_cache) >= _CORPUS_CACHE_MAX
+                and km_path not in self._corpus_cache):
+            self._corpus_cache.pop(next(iter(self._corpus_cache)))
+        self._corpus_cache[km_path] = (mtime, insights, band)
+        return insights, band
 
     def _maybe_reload(self) -> None:
         if not self._band_path.exists():
@@ -219,10 +308,21 @@ class DaemonServer:
 
     def stop(self) -> None:
         self._stop.set()
-        if self._listener is not None:
+        # Snapshot — serve_forever's finally sets self._listener = None, and
+        # the self-connect below gives that race a ~0.5s window (CI Windows
+        # hit None.close() when idle-exit overlapped an explicit stop()).
+        listener = self._listener
+        if listener is not None:
+            # Wake a pending accept() BEFORE closing: on Linux, close()
+            # from another thread does NOT interrupt a blocked accept()
+            # (observed wedged on ubuntu CI 2026-06-10 — serve_forever's
+            # finally never ran, ready-marker never cleared). The
+            # self-connect handshake is the reliable wake on every
+            # platform; close() after is just resource cleanup.
+            self._wake_accept_via_self_connect()
             try:
-                self._listener.close()
-            except OSError:
+                listener.close()
+            except Exception:
                 pass
 
     def serve_forever(self) -> None:
@@ -303,25 +403,25 @@ class DaemonServer:
         Sets `_stop` *before* unwedging — otherwise the main loop's
         OSError handler would `continue` straight back into accept().
 
-        Two unwedge paths:
-          - POSIX: closing the listener socket aborts `accept()`
-            immediately. Cheap, no handshake.
+        The unwedge is a self-connect on EVERY platform:
           - Windows: closing the named-pipe handle is *not* guaranteed
-            to wake a pending `WaitForMultipleObjects` (MSDN says
-            behavior is undefined for cross-thread `CloseHandle` on a
-            handle in pending overlapped I/O). The reliable wake is to
-            self-connect: a client connect targets the listener, which
-            satisfies `ConnectNamedPipe`, accept() returns, the main
-            loop's `_handle_one` recv()s an EOF or a challenge mismatch,
-            then the loop iterates, sees `_stop`, and exits cleanly.
+            to wake a pending `WaitForMultipleObjects` (MSDN: undefined
+            for cross-thread `CloseHandle` on a handle in pending
+            overlapped I/O).
+          - Linux: cross-thread `close()` on the listening socket does
+            NOT interrupt a blocked `accept()` either — the thread stays
+            wedged until the next inbound connection (observed on ubuntu
+            CI 2026-06-10: serve_forever's finally never ran). An earlier
+            revision assumed close-aborts-accept on POSIX; that was false.
+        The self-connect completes the handshake (or fails the challenge);
+        either way accept() returns, the loop re-checks `_stop`, exits.
         """
         while not self._stop.is_set():
             if self._idle_expired():
                 self._stop.set()
                 break
             self._stop.wait(self.reload_poll_seconds)
-        if os.name == "nt":
-            self._wake_accept_via_self_connect()
+        self._wake_accept_via_self_connect()
         listener = self._listener
         if listener is not None:
             try:
@@ -360,25 +460,43 @@ class DaemonServer:
             payload = conn.recv()
         except (EOFError, OSError):
             return
-        if not isinstance(payload, dict) or "request" not in payload:
+        raw = payload["request"] if isinstance(payload, dict) else None
+        if not isinstance(raw, dict):
             conn.send(asdict(RecallReply(
                 hits=[], encoder_revision=self.encoder_revision,
                 error="invalid request envelope",
             )))
             return
-        req = RecallRequest(**payload["request"])
+        # Tolerate unknown request keys (drop them) and never let a malformed
+        # request crash the serve loop — a NEWER client carrying wire fields
+        # this build doesn't know about must degrade to a clean error reply,
+        # not a daemon-wide blackout. Construction is INSIDE the guard so a
+        # missing required field (`query`) also fails soft.
+        known = {f.name for f in fields(RecallRequest)}
+        try:
+            req = RecallRequest(**{k: v for k, v in raw.items() if k in known})
+        except (TypeError, ValueError) as exc:
+            conn.send(asdict(RecallReply(
+                hits=[], encoder_revision=self.encoder_revision,
+                error=f"bad request: {type(exc).__name__}",
+            )))
+            return
         cosine_floor = req.cosine_floor
         top1_top2_gap = req.top1_top2_gap
         min_recurrence = req.min_recurrence
         if req.auto_tune_cold_start:
             from .recall import cold_start_gates
-            relaxed = cold_start_gates(len(self._rows))
+            relaxed = cold_start_gates(len(self._claims))
             if relaxed is not None:
                 cosine_floor, top1_top2_gap, min_recurrence = relaxed
         try:
+            # Encode the query ONCE and reuse it for both the experience rank
+            # and the corpus-band rank — the hook has no warm encoder, so the
+            # daemon is the single embed point.
+            query_emb = _encode_query(req.query, self.encoder)
             hits, diagnostic = rank_with_diagnostic(
                 req.query,
-                rows=self._rows,
+                claims=self._claims,
                 band=self._band,
                 encoder=self.encoder,
                 cwd_hash=req.cwd_hash,
@@ -387,7 +505,7 @@ class DaemonServer:
                 top1_top2_gap=top1_top2_gap,
                 min_recurrence=min_recurrence,
                 intent_kind=req.intent_kind,  # type: ignore[arg-type]
-                session_markers=list(req.session_markers),
+                query_emb=query_emb,
             )
         except Exception as exc:
             conn.send(asdict(RecallReply(
@@ -395,13 +513,71 @@ class DaemonServer:
                 error=f"{type(exc).__name__}: {exc}",
             )))
             return
+        # Flattened claim rows — the shape `user_prompt._format_injection`
+        # rebuilds via `_row_to_claim`. `asdict` would nest `facts`.
         serialised = [
-            {"row": asdict(h.row), "cosine": h.cosine} for h in hits
+            {"claim": _claim_to_row(h.claim), "cosine": h.cosine}
+            for h in hits
         ]
+        # Corpus band recall (S3 d3): rank the workspace's insight band with
+        # the same query embedding. Best-effort + isolated — a corpus failure
+        # must never break experience recall, so it never raises out of here.
+        band_serialised: list[dict] = []
+        attribute_serialised: list[dict] = []
+        constraint_serialised: list[dict] = []
+        if req.km_path:
+            try:
+                from ..store.verified import (
+                    rank_insight_band,
+                    serve_band_attributes,
+                    serve_band_constraints,
+                )
+
+                loaded = self._corpus_band(req.km_path)
+                if loaded is not None:
+                    binsights, bband = loaded
+                    band_serialised = [
+                        {"claim_id": h.claim_id, "source": h.source,
+                         "rank": h.rank, "cosine": h.cosine}
+                        for h in rank_insight_band(
+                            query_emb, binsights, bband,
+                            top_k=_BAND_RECALL_TOP_K,
+                            cosine_floor=_BAND_RECALL_COSINE_FLOOR,
+                        )
+                    ]
+                    # Same band, content-bearing channel: serve the user-world
+                    # attribute claims, newest value per subject. The dedup is
+                    # here (not in `rank_insight_band`) because it reads `facts`.
+                    attribute_serialised = [
+                        {"content": a.content, "attribute_key": a.attribute_key,
+                         "created_at": a.created_at, "score": a.score}
+                        for a in serve_band_attributes(
+                            query_emb, binsights, bband,
+                            top_k=_BAND_RECALL_TOP_K,
+                            cosine_floor=_BAND_RECALL_COSINE_FLOOR,
+                        )
+                    ]
+                    # Serve-ALL channel: standing constraints + falsified
+                    # findings, query-independent (R1's proven no-selection
+                    # design — a hard rule applies whether or not the query
+                    # is about it).
+                    constraint_serialised = [
+                        {"claim_id": c.claim_id, "content": c.content,
+                         "kind": c.kind, "attribute_key": c.attribute_key,
+                         "created_at": c.created_at}
+                        for c in serve_band_constraints(binsights)
+                    ]
+            except Exception:
+                band_serialised = []
+                attribute_serialised = []
+                constraint_serialised = []
         conn.send(asdict(RecallReply(
             hits=serialised, encoder_revision=self.encoder_revision,
             effective_min_recurrence=min_recurrence,
             diagnostic=asdict(diagnostic),
+            band_hits=band_serialised,
+            attribute_hits=attribute_serialised,
+            constraint_hits=constraint_serialised,
         )))
 
 
@@ -429,7 +605,12 @@ def _connect_with_timeout(address, authkey: bytes, timeout_s: float):
     def _attempt() -> None:
         try:
             box["conn"] = _conn.Client(address, authkey=authkey)
-        except (FileNotFoundError, ConnectionRefusedError, OSError) as exc:
+        except (FileNotFoundError, ConnectionRefusedError, OSError,
+                EOFError, _mp_AuthenticationError) as exc:
+            # EOFError / AuthenticationError: the listener closed mid-
+            # handshake — the self-connect wake racing shutdown lands here
+            # (BrokenPipeError is an OSError; EOFError is NOT). Without
+            # these, every clean shutdown printed a thread traceback.
             box["error"] = exc
 
     worker = threading.Thread(target=_attempt, daemon=True)
@@ -438,6 +619,22 @@ def _connect_with_timeout(address, authkey: bytes, timeout_s: float):
     if worker.is_alive():
         return None
     return box.get("conn")
+
+
+def _decode_reply(payload: dict) -> RecallReply | None:
+    """Decode a reply dict into `RecallReply`, forward-compatibly.
+
+    A NEWER daemon may reply with fields this client doesn't know —
+    `RecallReply(**payload)` raised TypeError, which escaped request_recall's
+    catch tuple and broke the hook's fail-open contract on every
+    client/server version skew (2026-06 review). Unknown keys are ignored;
+    a payload missing required keys returns None (fail-open), never raises.
+    """
+    known = {f.name for f in fields(RecallReply)}
+    try:
+        return RecallReply(**{k: v for k, v in payload.items() if k in known})
+    except TypeError:
+        return None
 
 
 def request_recall(
@@ -467,7 +664,7 @@ def request_recall(
         payload = conn.recv()
         if not isinstance(payload, dict):
             return None
-        return RecallReply(**payload)
+        return _decode_reply(payload)
     except (EOFError, OSError, ConnectionResetError):
         return None
     finally:
@@ -504,15 +701,15 @@ def diagnose(root: Path, *, encoder_revision: str | None = None) -> DoctorReport
         return report
     report.add("root", True, f"per-user root present at {root}")
 
-    sidecar = root / "sidecar.jsonl"
-    band = root / "memory.npz"
-    if not sidecar.exists() or not band.exists():
+    claims = root / CLAIMS_FILE
+    band = root / BAND_FILE
+    if not claims.exists() or not band.exists():
         report.add("store", False,
-                   f"memory.npz or sidecar.jsonl missing under {root}; "
+                   f"{CLAIMS_FILE} or {BAND_FILE} missing under {root}; "
                    f"recreate via `rlat memory add <text>`")
     else:
         report.add("store", True,
-                   f"sidecar + band present ({sidecar.stat().st_size} + "
+                   f"claims + band present ({claims.stat().st_size} + "
                    f"{band.stat().st_size} bytes)")
 
     address = daemon_socket_address(root)

@@ -1,15 +1,25 @@
 """Layer-1 redaction — pattern-based credential scrub at capture time.
 
-Per `.claude/plans/fabric-agent-flat-memory.md` §6.2 Layer 1: every captured
-text and every distil candidate passes through `Redactor.scrub` before
-landing in the sidecar. Mechanical patterns only — semantic / private-context
-redaction lives in the distiller's prompt (Layer 2), and per-project tuning
-lives in `.rlat/capture.toml` (Layer 3).
+Every captured text passes through `Redactor.scrub` before landing in
+the experience claim store. Mechanical patterns only — the redactor
+catches **credentials** the regex set names (cloud keys, GitHub PATs,
+JWTs, PEM private keys, long hex). It does **not** catch:
+
+- emails, phone numbers, real-world names (these are PII but not
+  credentials; mechanical patterns over-flag this kind of text);
+- secrets in shapes the built-in patterns don't recognise (project-
+  specific tokens, novel cloud providers).
+
+Both classes are addressable through Layer 3 — per-project regexes
+appended via `extra_patterns` / globs via `denylist_paths`. A future
+semantic-redaction layer would catch PII categories that don't lend
+themselves to regex; none ships today.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,6 +124,13 @@ class Redactor:
         self._denylist: tuple[str, ...] = DENYLIST_PATHS + tuple(denylist_paths or ())
         self._audit_log_path = audit_log_path
 
+    @classmethod
+    def for_memory_root(cls, memory_root: Path) -> "Redactor":
+        """Redactor writing its §6.4 audit log to the conventional
+        `redaction.log` inside a per-user memory root — the construction
+        shared by capture, distil, and the consolidation pass."""
+        return cls(audit_log_path=memory_root / "redaction.log")
+
     # -- core scrubbers ----------------------------------------------------
 
     def scrub(self, text: str) -> tuple[str, list[RedactionEvent]]:
@@ -180,5 +197,15 @@ class Redactor:
         if not lines:
             return
         self._audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+        first_write = not self._audit_log_path.exists()
         with self._audit_log_path.open("a", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
+        # Tighten log mode on first creation so a multi-tenant POSIX host's
+        # other users can't read which credential patterns fired for this
+        # user. Mode is preserved by subsequent appends. Skipped on
+        # Windows (ACLs inherit from the parent dir).
+        if first_write and os.name != "nt":
+            try:
+                os.chmod(self._audit_log_path, 0o600)
+            except OSError:
+                pass

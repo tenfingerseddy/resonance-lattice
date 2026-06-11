@@ -314,18 +314,17 @@ def _check_insight_aware_retrieval(km: Path) -> int:
     from resonance_lattice.field.encoder import Encoder
     from resonance_lattice.store import archive
 
-    from ._testutil import make_insight_passage
+    from ._testutil import make_corpus_claim
 
     # Isolated corpus — promoting an insight mutates the archive.
     km2 = _build_fixture(km.parent / "insight_aware")
     c0 = archive.read(km2)
     src_ids = [c.passage_id for c in c0.registry]
     src_hashes = [c.content_hash for c in c0.registry]
-    insight = make_insight_passage(
-        0,
+    insight = make_corpus_claim(
         "MLV refresh is incremental when the source supports it; otherwise "
         "the materialized lake view performs a full overwrite refresh.",
-        src_ids[:1], src_hashes[:1], state="accepted",
+        src_ids[:1], src_hashes[:1], state="active",
     )
     band = Encoder().encode([insight.content]).astype("float32")
     archive.write_insight_layer_in_place(km2, [insight], band)
@@ -351,7 +350,7 @@ def _check_insight_aware_retrieval(km: Path) -> int:
               "the refiner prompt", file=sys.stderr)
         return 1
     # The result must carry the engaged insight id (attribution substrate).
-    if insight.insight_id not in result.insight_ids:
+    if insight.claim_id not in result.insight_ids:
         print(f"[deep_search] FAIL guarantee 7: insight_id not captured in "
               f"result.insight_ids ({result.insight_ids})", file=sys.stderr)
         return 1
@@ -392,6 +391,81 @@ def _check_parse_fail_recovery(km: Path) -> int:
     return 0
 
 
+def _check_cost_cap_halts_loop(km: Path) -> int:
+    """A `CostMeter` with a tight cap halts the loop before the refiner
+    can run. The planner call accumulates ~$0.315 of metered spend
+    (100K input + 1K output Sonnet tokens); with a $0.20 cap the
+    pre-refiner check fires at the next hop and the loop returns a
+    partial-answer-from-evidence (since hop 2 retrieved passages
+    before the cap-check). Mirrors `reverification` g8."""
+    from resonance_lattice.deep_search import deep_search
+    from resonance_lattice._pricing import CostMeter
+
+    class _ExpensiveMessage:
+        def __init__(self, text: str) -> None:
+            self.content = [_StubContent(text=text)]
+            # ~$0.315 of Sonnet spend per call → first call alone crosses
+            # the $0.20 cap.
+            self.usage = _StubUsage(input_tokens=100_000, output_tokens=1_000)
+
+    class _ExpensiveClient:
+        def __init__(self, scripted: list[str]) -> None:
+            self._queue = list(scripted)
+            self.calls: list[tuple[str, str]] = []
+
+            class _Messages:
+                def __init__(self, outer):
+                    self._outer = outer
+
+                def create(self, *, model, max_tokens, system, messages):
+                    if not self._outer._queue:
+                        raise RuntimeError(
+                            "deep_search test: scripted queue exhausted"
+                        )
+                    self._outer.calls.append((system, messages[0]["content"]))
+                    return _ExpensiveMessage(self._outer._queue.pop(0))
+
+            self.messages = _Messages(self)
+
+    client = _ExpensiveClient(["MLV default action"])  # only the planner runs
+    meter = CostMeter(cap_usd=0.20)
+
+    result = deep_search(
+        km, "What is the default action of MLV?", client=client,
+        max_hops=4, top_k=3, meter=meter,
+    )
+    kinds = [h.kind for h in result.hops]
+    ok = (
+        len(client.calls) == 1  # only the planner ran; refiner was capped
+        and "cost_cap_crossed" in kinds
+        and meter.has_exceeded_cap()
+    )
+    if not ok:
+        print(f"[deep_search] FAIL cost-cap: calls={len(client.calls)} "
+              f"kinds={kinds} cost={meter.cost_so_far():.4f}", file=sys.stderr)
+        return 1
+    # Pre-flight cap on a second `deep_search` call sharing the same
+    # meter — bails before the planner even runs (the `rlat probe`
+    # session-wide pattern).
+    client2 = _ExpensiveClient([])  # no calls expected
+    result2 = deep_search(
+        km, "Another question.", client=client2,
+        max_hops=4, top_k=3, meter=meter,
+    )
+    ok = (
+        len(client2.calls) == 0
+        and "cost_cap_crossed" in [h.kind for h in result2.hops]
+        and result2.answer.startswith("I cannot produce an answer")
+    )
+    if not ok:
+        print(f"[deep_search] FAIL cost-cap pre-flight: calls={len(client2.calls)} "
+              f"answer={result2.answer!r}", file=sys.stderr)
+        return 1
+    print("[deep_search] cost-cap halts loop + pre-flights subsequent calls OK",
+          file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     with tempfile.TemporaryDirectory() as d:
         km = _build_fixture(Path(d))
@@ -404,6 +478,7 @@ def run() -> int:
             _check_token_accounting,
             _check_insight_aware_retrieval,
             _check_parse_fail_recovery,
+            _check_cost_cap_halts_loop,
         ):
             if fn(km) != 0:
                 return 1

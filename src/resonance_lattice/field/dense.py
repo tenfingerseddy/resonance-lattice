@@ -1,4 +1,4 @@
-"""Dense cosine retrieval — base or optimised band.
+"""Dense cosine retrieval over a band's embedding matrix.
 
 Single retrieval strategy applied uniformly. The retrieval pipeline branches
 on band presence at knowledge-model load time, not on a flag. Cross-knowledge-
@@ -23,18 +23,14 @@ def search(
     query_embedding: np.ndarray,
     band_embeddings: np.ndarray,
     registry: "Sequence | None" = None,
-    projection_matrix: np.ndarray | None = None,
     top_k: int = 10,
 ) -> list[tuple[int, float]]:
     """Top-k cosine retrieval against a single band.
 
     query_embedding: (D,) L2-normalised float32 from `Encoder.encode([query])[0]`.
-    band_embeddings: (N, d_band) L2-normalised float32. d_band is 768 for base,
-        512 for the MRL optimised (after W projection).
+    band_embeddings: (N, 768) L2-normalised float32 (the base band dim).
     registry: sequence of objects exposing `.source_file: str` and
         `.char_offset: int` for query-time dedup. Passing None skips dedup.
-    projection_matrix: (d_band, D) MRL W matrix. Pass when `band_embeddings`
-        is the optimised band; pass None for the base band.
     top_k: number of results returned after dedup.
 
     Returns: list of (passage_idx, score) sorted by score descending,
@@ -45,10 +41,6 @@ def search(
         return []
 
     q = query_embedding
-    if projection_matrix is not None:
-        q = q @ projection_matrix.T
-        common.l2_normalize(q)
-
     scores = band_embeddings @ q
     n = len(scores)
 

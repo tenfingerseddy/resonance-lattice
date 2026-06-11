@@ -35,23 +35,24 @@ header.site {
   border-bottom: 1px solid var(--rule);
 }
 
+/* logo row */
 header.site .bar {
-  max-width: 760px;
+  max-width: 1000px;
   margin: 0 auto;
-  padding: 16px 32px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  flex-wrap: wrap;
+  padding: 20px 32px 0;
 }
 
-header.site .logo { display: flex; }
-header.site .logo img { height: 34px; width: auto; display: block; }
+header.site .logo { display: inline-flex; }
+header.site .logo img { height: 46px; width: auto; display: block; }
 
+/* full nav — its own row, wraps as needed, every page one click away */
 nav.site {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 12px 32px 14px;
   display: flex;
-  gap: 22px;
+  flex-wrap: wrap;
+  gap: 6px 20px;
   font-size: 14px;
 }
 
@@ -432,7 +433,9 @@ footer.site a:hover { color: var(--ink); }
 
 @media (max-width: 600px) {
   .wrap { padding: 48px 20px 72px; }
-  header.site .bar, footer.site .bar { padding: 16px 20px; }
+  header.site .bar { padding: 16px 20px 0; }
+  nav.site { padding: 10px 20px 12px; }
+  footer.site .bar { padding: 16px 20px; }
   h1 { font-size: 30px; }
   .lede { font-size: 17px; }
   .three-up, .three-up.two, .toc { grid-template-columns: 1fr; }

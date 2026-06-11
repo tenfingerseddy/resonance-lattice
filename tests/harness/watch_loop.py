@@ -1,6 +1,6 @@
 """watch_loop — `rlat watch` is correct under live edits.
 
-Nine guarantees (all hermetic, no actual filesystem-event delivery — we
+Eight guarantees (all hermetic, no actual filesystem-event delivery — we
 exercise the deterministic seams the watchdog observer feeds into):
 
   1. Discovery: `_discover_archives` finds all `*.rlat` files in the cwd
@@ -14,16 +14,14 @@ exercise the deterministic seams the watchdog observer feeds into):
      never race the `<archive>.tmp` write path.
   5. Bundled-mode pre-flight: `_preflight_archive` rejects bundled
      archives with an actionable `rlat convert` hint.
-  6. Optimised band reprojection: a refresh through the watch path
-     re-projects the optimised band correctly (no LLM call).
-  7. --once with prior drift: `_WatchSession.run_once()` runs a single
+  6. --once with prior drift: `_WatchSession.run_once()` runs a single
      synchronous reconciliation against current disk state and exits.
      CI / pre-commit shape — the "wait for first event" semantic was
      a hang in pre-commit hooks where files are already changed.
-  8. force-dispatch bypasses the suffix pre-filter: rename-out scenarios
+  7. force-dispatch bypasses the suffix pre-filter: rename-out scenarios
      (foo.md → foo.bak) and directory deletes still trigger refreshes
      even though the post-rename suffix isn't in the watched allowlist.
-  9. Skip preservation: `_filter_skipped_removals` defends against the
+  8. Skip preservation: `_filter_skipped_removals` defends against the
      silent-delete hazard where a transient read failure (Windows file
      lock, mid-write decode error) makes a real file disappear from
      `_walk_sources` and bucketise emits a destructive removal for it.
@@ -39,11 +37,7 @@ import time
 from contextlib import redirect_stderr
 from pathlib import Path
 
-import numpy as np
-
-
 from ._testutil import build_corpus as _build
-from .optimised_reproject import _attach_optimised
 
 
 _FILES = {
@@ -250,49 +244,7 @@ def run() -> int:
             return 1
     print("[watch_loop] guarantee 5 (bundled pre-flight) OK", file=sys.stderr)
 
-    # ---- Guarantee 6: optimised band reprojected via watch path ----
-    with tempfile.TemporaryDirectory() as d:
-        root = Path(d) / "corpus"
-        km = _build(root, dict(_FILES))
-        W_initial = _attach_optimised(km, d_native=128)
-        state = _make_state(km)
-
-        (root / "b.md").write_text(
-            "# Beta v3\n\nDifferent content again — for the optimised "
-            "re-projection contract under the watch refresh path.",
-            encoding="utf-8",
-        )
-        counts = _refresh_one(state, encoder, batch_size=4)
-        if counts is None:
-            print("[watch_loop] FAIL guarantee 6: no delta detected",
-                  file=sys.stderr)
-            return 1
-        c1 = _read(km)
-        if "optimised" not in c1.bands:
-            print("[watch_loop] FAIL guarantee 6: optimised band missing "
-                  "post-refresh", file=sys.stderr)
-            return 1
-        new_base = c1.bands["base"]
-        new_optimised = c1.bands["optimised"]
-        W_loaded = c1.projections["optimised"]
-        if not np.array_equal(W_loaded, W_initial):
-            print("[watch_loop] FAIL guarantee 6: W changed across refresh",
-                  file=sys.stderr)
-            return 1
-        expected = new_base @ W_loaded.T
-        expected = expected / np.maximum(
-            np.linalg.norm(expected, axis=1, keepdims=True), 1e-12,
-        )
-        if not np.allclose(new_optimised, expected, atol=1e-6):
-            max_diff = float(np.max(np.abs(new_optimised - expected)))
-            print(f"[watch_loop] FAIL guarantee 6: optimised band is not "
-                  f"new_base @ W.T L2-normalised; max_diff={max_diff}",
-                  file=sys.stderr)
-            return 1
-    print("[watch_loop] guarantee 6 (optimised reprojection) OK",
-          file=sys.stderr)
-
-    # ---- Guarantee 7: --once runs a synchronous reconciliation ----
+    # ---- Guarantee 6: --once runs a synchronous reconciliation ----
     # CI / pre-commit shape: edits land BEFORE `rlat watch --once` runs,
     # so the command must NOT hang waiting for further events. It walks
     # the tree, runs bucketise+apply, exits.
@@ -318,11 +270,11 @@ def run() -> int:
         session.run_once()
 
         if state.refresh_count != 1:
-            print(f"[watch_loop] FAIL guarantee 7: --once refresh_count="
+            print(f"[watch_loop] FAIL guarantee 6: --once refresh_count="
                   f"{state.refresh_count}, expected 1", file=sys.stderr)
             return 1
         if state.archive_path not in session._touched:
-            print("[watch_loop] FAIL guarantee 7: archive missing from "
+            print("[watch_loop] FAIL guarantee 6: archive missing from "
                   "_touched after --once refresh", file=sys.stderr)
             return 1
 
@@ -335,14 +287,14 @@ def run() -> int:
         rc_before = state.refresh_count
         session2.run_once()
         if state.refresh_count != rc_before:
-            print(f"[watch_loop] FAIL guarantee 7: second --once refreshed "
+            print(f"[watch_loop] FAIL guarantee 6: second --once refreshed "
                   f"despite no drift (count went {rc_before} → "
                   f"{state.refresh_count})", file=sys.stderr)
             return 1
-    print("[watch_loop] guarantee 7 (--once synchronous reconciliation) OK",
+    print("[watch_loop] guarantee 6 (--once synchronous reconciliation) OK",
           file=sys.stderr)
 
-    # ---- Guarantee 8: force=True bypasses the suffix pre-filter ----
+    # ---- Guarantee 7: force=True bypasses the suffix pre-filter ----
     # Rename-out (foo.md → foo.bak) and directory deletes deliver paths
     # whose suffix isn't in the archive's extensions allowlist. Without
     # force=True dispatch, those events would be filtered out and stale
@@ -361,7 +313,7 @@ def run() -> int:
         # force=False (the hot-path default) must NOT touch.
         session._on_event(non_watched, force=False)
         if state.archive_path in session._touched:
-            print("[watch_loop] FAIL guarantee 8a: force=False on "
+            print("[watch_loop] FAIL guarantee 7a: force=False on "
                   ".bak path triggered the archive (suffix filter "
                   "should have dropped it)", file=sys.stderr)
             return 1
@@ -369,7 +321,7 @@ def run() -> int:
         # force=True (move/delete/dir path) MUST touch.
         session._on_event(non_watched, force=True)
         if state.archive_path not in session._touched:
-            print("[watch_loop] FAIL guarantee 8b: force=True on "
+            print("[watch_loop] FAIL guarantee 7b: force=True on "
                   ".bak path did NOT trigger the archive (rename-out / "
                   "directory-delete reconciliation broken)", file=sys.stderr)
             return 1
@@ -378,9 +330,9 @@ def run() -> int:
         # of the suite runs cleanly.
         for refresher in session.refreshers.values():
             refresher.cancel()
-    print("[watch_loop] guarantee 8 (force-dispatch bypass) OK", file=sys.stderr)
+    print("[watch_loop] guarantee 7 (force-dispatch bypass) OK", file=sys.stderr)
 
-    # ---- Guarantee 9: skipped files don't become silent deletes ----
+    # ---- Guarantee 8: skipped files don't become silent deletes ----
     # FilesystemSourceWalker records files it couldn't read (Windows lock,
     # mid-write decode error) into `walker.skipped`. Without
     # _filter_skipped_removals, bucketise sees no candidate for that file
@@ -399,7 +351,7 @@ def run() -> int:
         b_coords = [c for c in contents.registry if c.source_file == "b.md"]
         a_coords = [c for c in contents.registry if c.source_file == "a.md"]
         if not b_coords or not a_coords:
-            print("[watch_loop] FAIL guarantee 9 setup: missing passages",
+            print("[watch_loop] FAIL guarantee 8 setup: missing passages",
                   file=sys.stderr)
             return 1
 
@@ -414,18 +366,18 @@ def run() -> int:
         skipped_rel = {"b.md"}
         preserved = _filter_skipped_removals(delta, skipped_rel)
         if preserved != len(b_coords):
-            print(f"[watch_loop] FAIL guarantee 9: preserved {preserved} "
+            print(f"[watch_loop] FAIL guarantee 8: preserved {preserved} "
                   f"!= expected {len(b_coords)}", file=sys.stderr)
             return 1
         if delta.removed:
-            print(f"[watch_loop] FAIL guarantee 9: {len(delta.removed)} "
+            print(f"[watch_loop] FAIL guarantee 8: {len(delta.removed)} "
                   "removals survived the skip filter", file=sys.stderr)
             return 1
         # Preserved passages must be in `unchanged`.
         b_ids = {c.passage_id for c in b_coords}
         unchanged_ids = {c.passage_id for c in delta.unchanged}
         if not b_ids.issubset(unchanged_ids):
-            print("[watch_loop] FAIL guarantee 9: b.md passages not "
+            print("[watch_loop] FAIL guarantee 8: b.md passages not "
                   "promoted to unchanged after skip filter",
                   file=sys.stderr)
             return 1
@@ -437,11 +389,11 @@ def run() -> int:
         _ = list(walker.iter_files())
         skipped_names = {rel for rel, _ in walker.skipped}
         if "broken.md" not in skipped_names:
-            print(f"[watch_loop] FAIL guarantee 9: walker.skipped didn't "
+            print(f"[watch_loop] FAIL guarantee 8: walker.skipped didn't "
                   f"produce 'broken.md' for an undecodable file; "
                   f"got {skipped_names}", file=sys.stderr)
             return 1
-    print("[watch_loop] guarantee 9 (skip preservation) OK", file=sys.stderr)
+    print("[watch_loop] guarantee 8 (skip preservation) OK", file=sys.stderr)
 
     # ---- Bonus: the debouncer fires after schedule() ----
     # Quick sanity that the timer plumbing works; we don't call this a

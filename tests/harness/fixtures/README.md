@@ -1,9 +1,9 @@
 # Harness fixtures (small, deterministic)
 
-Small corpora (≤100 docs) used by the per-commit harness suites. Must build
-fast (<5 s) so the harness runs cheaply.
+Committed fixtures the per-commit harness suites load by path.
 
-Larger BEIR-style fixtures live under `../fixtures_large/` and are opt-in
-(skipped by default in the per-commit selection).
-
-Populated as suites land, starting Phase 1.
+- `encoder_golden.npz` — reference embeddings for 4 fixed strings from the
+  pinned encoder revision on the ONNX runtime. `encoder_determinism.py`
+  guarantee D3 checks cosine ≥ 0.9999 against it. Regenerate (and re-commit)
+  whenever the pinned revision changes; the suite SKIPs on revision mismatch
+  rather than failing.

@@ -1,10 +1,9 @@
 """PyTorch inference for gte-modernbert-base.
 
-Used at build time (encoding the corpus once) and at optimise time
-(encoding synth queries + training MRL W). NOT the default query-time path
-— ONNX/OpenVINO are 2-4× faster on CPU.
+Used at build time (encoding the corpus once). NOT the default query-time
+path — ONNX/OpenVINO are 2-4× faster on CPU.
 
-Requires the [build] or [optimise] install extras.
+Requires the [build] install extra.
 
 Phase 1 deliverable. Base plan §1.2.
 """
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
     import torch
     from transformers import PreTrainedModel
 
-_INSTALL_HINT = "Install with `pip install rlat[build]` (or `[optimise]`)."
+_INSTALL_HINT = "Install with `pip install rlat[build]`."
 
 
 @dataclass

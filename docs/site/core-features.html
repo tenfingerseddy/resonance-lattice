@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Core use cases — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html" aria-current="page">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>Core use cases</h1>
+  <p class="lede">
+    A knowledge model is a single <code>.rlat</code> file: the embedded
+    representation of your corpus plus every coordinate needed to find, cite,
+    and verify the source behind a result. One artifact, three layers — the
+    <strong>field</strong> routes queries, the <strong>store</strong> serves
+    evidence, your assistant composes the answer. Seven things that artifact
+    lets you do.
+  </p>
+
+  <section id="overview">
+    <div class="section-num">00 — Map</div>
+    <h2>Eight use cases, one artifact</h2>
+    <p>
+      The eight use cases below share the same <code>.rlat</code> file and the
+      same architecture. They differ only in which surface of <code>rlat</code>
+      they lean on most.
+    </p>
+    <ul class="checklist">
+      <li><a href="#ground">Ground an LLM with verified citations</a></li>
+      <li><a href="#bootstrap">Bootstrap any assistant in seconds</a></li>
+      <li><a href="#skills">Make skills knowledge-aware</a></li>
+      <li><a href="#memory">Give an assistant durable memory</a></li>
+      <li><a href="#portable">Keep your knowledge portable and local-first</a></li>
+      <li><a href="#inspect">Inspect what your knowledge contains</a></li>
+      <li><a href="#improve">Let the knowledge model improve itself</a></li>
+      <li><a href="#compose">Compose without rebuilding</a></li>
+    </ul>
+  </section>
+
+  <section id="ground">
+    <div class="section-num">01 — Trust the answer</div>
+    <h2>Ground an LLM with verified citations</h2>
+    <p>
+      <strong>Trust the answer without checking the LLM's work.</strong> Every
+      passage <code>rlat</code> returns carries its source file, character
+      offset, content hash, and a live <em>drift status</em> against the file on
+      disk — drift meaning the file changed since the model was built. Your
+      assistant composes its response from passages that have been mechanically
+      verified, not from what the model happens to remember.
+    </p>
+
+    <h3 id="ground-what-you-get">What you get</h3>
+    <ul class="checklist">
+      <li><strong>Hits with full provenance.</strong> Every result carries its
+      text, source file, character offset and length, content hash, and drift
+      status. The text is sliced live from the source file — drift is detected
+      because hashes are checked, not assumed.</li>
+      <li><strong>Drop the drifted with one flag.</strong>
+      <code>rlat search --verified-only</code> filters out any hit whose
+      content hash no longer matches the source. Use it whenever the model is
+      older than the underlying files and you would rather have fewer truthful
+      hits than more stale ones.</li>
+      <li><strong>Honest confidence on every retrieval.</strong> The Python
+      <code>evidence()</code> operation returns confidence metrics: the top-1
+      cosine score (is retrieval working at all?), the gap to the second hit,
+      how many distinct sources back the answer, and the fraction of supporting
+      evidence that has drifted. Use these to gate whether a downstream LLM
+      should answer or refuse.</li>
+      <li><strong>Grounding modes for LLM-facing output.</strong>
+      <code>rlat search --format context --mode &lcub;augment|knowledge|constrain&rcub;</code>
+      (and the same flag on <code>rlat skill-context</code>) stamps a directive
+      at the top of the markdown telling the consumer LLM how to treat the
+      passages — see the next section for the three modes.</li>
+      <li><strong>Name-aliasing protection.</strong> <code>--strict-names</code>
+      extracts distinctive proper nouns, acronyms, and alphanumeric IDs from the
+      question and checks each appears in at least one retrieved passage. It
+      catches the failure mode where a question references a fake or adjacent
+      product but the corpus only describes a similarly-named real one — a score
+      cannot tell those apart on a paraphrase-rich corpus; the name check
+      can.</li>
+      <li><strong>Multi-hop research that produces a grounded answer.</strong>
+      For cross-file synthesis questions, the <code>deep-research</code> skill
+      drives a plan → retrieve → refine → synthesize loop natively in your
+      Claude Code session — no API key, your subscription covers the LLM hops.
+      The same loop is exposed as <code>rlat deep-search</code> for
+      programmatic, agent, and CI consumers (an Anthropic API key is required
+      there). On the Microsoft Fabric corpus, under a relaxed rubric, the loop
+      measured 92.2% answerable accuracy at 0% hallucination — the same numbers
+      apply to both surfaces because it is the same loop.</li>
+    </ul>
+
+    <h3 id="ground-run">Run</h3>
+    <pre><code>rlat search my-project.rlat "how does the encoder cache work" --verified-only
+rlat search my-project.rlat "auth flow" --format context        # markdown for an LLM prompt
+rlat deep-search my-project.rlat "explain the auth flow with rationale"  # multi-hop, synthesised answer</code></pre>
+
+    <h3 id="ground-why">Why it matters</h3>
+    <p>
+      Hallucinated citations are the failure mode that consequences hang on —
+      legal briefs, medical advice, regulatory filings, audit reports.
+      <code>rlat</code> makes them <strong>structurally detectable</strong>:
+      every retrieved passage carries a source path, character offset, and
+      content hash, so the consumer can verify where evidence came from and
+      whether it has drifted. For compliance work, pair <code>--mode constrain</code>
+      with <code>--strict-names</code> so a question about a non-existent
+      product gets a refusal rather than a confident wrong answer.
+    </p>
+  </section>
+
+  <section id="bootstrap">
+    <div class="section-num">02 — Stop re-explaining</div>
+    <h2>Bootstrap any assistant in seconds</h2>
+    <p>
+      <strong>Stop re-explaining your project on every new chat.</strong>
+      <code>rlat</code> generates an extractive <em>primer</em> — a compact
+      summary of the project — and your assistant loads it at session start.
+      Conversations don't begin cold, and the assistant doesn't invent details
+      to fill the gap.
+    </p>
+
+    <h3 id="bootstrap-what-you-get">What you get</h3>
+    <ul class="checklist">
+      <li><strong>One command from clone to full context.</strong>
+      <code>rlat init-project</code> auto-detects <code>docs/</code>,
+      <code>src/</code>, and top-level Markdown, builds the knowledge model, and
+      writes a primer. A new contributor — or your future self after weeks away
+      — gets the assistant briefed in under a minute.</li>
+      <li><strong>Targeted evidence sections.</strong>
+      <code>rlat summary --query "auth" --query "billing"</code> adds an
+      evidence block per query, so a primer covers the topics you actually ask
+      about, not just the corpus average.</li>
+      <li><strong>Stays current — manually or live.</strong>
+      <code>rlat refresh</code> re-ingests a local-mode model against its
+      recorded source paths, atomically. <code>rlat watch</code> runs the same
+      refresh on every save (debounced, silent by default, auto-discovers
+      <code>*.rlat</code> in the current directory) so the model stays fresh
+      without you remembering to refresh.</li>
+      <li><strong>Works with any assistant.</strong> Claude Code, Cursor,
+      command-line LLMs, agents in any IDE — anywhere a project-context file
+      gets loaded.</li>
+    </ul>
+
+    <h3 id="bootstrap-run">Run</h3>
+    <pre><code>rlat init-project                                # auto-detect, build, primer
+rlat summary my-project.rlat -o .claude/resonance-context.md
+rlat summary my-project.rlat \
+  --query "encoder caching" --query "drift detection" \
+  -o .claude/resonance-context.md</code></pre>
+
+    <h3 id="bootstrap-why">Why it matters</h3>
+    <p>
+      Every cold session is a tax. A primer paid once and refreshed on demand
+      collapses the cost of rebuilding context from per-conversation to
+      per-corpus-change. The assistant arrives knowing what the project is, so
+      the conversation starts where the last useful one left off.
+    </p>
+  </section>
+
+  <section id="skills">
+    <div class="section-num">03 — Adaptive skills</div>
+    <h2>Make skills knowledge-aware</h2>
+    <p>
+      <strong>An Anthropic skill is a static instruction bundle by default.</strong>
+      <code>rlat skill-context</code> makes it adaptive — each invocation
+      injects markdown evidence retrieved against the user's actual question,
+      drawn from a knowledge model the skill author chose.
+    </p>
+
+    <h3 id="skills-what-you-get">What you get</h3>
+    <ul class="checklist">
+      <li><strong>A first-class skill primitive.</strong>
+      <code>rlat skill-context</code> is designed to be the body of a skill
+      <code>!command</code> block. It returns markdown, so the skill's
+      <code>SKILL.md</code> doesn't post-process anything.</li>
+      <li><strong>Multi-query in one call.</strong> <code>--query</code> is
+      repeatable — pass a skill-author preset query <em>and</em> the user's live
+      query in one invocation. The token budget truncates later blocks first,
+      so the preset survives if the budget shrinks.</li>
+      <li><strong>Three grounding modes.</strong> <code>--mode augment</code>
+      (the default) tells the LLM to treat passages as primary context blended
+      with its training. <code>--mode constrain</code> tells it to answer
+      <em>only</em> from the passages and refuse otherwise — load-bearing for
+      fact extraction, compliance, regulatory, and audit skills.
+      <code>--mode knowledge</code> treats passages as a supplement to
+      training.</li>
+      <li><strong>Drift-aware injection.</strong> Every passage carries a drift
+      indicator, and <code>--verified-only</code> drops any passage whose source
+      has drifted or gone missing — so a skill never silently serves stale
+      knowledge.</li>
+      <li><strong>Per-passage citation anchors.</strong> Output is labelled
+      with each passage's source file and character offset, so the assistant
+      can cite back into your source files at exact coordinates.</li>
+      <li><strong>Works on existing knowledge models.</strong> Any
+      <code>.rlat</code> file already serves a skill — no per-skill encoder, no
+      skill-specific build, no separate index.</li>
+    </ul>
+
+    <h3 id="skills-run">Run</h3>
+    <pre><code># Inside a skill SKILL.md, in a !command block:
+rlat skill-context fabric.rlat \
+  --query "Fabric workspace authentication and service principal patterns" \
+  --query "$USER_QUERY" \
+  --top-k 8 --token-budget 2000</code></pre>
+
+    <h3 id="skills-why">Why it matters</h3>
+    <p>
+      A skill about Fabric lakehouses without <code>rlat</code> injects the same
+      instructions whether the question is about workspace setup, ingestion
+      patterns, or Delta merge semantics. With <code>rlat skill-context</code>,
+      each question retrieves different evidence from the same knowledge model.
+      The skill's static instructions frame the workflow; the knowledge model
+      supplies the specifics. Full walkthrough on the
+      <a href="skills.html">skills</a> page.
+    </p>
+  </section>
+
+  <section id="memory">
+    <div class="section-num">04 — Durable memory</div>
+    <h2>Give an assistant durable memory</h2>
+    <p>
+      <strong>Conversations that accumulate, not conversations that vanish.</strong>
+      <code>rlat memory</code> keeps the lessons of past sessions as a small,
+      queryable store — and grows more confident in the lessons that keep
+      paying off.
+    </p>
+
+    <h3 id="memory-what-you-get">What you get</h3>
+    <ul class="checklist">
+      <li><strong>A flat confidence store, not a log.</strong> Memory holds a
+      small set of <em>lessons</em> — short statements about what tends to work
+      — and each lesson carries a <em>confidence</em> on a four-step ladder
+      (low → medium → high → verified) that rises as the lesson keeps proving
+      useful.</li>
+      <li><strong>Automatic capture, distil, and forget.</strong> At session
+      end the harness records what was learned and how the task went, distils
+      raw notes into lessons, and prunes the weak ones — you are never asked to
+      rate, tag, or file anything.</li>
+      <li><strong>Confidence orders recall.</strong> When several lessons are
+      equally relevant, the more confident one surfaces first, and every
+      recalled lesson shows its confidence so a low-confidence guess is never
+      mistaken for a verified fact.</li>
+      <li><strong>A few commands you touch by hand.</strong>
+      <code>rlat memory add</code> writes a lesson directly,
+      <code>rlat memory list</code> and <code>rlat memory recall</code> inspect
+      the store, and <code>rlat memory gc</code> is a filtered escape hatch for
+      manual deletion.</li>
+      <li><strong>Three world content classes, each with a published
+      receipt.</strong> Stable facts about the world the knowledge model
+      covers — a capacity, a version, a region, a policy — where the newest
+      value per subject wins
+      (<a href="benchmarks.html#r1x-cross-domain">receipt</a>). Standing
+      constraints — hard rules served in full on every context serve, never
+      retrieved by similarity
+      (<a href="benchmarks.html#r1-constraints">receipt</a>). And
+      tried-and-falsified findings — served with their verdict, so an
+      assistant stops re-recommending dead ends
+      (<a href="benchmarks.html#r2-falsification-ledger">receipt</a>).</li>
+      <li><strong>Passive capture is one command, opt-in.</strong>
+      <code>rlat memory install-hooks --mine</code> wires the session hooks
+      and sets <code>RLAT_MINE_ATTRIBUTES=1</code>; from then on, durable
+      world facts you state in passing land automatically. The extractor's
+      GATE 4 drops facts about <em>you</em> — only facts about the knowledge
+      model's world are kept
+      (<a href="benchmarks.html#e2c-capture-gate">receipt</a>).</li>
+    </ul>
+
+    <h3 id="memory-run">Run</h3>
+    <pre><code>rlat memory add "user prefers TypeScript over Python" --polarity prefer
+rlat memory recall "what tech stack does the user prefer"
+rlat memory list</code></pre>
+
+    <h3 id="memory-why">Why it matters</h3>
+    <p>
+      With capture enabled — one command,
+      <code>rlat memory install-hooks --mine</code> — the file accumulates
+      validated world facts and lessons, and each one's confidence moves with
+      real outcomes. What it does <em>not</em> do is silently delete things:
+      automatic suppression was tested and falsified, and the record is
+      published (<a href="benchmarks.html#r4-suppression">R4</a>), so
+      corrections stay explicit — you state the new fact or delete the old
+      one. The full model — what gets captured, the
+      confidence ladder, the distillation arrows, and how forgetting stays
+      careful — is on the <a href="claim-system.html">claim system</a> page.
+    </p>
+  </section>
+
+  <section id="portable">
+    <div class="section-num">05 — Local-first</div>
+    <h2>Keep your knowledge portable and local-first</h2>
+    <p>
+      <strong>Your knowledge stays yours.</strong> A knowledge model is a single
+      <code>.rlat</code> file, your source files stay where they are, and
+      nothing leaves your machine unless you explicitly send it.
+    </p>
+
+    <h3 id="portable-what-you-get">What you get</h3>
+    <ul class="checklist">
+      <li><strong>Single-file portability.</strong> One <code>.rlat</code>
+      packages embeddings, source coordinates, drift hashes, an optional ANN
+      index, and — in bundled mode — the source text itself. Copy it, version
+      it, share it; it works anywhere Python 3.11 or newer runs.</li>
+      <li><strong>Three storage modes for three trust models.</strong>
+        <ul>
+          <li><code>bundled</code> — the source text is packed inside the
+          archive. Fully self-contained; ship it without the source files.</li>
+          <li><code>local</code> (the default) — the source text stays on disk
+          and the archive resolves it via <code>--source-root</code>. No
+          duplication; ideal when the source is a git repo you already
+          version.</li>
+          <li><code>remote</code> — the source text lives behind an HTTP base
+          URL with SHA-pinned manifests. Read-only <code>rlat freshness</code>
+          confirms upstream hasn't changed; <code>rlat sync</code> applies an
+          incremental delta when it has.</li>
+        </ul>
+      </li>
+      <li><strong>Fully offline after first install.</strong>
+      <code>rlat install-encoder</code> downloads the encoder once. After that,
+      build and search need zero network access. Pair with a local
+      LLM for an end-to-end private stack.</li>
+      <li><strong>Field-only sharing.</strong> Ship a <code>.rlat</code> with
+      the vectors but without the source text — recipients see and can search
+      the semantic structure of a private corpus without reading your raw
+      text.</li>
+      <li><strong>No telemetry, no accounts, no cloud.</strong> Everything is a
+      local Python package.</li>
+    </ul>
+
+    <h3 id="portable-run">Run</h3>
+    <pre><code>rlat install-encoder                                       # one-time
+rlat build ./docs ./src -o my-project.rlat                 # local mode (default)
+rlat build ./docs -o handout.rlat --store-mode bundled     # self-contained</code></pre>
+
+    <h3 id="portable-why">Why it matters</h3>
+    <p>
+      The same artifact serves a hobbyist on a laptop, a consultant carrying
+      client knowledge between engagements, a research team archiving a paper
+      corpus, and a regulated-industry team where data egress is policy. The
+      <code>.rlat</code> format is a single-file unit of distribution —
+      versionable, diffable, hand-offable, archivable. Decision guide on the
+      <a href="storage-modes.html">storage modes</a> page.
+    </p>
+  </section>
+
+  <section id="inspect">
+    <div class="section-num">06 — See inside</div>
+    <h2>Inspect what your knowledge contains</h2>
+    <p>
+      <strong>See the structure of what you know — and what you don't.</strong>
+      Most retrieval tools are opaque: documents in, results out, no way to
+      understand the model in between. <code>rlat</code> exposes the semantic
+      structure of the corpus as a first-class interface.
+    </p>
+
+    <h3 id="inspect-what-you-get">What you get</h3>
+    <ul class="checklist">
+      <li><strong><code>rlat profile</code></strong> — per-source-file passage
+      counts, drift counts grouped by verified / drifted / missing, encoder
+      identity, band info. "How healthy is this knowledge model?" in one
+      command.</li>
+      <li><strong><code>rlat compare</code></strong> — cross-knowledge-model
+      thematic alignment plus asymmetric coverage: a single centroid-cosine
+      number for how aligned two corpora are, and how much of each is covered by
+      the other. Always uses the base band.</li>
+      <li><strong>Python inspection operations</strong> — <code>locate</code>
+      reports how dense the corpus is around a point in semantic space;
+      <code>neighbors</code> finds the passages nearest a given one;
+      <code>near_duplicates</code> surfaces accidental redundancy;
+      <code>corpus_diff</code> tracks per-passage changes across two snapshots;
+      <code>drift</code> lists every passage whose source has changed.</li>
+    </ul>
+
+    <h3 id="inspect-run">Run</h3>
+    <pre><code>rlat profile my-project.rlat                       # text summary
+rlat profile my-project.rlat --format json         # structured
+rlat compare a.rlat b.rlat --format json</code></pre>
+
+    <h3 id="inspect-why">Why it matters</h3>
+    <p>
+      Inspecting the corpus before trusting it is the discipline that keeps a
+      retrieval system honest. <code>rlat</code>'s inspection operations are
+      derived mechanically from the embeddings themselves — cosine similarity,
+      content-hash equality, clustering — not from heuristics or LLM-judged
+      labels.
+    </p>
+  </section>
+
+  <section id="improve">
+    <div class="section-num">07 — Improve itself</div>
+    <h2>Let the knowledge model improve itself</h2>
+    <p>
+      <strong>The corpus audits its own shape — and can grow from trusted
+      sources.</strong> Inspecting (above) shows you the structure; this is the
+      step that acts on it. A knowledge model can flag the questions it can't
+      answer, the documents that contradict each other, and the web-fetched facts
+      that have gone stale — and, with your approval, fill a gap from verified
+      outside sources. Detection is free and needs no API key; nothing changes
+      without your say-so, and your source files are never edited.
+    </p>
+    <p>
+      The serve surfaces carry what the model has learned, too:
+      <code>rlat search --format context</code> and the agent-session
+      injection serve standing constraints and falsified findings with
+      their measured framings — "Standing constraints
+      for this environment" and "Tried and falsified". One honest boundary:
+      the model never silently suppresses its own claims — automatic
+      suppression was tested and falsified
+      (<a href="benchmarks.html#r4-suppression">R4</a>); corrections stay
+      explicit.
+    </p>
+
+    <h3 id="improve-what-you-get">What you get</h3>
+    <ul class="checklist">
+      <li><strong><code>rlat audit --shape</code></strong> — the corpus's stored
+      self-audit: under-served demand gaps plus same-topic cross-document
+      contradiction candidates, demand-ranked. <code>--external</code> lists the
+      web-fetched facts to re-check.</li>
+      <li><strong>Four free skills</strong> — <code>rlat-gap-scan</code> (what the
+      corpus can't answer), <code>rlat-contradictions</code> (documents that
+      disagree), <code>rlat-refresh-facts</code> (web facts gone stale), and
+      <code>rlat-curate</code> (a human gate on every change). Each runs on the AI
+      assistant you already use — no API key.</li>
+      <li><strong>Verified growth</strong> — a fact only lands when two
+      independent sources agree, and it lands with its source links at a trust
+      tier set by where it came from (you &#8805; verified-external &#8805; corpus).</li>
+    </ul>
+
+    <h3 id="improve-run">Run</h3>
+    <pre><code>rlat audit my-project.rlat --shape                          # gaps + contradiction candidates
+rlat audit my-project.rlat --shape --min-cosine 0.85 --with-text   # live, judge-ready
+rlat audit my-project.rlat --external --format json         # web-fetched facts to re-check</code></pre>
+
+    <h3 id="improve-why">Why it matters</h3>
+    <p>
+      A knowledge base decays — questions go unanswered, old pages linger and
+      conflict with new ones, fetched facts age. The self-improvement loop turns
+      that maintenance from a manual chore into something the model surfaces for
+      you. The full tour — the six stages, the safety rules, and the API-key
+      question — is on the <a href="self-improvement.html">Self-improvement</a>
+      page.
+    </p>
+  </section>
+
+  <section id="compose">
+    <div class="section-num">08 — Reshape, don't rebuild</div>
+    <h2>Compose without rebuilding</h2>
+    <p>
+      <strong>Reshape what you have; don't re-encode raw text every time.</strong>
+      <code>rlat</code> composes across knowledge models at query time, so you
+      can change retrieval behaviour without rebuilding.
+    </p>
+
+    <h3 id="compose-what-you-get">What you get</h3>
+    <ul class="checklist">
+      <li><strong><code>compose</code></strong> — a federated, read-only view
+      across several knowledge models. A query routes against all of them and
+      results are unified. Useful when you want to query across corpora without
+      merging them on disk.</li>
+      <li><strong><code>merge</code></strong> — a write-out merge that
+      semantically de-duplicates. Useful when you want one permanent artefact
+      spanning multiple sources.</li>
+      <li><strong><code>unique</code> / <code>intersect</code></strong> —
+      set algebra over knowledge models: the passages in A that aren't in B, or
+      the passages in both, based on a cosine threshold.</li>
+    </ul>
+
+    <h3 id="compose-run">Run</h3>
+    <pre><code>from resonance_lattice.store import archive
+from resonance_lattice.rql import compose, merge, unique
+
+a = archive.read("docs.rlat")
+b = archive.read("src.rlat")
+
+view = compose(docs=a, code=b)             # query both corpora at once, no write
+n_unique = merge(a, b, "merged.rlat", dedupe_threshold=0.95)  # writes the artefact, returns unique-passage count
+docs_only = unique(a, b, threshold=0.85)   # what's in docs that isn't in src</code></pre>
+
+    <h3 id="compose-why">Why it matters</h3>
+    <p>
+      A corpus is rarely just one source. <code>compose</code> lets you query
+      across knowledge models without maintaining a meta-archive;
+      <code>merge</code> lets you commit to a single one when that is what your
+      workflow needs.
+    </p>
+  </section>
+
+  <section id="lensed-knowledge">
+    <div class="section-num">09 — Beyond the source layer</div>
+    <h2>The lensed-knowledge surface</h2>
+    <p>
+      Beyond retrieving raw passages, <code>rlat</code> can earn and store
+      <em>insights</em> — cited summaries built from the corpus — and apply a
+      saved perspective, a <em>lens</em>, when ranking results. <code>rlat search</code>
+      retrieves over both the source layer and the insight layer and labels
+      every hit with the layer it came from. Pass <code>--source-only</code> to
+      restrict a query to raw passages, or <code>--lens &lt;file&gt;</code> to
+      apply a perspective. The full model — insights, lenses, audit, and trace —
+      is on the <a href="claim-system.html">claim system</a> page.
+    </p>
+  </section>
+
+  <section id="not-do">
+    <div class="section-num">10 — Scope</div>
+    <h2>What <code>rlat</code> does not do</h2>
+    <p>Honest about scope so you can plan around it:</p>
+    <ul class="checklist x">
+      <li><strong>No retrieval-time knobs.</strong> No reranking, no lexical
+      sidecar, no query-prefix tuning, no auto-mode router. A single recipe —
+      <code>gte-modernbert-base</code> 768d CLS+L2 dense cosine. Empirically
+      validated to match or beat tuned alternatives; see the
+      <a href="benchmarks.html">benchmarks</a> page.</li>
+      <li><strong>No HTTP server.</strong> The CLI is the primary surface, with
+      the Python API underneath it.</li>
+      <li><strong>No algebraically-exact <code>forget</code>.</strong> To remove
+      specific knowledge, rebuild with the source subset you want and ship the
+      new <code>.rlat</code> — atomic and auditable, at the corpus granularity
+      rather than the per-passage granularity.</li>
+    </ul>
+  </section>
+
+  <section id="next">
+    <h2>Where to go next</h2>
+    <div class="next">
+      <a href="getting-started.html">
+        <span class="next-label">Start here</span><br>
+        <span class="next-title">Getting started</span>
+      </a>
+      <a href="cli.html">
+        <span class="next-label">Reference</span><br>
+        <span class="next-title">CLI</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

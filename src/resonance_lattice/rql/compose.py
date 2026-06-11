@@ -3,10 +3,8 @@
 `compose` — federated search over N knowledge models, attribution preserved.
 `merge`   — physically combine two KMs into a new .rlat, semantic dedupe.
 
-Both are CROSS-MODEL ops and use the base band per the cross-model rule.
-A `compose` call against a mix of optimised + base KMs ignores the
-optimised bands; the federated search runs entirely on the comparable
-base bands.
+Both are CROSS-MODEL ops and use the base band per the cross-model rule —
+the one representation comparable across knowledge models.
 
 `diff` from the original Phase 6 hypothesis was dropped: it's `unique` with
 a different default threshold — same operation, different framing. The
@@ -142,7 +140,7 @@ def compose(**named_kms: ArchiveContents) -> ComposedKnowledgeModel:
         # Each hit carries hit.corpus_label so you know which KM it came from.
 
     Cross-model rule: all members must carry a base band of identical dim.
-    Optimised bands are ignored — federated search uses only the base.
+    Federated search uses the base band.
 
     Backbone-revision mismatches are NOT raised: cosine ordering still holds
     across distinct embedding distributions (both bands are unit vectors),
@@ -177,8 +175,7 @@ def merge(
     material from B."
 
     Output is written atomically via `archive.write`. Format version + ANN
-    construction follow the same path as `rlat build`. Optimised bands
-    are NOT carried; merge produces a base-only archive.
+    construction follow the same path as `rlat build`.
 
     Memory ceiling: the union band feeds `greedy_cluster`, which allocates
     an `(N_a + N_b, N_a + N_b)` float32 cosine matrix. At a union of 50K

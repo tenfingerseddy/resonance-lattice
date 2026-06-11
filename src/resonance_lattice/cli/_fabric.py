@@ -29,7 +29,7 @@ from pathlib import Path
 
 from ..store.verified import VerifiedHit
 from .search import _format_context, _format_json, _format_text
-from . import _grounding, _namecheck
+from . import _grounding
 
 CONFIG_PATH_ENV = "RLAT_FABRIC_CONFIG"
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "rlat" / "fabric.toml"
@@ -125,6 +125,10 @@ def _hit_from_wire(d: dict) -> VerifiedHit:
         drift_status=d["drift_status"],
         score=float(d["score"]),
         text=d["text"],
+        # Present for row-mode (slicer) knowledge models, absent for chunked
+        # corpora — `.get` so the reconstruction stays faithful to the wire
+        # payload either way.
+        key=d.get("key"),
     )
 
 

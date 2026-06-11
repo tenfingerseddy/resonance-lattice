@@ -1,11 +1,13 @@
 """cli_intent_durable — `rlat intent declare-durable` + `intent durable`.
 
-Pins the intent-interrogation skill's CLI write seam. Six contracts:
+Pins the intent-interrogation skill's CLI write seam. Durable intents
+(goals + directions) live in the per-user `DurableIntentStore`, separate
+from both the memory store and the per-workspace live intent graph
+(claim-system-design §5). Seven contracts:
 
-  (a) declare-durable writes a goal row with confidence=verified +
-      origin=manual to the per-user memory store.
+  (a) declare-durable writes a goal to the per-user durable intent store.
 
-  (b) declare-durable writes a direction row similarly.
+  (b) declare-durable writes a direction similarly.
 
   (c) declare-durable rejects step/task levels (those go through
       `intent add` to the live store).
@@ -13,10 +15,11 @@ Pins the intent-interrogation skill's CLI write seam. Six contracts:
   (d) Required intent fields land — stance / achievability / status /
       success_criteria / constraints all populated.
 
-  (e) `intent durable` lists goal + direction rows and only those —
-      memory-level rows (event/pattern/learning/principle) don't surface.
+  (e) `intent durable` lists the declared goals and directions.
 
   (f) `intent durable --level goal` filters to goal only.
+
+  (g) `intent path` walks live → durable in one cross-store chain.
 
 Hermetic — temp `--memory-root` per test; no real LLM, no network.
 """
@@ -53,9 +56,15 @@ def _common_args(td: str, *more: str) -> list[str]:
     ]
 
 
-def _check_declare_goal() -> int:
-    from resonance_lattice.memory.store import Memory, path_for_user
+def _open_durable(td: str):
+    from resonance_lattice.memory.store import path_for_user
+    from resonance_lattice.state import DurableIntentStore
+    return DurableIntentStore(
+        path_for_user(user_id="alice", root=Path(td) / "mem")
+    )
 
+
+def _check_declare_goal() -> int:
     with tempfile.TemporaryDirectory() as td:
         rc, out, err = _run(_common_args(td,
             "ship rlat v3", "--level", "goal",
@@ -66,17 +75,13 @@ def _check_declare_goal() -> int:
             print(f"[cli_intent_durable] FAIL (a): rc={rc} err={err!r}",
                   file=sys.stderr)
             return 1
-        row_id = out.strip()
-        memory = Memory(root=path_for_user(user_id="alice", root=Path(td) / "mem"))
-        rows, _ = memory.read_all()
-    matching = [r for r in rows if r.row_id == row_id]
-    if len(matching) != 1:
-        print(f"[cli_intent_durable] FAIL (a): row not found", file=sys.stderr)
+        intent = _open_durable(td).read(out.strip())
+    if intent is None:
+        print("[cli_intent_durable] FAIL (a): intent not found",
+              file=sys.stderr)
         return 1
-    row = matching[0]
-    if (row.level != "goal" or row.confidence != "verified"
-            or row.origin != "manual"):
-        print(f"[cli_intent_durable] FAIL (a): bad fields {row!r}",
+    if intent.level != "goal" or intent.status != "active":
+        print(f"[cli_intent_durable] FAIL (a): bad fields {intent!r}",
               file=sys.stderr)
         return 1
     print("[cli_intent_durable] (a) declare goal OK", file=sys.stderr)
@@ -84,8 +89,6 @@ def _check_declare_goal() -> int:
 
 
 def _check_declare_direction() -> int:
-    from resonance_lattice.memory.store import Memory, path_for_user
-
     with tempfile.TemporaryDirectory() as td:
         rc, out, _ = _run(_common_args(td,
             "become a memory-systems specialist",
@@ -94,11 +97,9 @@ def _check_declare_direction() -> int:
         if rc != 0:
             print(f"[cli_intent_durable] FAIL (b): rc={rc}", file=sys.stderr)
             return 1
-        row_id = out.strip()
-        memory = Memory(root=path_for_user(user_id="alice", root=Path(td) / "mem"))
-        rows, _ = memory.read_all()
-    if not any(r.row_id == row_id and r.level == "direction" for r in rows):
-        print(f"[cli_intent_durable] FAIL (b): direction row missing",
+        intent = _open_durable(td).read(out.strip())
+    if intent is None or intent.level != "direction":
+        print("[cli_intent_durable] FAIL (b): direction intent missing",
               file=sys.stderr)
         return 1
     print("[cli_intent_durable] (b) declare direction OK", file=sys.stderr)
@@ -111,24 +112,15 @@ def _check_rejects_step_task_level() -> int:
         # CLI returns rc!=0 (typically 2 from argparse).
         rc, _, err = _run(_common_args(td, "x", "--level", "step"))
         if rc == 0:
-            print(f"[cli_intent_durable] FAIL (c): step accepted",
+            print("[cli_intent_durable] FAIL (c): step accepted",
                   file=sys.stderr)
             return 1
-        if rc == 0 or "invalid choice" not in err.lower():
-            # Either non-zero rc with `invalid choice` message, or some
-            # equivalent reject. Be lenient on exact message format.
-            if rc == 0:
-                print(f"[cli_intent_durable] FAIL (c): step accepted",
-                      file=sys.stderr)
-                return 1
     print("[cli_intent_durable] (c) rejects step/task level OK",
           file=sys.stderr)
     return 0
 
 
 def _check_intent_fields_populated() -> int:
-    from resonance_lattice.memory.store import Memory, path_for_user
-
     with tempfile.TemporaryDirectory() as td:
         rc, out, _ = _run(_common_args(td,
             "ship a thing", "--level", "goal",
@@ -136,38 +128,25 @@ def _check_intent_fields_populated() -> int:
             "--criterion", "user_confirms=ships",
             "--constraint", "stays additive",
         ))
-        row_id = out.strip()
-        memory = Memory(root=path_for_user(user_id="alice", root=Path(td) / "mem"))
-        rows, _ = memory.read_all()
-    row = next(r for r in rows if r.row_id == row_id)
-    if (row.stance != "do" or row.achievability != "high"
-            or row.status != "active"
-            or row.success_criteria != [{"text": "ships",
-                                          "measure": "user_confirms"}]
-            or row.constraints != ["stays additive"]):
-        print(f"[cli_intent_durable] FAIL (d): {row!r}", file=sys.stderr)
+        intent = _open_durable(td).read(out.strip())
+    if intent is None:
+        print("[cli_intent_durable] FAIL (d): intent not found",
+              file=sys.stderr)
+        return 1
+    if (intent.stance != "do" or intent.achievability != "high"
+            or intent.status != "active"
+            or intent.success_criteria != [{"text": "ships",
+                                            "measure": "user_confirms"}]
+            or intent.constraints != ["stays additive"]):
+        print(f"[cli_intent_durable] FAIL (d): {intent!r}", file=sys.stderr)
         return 1
     print("[cli_intent_durable] (d) intent fields populated OK",
           file=sys.stderr)
     return 0
 
 
-def _check_durable_lists_only_intent_rows() -> int:
-    from resonance_lattice.memory.store import Memory, path_for_user
-    import numpy as np
-
+def _check_durable_lists_declared() -> int:
     with tempfile.TemporaryDirectory() as td:
-        # Seed the user store with one event row + the two durable
-        # intents written via the CLI.
-        memory = Memory(root=path_for_user(user_id="alice",
-                                           root=Path(td) / "mem"))
-        memory.add_row(
-            text="captured event",
-            polarity=["factual", "workspace:abc123"],
-            transcript_hash="manual",
-            embedding=np.zeros(768, dtype=np.float32),
-            level="event",
-        )
         _run(_common_args(td, "build rlat v3", "--level", "goal"))
         _run(_common_args(td, "ship harness", "--level", "direction"))
         rc, out, _ = _run([
@@ -178,15 +157,11 @@ def _check_durable_lists_only_intent_rows() -> int:
     if rc != 0:
         print(f"[cli_intent_durable] FAIL (e): rc={rc}", file=sys.stderr)
         return 1
-    if "captured event" in out:
-        print(f"[cli_intent_durable] FAIL (e): event leaked into durable list",
-              file=sys.stderr)
-        return 1
     if "build rlat v3" not in out or "ship harness" not in out:
         print(f"[cli_intent_durable] FAIL (e): durable rows missing: {out!r}",
               file=sys.stderr)
         return 1
-    print("[cli_intent_durable] (e) durable list filters to intent levels OK",
+    print("[cli_intent_durable] (e) durable list shows declared intents OK",
           file=sys.stderr)
     return 0
 
@@ -235,7 +210,7 @@ def _check_path_cross_store_chain() -> int:
             "ship rlat v3", "--level", "goal",
         ))
         if rc != 0:
-            print(f"[cli_intent_durable] FAIL (g): goal seed failed",
+            print("[cli_intent_durable] FAIL (g): goal seed failed",
                   file=sys.stderr)
             return 1
         goal_id = goal_out.strip()
@@ -291,7 +266,7 @@ def run() -> int:
         _check_declare_direction,
         _check_rejects_step_task_level,
         _check_intent_fields_populated,
-        _check_durable_lists_only_intent_rows,
+        _check_durable_lists_declared,
         _check_durable_filter_by_level,
         _check_path_cross_store_chain,
     ]:

@@ -15,4 +15,4 @@ import sys
 
 def run() -> int:
     print("[doc_examples] SKIP — execution harness not built", file=sys.stderr)
-    return 0
+    return 2  # harness SKIP sentinel — runner reports as skipped, not passed

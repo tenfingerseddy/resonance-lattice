@@ -46,13 +46,13 @@ import numpy as np
 
 
 def _check_empty_window() -> int:
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
     from resonance_lattice.state import (
         WindowSpec, compute_session_scorecard,
     )
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
+        memory = ExperienceClaimStore(root=Path(td) / "u")
         scorecard = compute_session_scorecard(
             state_root=Path(td),
             memory=memory,
@@ -78,28 +78,30 @@ def _check_empty_window() -> int:
 
 
 def _check_useful_weights_by_level() -> int:
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
     from resonance_lattice.state import (
-        Attribution, CriterionCheck, OutcomeLedger, OutcomeRecord,
-        WindowSpec, compute_session_scorecard,
+        Attribution, ClaimOutcomeLog, ClaimOutcomeRecord, CriterionCheck,
+        IntentOutcomeDetails, WindowSpec, compute_session_scorecard,
     )
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
-        ledger = OutcomeLedger(Path(td))
+        memory = ExperienceClaimStore(root=Path(td) / "u")
+        ledger = ClaimOutcomeLog(Path(td))
         # One satisfied step (weight 1) + one satisfied direction
         # (weight 30); useful_axis must reflect the heavier weight.
         for level, intent_id in [
             ("step", "01HZ_S"),
             ("direction", "01HZ_D"),
         ]:
-            ledger.write(OutcomeRecord(
+            ledger.write(ClaimOutcomeRecord(
                 intent_id=intent_id,
-                intent_level=level,
-                criterion_checks=[CriterionCheck(
-                    criterion_text="x", measure="user_confirms",
-                    verdict="satisfied",
-                )],
+                details=IntentOutcomeDetails(
+                    intent_level=level,
+                    criterion_checks=[CriterionCheck(
+                        criterion_text="x", measure="user_confirms",
+                        verdict="satisfied",
+                    )],
+                ),
                 roll_up_verdict="satisfied",
                 attribution=[],
                 resolved_at="2026-05-08T12:00:00Z",
@@ -126,16 +128,17 @@ def _check_useful_weights_by_level() -> int:
 
 
 def _check_effortless_touches() -> int:
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
     from resonance_lattice.state import (
-        CriterionCheck, OutcomeLedger, OutcomeRecord,
+        ClaimOutcomeLog, ClaimOutcomeRecord, CriterionCheck,
+        IntentOutcomeDetails,
         RecallCache, RecallEntry, RecallHitMetadata,
         WindowSpec, compute_session_scorecard,
     )
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
-        ledger = OutcomeLedger(Path(td))
+        memory = ExperienceClaimStore(root=Path(td) / "u")
+        ledger = ClaimOutcomeLog(Path(td))
         cache = RecallCache(Path(td))
 
         # 3 user-prompt touches in window + 1 outcome resolution = 4 touches.
@@ -144,15 +147,18 @@ def _check_effortless_touches() -> int:
                 turn_id=f"t{i}", timestamp=f"2026-05-08T12:00:0{i}Z",
                 prompt_hash=f"h{i}", intent_kind="implement",
                 row_metadata=[
-                    RecallHitMetadata(row_id=f"r{i}", rank=0, cosine=0.9),
+                    RecallHitMetadata(claim_id=f"r{i}", rank=0, cosine=0.9),
                 ],
             ))
-        ledger.write(OutcomeRecord(
-            intent_id="01HZ_T", intent_level="task",
-            criterion_checks=[CriterionCheck(
-                criterion_text="x", measure="user_confirms",
-                verdict="satisfied",
-            )],
+        ledger.write(ClaimOutcomeRecord(
+            intent_id="01HZ_T",
+            details=IntentOutcomeDetails(
+                intent_level="task",
+                criterion_checks=[CriterionCheck(
+                    criterion_text="x", measure="user_confirms",
+                    verdict="satisfied",
+                )],
+            ),
             roll_up_verdict="satisfied", attribution=[],
             resolved_at="2026-05-08T12:30:00Z",
         ))
@@ -181,26 +187,26 @@ def _check_effortless_touches() -> int:
 
 
 def _check_recall_hit_rate() -> int:
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
     from resonance_lattice.state import (
         RecallCache, RecallEntry, RecallHitMetadata,
         WindowSpec, compute_session_scorecard,
     )
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
+        memory = ExperienceClaimStore(root=Path(td) / "u")
         cache = RecallCache(Path(td))
 
         # 2 hits with rows + 1 hit with empty rows = 2/3 hit-rate.
         cache.append(RecallEntry(
             turn_id="t1", timestamp="2026-05-08T12:00:00Z",
             prompt_hash="h1", intent_kind="implement",
-            row_metadata=[RecallHitMetadata(row_id="r", rank=0, cosine=0.9)],
+            row_metadata=[RecallHitMetadata(claim_id="r", rank=0, cosine=0.9)],
         ))
         cache.append(RecallEntry(
             turn_id="t2", timestamp="2026-05-08T12:00:01Z",
             prompt_hash="h2", intent_kind="implement",
-            row_metadata=[RecallHitMetadata(row_id="r", rank=0, cosine=0.9)],
+            row_metadata=[RecallHitMetadata(claim_id="r", rank=0, cosine=0.9)],
         ))
         cache.append(RecallEntry(
             turn_id="t3", timestamp="2026-05-08T12:00:02Z",
@@ -224,39 +230,27 @@ def _check_recall_hit_rate() -> int:
 
 
 def _check_memory_depth() -> int:
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
     from resonance_lattice.state import (
         WindowSpec, compute_session_scorecard,
     )
+    from ._testutil import make_experience_claim
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
-        # 3 events + 2 patterns + 1 learning.
-        for i in range(3):
-            memory.add_row(
-                text=f"event {i}",
-                polarity=["factual", "workspace:abc123"],
-                transcript_hash="manual",
-                embedding=np.zeros(768, dtype=np.float32),
-                level="event",
+        memory = ExperienceClaimStore(root=Path(td) / "u")
+        zero = np.zeros(768, dtype=np.float32)
+        # 6 events.
+        for i in range(6):
+            memory.write(
+                make_experience_claim(
+                    claim_id=f"01HZEVENT{i:016d}",
+                    content=f"event {i}",
+                    polarity=["factual", "workspace:abc123"],
+                    transcript_hash="manual",
+                    kind="event",
+                ),
+                embedding=zero,
             )
-        for i in range(2):
-            memory.add_row(
-                text=f"pattern {i}",
-                polarity=["factual", "workspace:abc123"],
-                transcript_hash="distilled:x",
-                embedding=np.zeros(768, dtype=np.float32),
-                level="pattern",
-                origin="distilled",
-            )
-        memory.add_row(
-            text="learning",
-            polarity=["factual", "workspace:abc123"],
-            transcript_hash="distilled:y",
-            embedding=np.zeros(768, dtype=np.float32),
-            level="learning",
-            origin="distilled",
-        )
         scorecard = compute_session_scorecard(
             state_root=Path(td),
             memory=memory,
@@ -265,7 +259,7 @@ def _check_memory_depth() -> int:
                 until="2026-05-09T00:00:00Z",
             ),
         )
-    expected = {"event": 3, "pattern": 2, "learning": 1}
+    expected = {"event": 6}
     if scorecard.secondary_memory_depth_by_level != expected:
         print(f"[state_eval] FAIL (e): depth="
               f"{scorecard.secondary_memory_depth_by_level!r}", file=sys.stderr)
@@ -275,23 +269,25 @@ def _check_memory_depth() -> int:
 
 
 def _check_verdict_confidence_distribution() -> int:
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
     from resonance_lattice.state import (
-        CriterionCheck, OutcomeLedger, OutcomeRecord,
-        WindowSpec, compute_session_scorecard,
+        ClaimOutcomeLog, ClaimOutcomeRecord, CriterionCheck,
+        IntentOutcomeDetails, WindowSpec, compute_session_scorecard,
     )
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
-        ledger = OutcomeLedger(Path(td))
+        memory = ExperienceClaimStore(root=Path(td) / "u")
+        ledger = ClaimOutcomeLog(Path(td))
         for conf in ["high", "high", "medium", "low"]:
-            ledger.write(OutcomeRecord(
+            ledger.write(ClaimOutcomeRecord(
                 intent_id="t",
-                intent_level="task",
-                criterion_checks=[CriterionCheck(
-                    criterion_text="x", measure="user_confirms",
-                    verdict="satisfied", verdict_confidence=conf,
-                )],
+                details=IntentOutcomeDetails(
+                    intent_level="task",
+                    criterion_checks=[CriterionCheck(
+                        criterion_text="x", measure="user_confirms",
+                        verdict="satisfied", verdict_confidence=conf,
+                    )],
+                ),
                 roll_up_verdict="satisfied", attribution=[],
                 resolved_at="2026-05-08T12:00:00Z",
             ))
@@ -577,7 +573,7 @@ def _check_dropped_at_distribution() -> int:
     with no way to attribute. This scorecard field gives the head-vs-late
     comparison a categorical it can summarise.
     """
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
     from resonance_lattice.state import (
         RecallDiagnosticEntry, RecallDiagnosticLog,
         SessionScorecard, WindowSpec, aggregate_windows,
@@ -585,7 +581,7 @@ def _check_dropped_at_distribution() -> int:
     )
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
+        memory = ExperienceClaimStore(root=Path(td) / "u")
         log = RecallDiagnosticLog(Path(td))
         # Three daemon-answered + two daemon-failures inside window.
         log.append(RecallDiagnosticEntry(

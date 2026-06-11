@@ -1,319 +1,41 @@
-"""Verdict lifecycle + drift cascade for insight passages.
+"""Corpus-side archive orchestrators over the lifecycle spine.
 
-The state machine specified in `.claude/plans/lensed-knowledge-architecture.md`
-§4.4, implemented as pure functions over `InsightPassage`. Every
-transition produces a NEW frozen row — callers replace the list element
-explicitly. No hidden mutation.
-
-States and the events that drive them:
-
-    candidate ──/accept────→ accepted        (test passes + signal ≥ threshold)
-       │
-       └────/reject──────→ rejected
-       │
-       └────/correct─────→ rejected_corrected  (replacement queued)
-       │
-       └──fail test─────→ rejected            (compression test fails)
-
-    accepted ──source-drift──→ stale          (cited content_hash changed)
-
-    stale    ──re-verify pass──→ accepted
-             ──re-verify fail──→ retired
-
-    rejected* / retired  are final.
-
-The compression-test gate (Day 4) governs the candidate→accepted path;
-this module owns the verdict-signal path and the drift path.
+The state-transition spine lives at `state.claim_lifecycle`; this
+module owns the corpus-specific archive I/O that wraps it — the drift
+cascade applied to a `.rlat`, and the attribution writeback.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import datetime, timezone
-from typing import Iterable, Mapping
+from typing import Callable, TypeVar
 
-from .insight import (
-    FINAL_STATES,
-    PENDING_STATES,
-    InsightPassage,
-    VerdictPolarity,
-    VerdictSignal,
-    VerdictSource,
-    VerdictState,
-    append_verdict,
+from ..state.claim import FINAL_STATES, Claim
+from ..state.claim_lifecycle import (
+    accumulate_outcome,
+    consolidate_corpus,
+    consolidate_experience,
+    propagate_drift,
+    rederive_outcome,
 )
+from .insight_attribution import InsightWeight
 
-# States from which a transition to rejected is reachable via user reject.
-_REJECTABLE_STATES: frozenset[VerdictState] = frozenset({"candidate", "accepted", "stale"})
+# The attribution apply is generic over the outcome type: the criterion path
+# (S4 d3) feeds `CriterionOutcome`s through `criterion_weighted`. The function
+# only calls `reducer(outcomes)` and applies the per-claim weights, so it is
+# agnostic to the outcome shape — `_O` ties the outcome list to its reducer.
+_O = TypeVar("_O")
 
-# ---------------------------------------------------------------------------
-# Confidence calculation
-# ---------------------------------------------------------------------------
+__all__ = [
+    "apply_attribution_to_archive",
+    "apply_weights_to_archive",
+    "apply_drift_cascade_to_archive",
+]
 
-# Source authority weights (matches three-tier attribution philosophy from
-# the agent-harness architecture — user > mechanical > llm).
-_AUTHORITY: dict[VerdictSource, float] = {
-    "user": 1.0,
-    "mechanical": 0.6,
-    "llm": 0.3,
-}
+# Above this archive size, an attribution pass that triggers the full
+# insight-layer rewrite emits a stderr warning — the rewrite re-zips the
+# entire .rlat, so a large archive paying that cost is worth surfacing.
+_LARGE_ARCHIVE_WARN_BYTES = 25 * 1024 * 1024
 
-_POLARITY: dict[VerdictPolarity, float] = {
-    "accept": 1.0,
-    "neutral": 0.0,
-    "reject": -1.0,
-}
-
-# Compression-test prerequisites (Day 4 wires the actual test; this
-# threshold gates "would the candidate even be considered?").
-PROMOTE_CONFIDENCE_THRESHOLD = 0.5
-MIN_DISTINCT_CITATIONS = 2      # anti-paraphrase guard (architecture §7.2)
-
-# --- Beta-accumulation confidence (docs/internal/GROUNDING_MODEL.md) ---
-#
-# Each insight carries two tallies — corroboration and falsification —
-# behind the derived `InsightPassage.confidence` (a Beta mean: bounded
-# 0..1, naturally slow). The faithfulness score seeds the prior at
-# promotion (`insight.seed_confidence`); outcome reducers add weight via
-# `accumulate_outcome`. Nothing else moves confidence.
-
-# Source drift is one falsification outcome (see propagate_drift); a
-# passing re-verification is its corroborating inverse, same magnitude.
-_SOURCE_DRIFT_WEIGHT = 1.0
-
-
-def accumulate_outcome(
-    insight: InsightPassage,
-    *,
-    corroboration: float = 0.0,
-    falsification: float = 0.0,
-) -> InsightPassage:
-    """Add outcome weight to the tallies; `confidence` derives from them.
-
-    The single mutation point for the Beta model — every outcome reducer
-    (diffuse, agent-reported, temporal) lands here. Pure: returns a new row.
-    """
-    return replace(
-        insight,
-        corroboration=insight.corroboration + corroboration,
-        falsification=insight.falsification + falsification,
-    )
-
-
-def compute_verdict_score(signals: tuple[VerdictSignal, ...]) -> float:
-    """Weighted average of verdict signals.
-
-    Each signal contributes `authority(source) * polarity` and the result is
-    normalised by the total authority weight (so 5 LLM accepts don't drown
-    out 1 user reject). Empty signal list → 0.0 (neutral).
-    """
-    if not signals:
-        return 0.0
-    numerator = 0.0
-    denominator = 0.0
-    for s in signals:
-        w = _AUTHORITY[s.source]
-        numerator += w * _POLARITY[s.polarity]
-        denominator += w
-    if denominator == 0.0:
-        return 0.0
-    return numerator / denominator
-
-
-# ---------------------------------------------------------------------------
-# State transitions
-# ---------------------------------------------------------------------------
-
-def _utc_now() -> str:
-    """ISO 8601 UTC timestamp; injectable for deterministic tests via
-    `datetime.now` replacement, but the production path goes through here
-    so every state transition is wall-clock-attributable."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def record_verdict(
-    insight: InsightPassage,
-    *,
-    source: VerdictSource,
-    polarity: VerdictPolarity,
-    lens_id: str | None = None,
-    timestamp: str | None = None,
-) -> InsightPassage:
-    """Append a verdict signal to the insight's history.
-
-    Does NOT trigger state transitions — those are decided by the
-    consolidation pass (`consolidate_state`) which considers the full
-    accumulated verdict history alongside the compression-test outcome.
-    Splitting "record signal" from "decide state" keeps the per-turn path
-    fast (just append) and the per-session path coherent (full re-eval).
-    """
-    sig = VerdictSignal(
-        source=source,
-        polarity=polarity,
-        timestamp=timestamp or _utc_now(),
-        lens_id=lens_id,
-    )
-    return append_verdict(insight, sig)
-
-
-def consolidate_state(
-    insight: InsightPassage,
-    *,
-    compression_test_pass: bool | None = None,
-    correction_replacement: InsightPassage | None = None,
-) -> InsightPassage:
-    """Decide the next verdict_state from accumulated signals + test outcome.
-
-    Called at consolidation cadence per insight. Inputs:
-
-    - `compression_test_pass`: outcome of the compression test (Day 4).
-      `None` means the test wasn't run this cycle — leave state untouched
-      unless verdict signals alone force a transition (e.g. explicit reject).
-    - `correction_replacement`: if a `/correct` was issued, the new
-      synthesis candidate that replaces this row. The current row flips
-      to `rejected_corrected`; the caller is responsible for adding the
-      replacement as a new candidate.
-
-    Transitions are conservative — only fire when the evidence is
-    unambiguous. Ambiguous cases (e.g. mixed verdict signals on a
-    candidate that hasn't seen the compression test yet) stay in
-    candidate so the next cycle gets another chance.
-
-    Pure — returns a new row.
-    """
-    state = insight.verdict_state
-    verdict = compute_verdict_score(insight.verdict_signals)
-
-    if state in FINAL_STATES:
-        return insight
-
-    # /correct path — replacement supplied means we're retiring this row.
-    if correction_replacement is not None:
-        return replace(insight, verdict_state="rejected_corrected")
-
-    # User verdict authority — borrowed from memory.forget's "user_declared"
-    # protection. The MOST RECENT user signal is authoritative: a user
-    # reject sends the row to rejected; a user accept on an accepted row
-    # blocks any later downgrade from compression-test failure. This
-    # mirrors the memory layer's user-declared protection over automated
-    # signal noise (memory.forget §protections).
-    user_signals = [s for s in insight.verdict_signals if s.source == "user"]
-    if user_signals:
-        latest_user = user_signals[-1]   # append-only log → last is latest
-        if latest_user.polarity == "reject" and state in _REJECTABLE_STATES:
-            return replace(insight, verdict_state="rejected")
-        if (latest_user.polarity == "accept" and state == "accepted"
-                and compression_test_pass is False):
-            # User accepted; the next compression cycle failed but the
-            # user's authority blocks downgrade — the row stays accepted.
-            return insight
-
-    if state == "candidate":
-        if compression_test_pass is False:
-            return replace(insight, verdict_state="rejected")
-        if compression_test_pass is True:
-            # Test passed — check verdict signal strength + citation
-            # diversity. The architecture §7.1 specifies the compression
-            # test ALSO enforces citation diversity, so this check is a
-            # defence-in-depth.
-            distinct = {c.passage_id for c in insight.citations}
-            if (verdict > 0 and len(distinct) >= MIN_DISTINCT_CITATIONS
-                    and insight.confidence >= PROMOTE_CONFIDENCE_THRESHOLD):
-                return replace(insight, verdict_state="accepted")
-            # Stay in candidate — compression test passed but signal isn't
-            # there yet. Next session might bring more verdicts.
-            return insight
-        return insight   # no compression-test outcome this cycle
-
-    if state == "stale":
-        # `stale` is set by the drift cascade; the re-verification pass
-        # (a separate consolidator step) calls back here with
-        # compression_test_pass to commit to accepted or retired.
-        if compression_test_pass is True:
-            return replace(insight, verdict_state="accepted")
-        if compression_test_pass is False:
-            return replace(insight, verdict_state="retired")
-        return insight
-
-    return insight
-
-
-# ---------------------------------------------------------------------------
-# Drift cascade
-# ---------------------------------------------------------------------------
-
-def detect_drift(
-    insights: list[InsightPassage],
-    fresh_source_hashes: Mapping[str, str],
-) -> list[int]:
-    """Indices of insights whose cited source hashes no longer match.
-
-    `fresh_source_hashes`: `{passage_id: current_content_hash}`.
-
-    Drift is detected by position-aligned comparison of
-    `insight.citations[i].passage_id` against
-    `insight.source_passage_hashes[i]`. The promotion pipeline guarantees
-    this alignment (each citation is paired with the source's hash-at-
-    promotion-time); writers must preserve it. A source removed entirely
-    also cascades as drift.
-
-    Final-state insights (rejected, rejected_corrected, retired) are
-    skipped — they don't surface in retrieval and have no reason to be
-    re-evaluated.
-
-    Returns indices into `insights`, in input order.
-    """
-    drifted: list[int] = []
-    for idx, ins in enumerate(insights):
-        if not ins.stale_if_sources_drift:
-            continue
-        if ins.verdict_state in FINAL_STATES:
-            continue
-        stored = ins.source_passage_hashes
-        for cit_idx, c in enumerate(ins.citations):
-            current = fresh_source_hashes.get(c.passage_id)
-            if current is None:
-                drifted.append(idx)
-                break
-            if cit_idx < len(stored) and stored[cit_idx] != current:
-                drifted.append(idx)
-                break
-    return drifted
-
-
-def propagate_drift(
-    insights: list[InsightPassage],
-    fresh_source_hashes: Mapping[str, str],
-) -> tuple[list[InsightPassage], list[int]]:
-    """Return updated insight list with drift-detected rows flipped to stale.
-
-    Returns `(new_insights, drifted_indices)`. The list ordering and
-    `insight_idx` positions are preserved (the band-row join must
-    remain valid). Already-stale rows are left untouched — re-verification
-    is the only path out of stale.
-    """
-    drifted = detect_drift(insights, fresh_source_hashes)
-    if not drifted:
-        return insights, []
-    drift_set = set(drifted)
-    updated: list[InsightPassage] = []
-    for idx, ins in enumerate(insights):
-        if idx in drift_set and ins.verdict_state == "accepted":
-            # Drift is one falsification outcome — the stale row carries
-            # visibly lower confidence until re-verification corroborates
-            # or retires it.
-            stale = replace(ins, verdict_state="stale")
-            updated.append(
-                accumulate_outcome(stale, falsification=_SOURCE_DRIFT_WEIGHT)
-            )
-        else:
-            updated.append(ins)
-    return updated, drifted
-
-
-# ---------------------------------------------------------------------------
-# Convenience: bulk re-evaluation
-# ---------------------------------------------------------------------------
 
 def apply_drift_cascade_to_archive(km_path, contents=None) -> tuple[int, int]:
     """Run the drift cascade against the current source layer; rewrite the
@@ -347,28 +69,124 @@ def apply_drift_cascade_to_archive(km_path, contents=None) -> tuple[int, int]:
     return len(drifted_idx), len(contents.insights)
 
 
-def consolidate_all(
-    insights: list[InsightPassage],
+def apply_attribution_to_archive(
+    km_path,
+    outcomes: list[_O],
     *,
-    compression_test_results: Mapping[str, bool] | None = None,
-    corrections: Mapping[str, InsightPassage] | None = None,
-) -> list[InsightPassage]:
-    """Apply consolidate_state to every insight in one pass.
+    reducer: Callable[[list[_O]], dict[str, InsightWeight]],
+    contents=None,
+) -> tuple[int, int]:
+    """Fold ONE attribution reducer's verdict into the insight layer's Beta
+    trust, then rewrite the layer in place.
 
-    `compression_test_results`: `{insight_id: passed?}` — pass `None` to
-    skip the test gate for that row.
-    `corrections`: `{insight_id: replacement_candidate}`.
+    Thin wrapper over `apply_weights_to_archive` for a single `(outcomes,
+    reducer)` pair (e.g. `CriterionOutcome` + `criterion_weighted`). Idempotent
+    for that pair: a seeded corpus claim's tally is RE-DERIVED from its born seed
+    + the reducer's full-ledger weight (see `apply_weights_to_archive`), so
+    re-running with the same outcomes is a no-op.
 
-    Used by the session-end consolidator (Day 4 wires this into the
-    harness consolidation pipeline).
+    To fold MULTIPLE reducers in one pass, merge their weights first and call
+    `apply_weights_to_archive` ONCE — two SET-from-seed applies in sequence
+    would clobber, where one merged apply is correct.
+
+    `contents` is an optional pre-loaded `ArchiveContents`. Returns
+    `(n_updated, n_retired)`.
     """
-    compression_test_results = compression_test_results or {}
-    corrections = corrections or {}
-    updated: list[InsightPassage] = []
-    for ins in insights:
-        updated.append(consolidate_state(
-            ins,
-            compression_test_pass=compression_test_results.get(ins.insight_id),
-            correction_replacement=corrections.get(ins.insight_id),
-        ))
-    return updated
+    return apply_weights_to_archive(
+        km_path, reducer(outcomes), contents=contents)
+
+
+def _fold_weight(ins: Claim, w: InsightWeight) -> Claim:
+    """Apply one claim's reducer weight to its Beta tally.
+
+    A corpus claim with a recorded born seed RE-DERIVES the absolute tally
+    (`seed + weight`) — idempotent when `w` is the full-ledger cumulative
+    weight (§B BLOCKER). An experience claim, or a corpus claim minted before
+    the seed field existed (sentinel < 0), falls back to additive
+    `accumulate_outcome`. The source guard keeps `seed_*` (a `CorpusFacts`
+    field) off experience claims.
+    """
+    if ins.source == "corpus":
+        seed_corr = ins.facts.seed_corroboration
+        seed_fals = ins.facts.seed_falsification
+        if seed_corr >= 0.0 and seed_fals >= 0.0:
+            return rederive_outcome(
+                ins,
+                seed_corroboration=seed_corr,
+                seed_falsification=seed_fals,
+                corroboration=w.corroboration,
+                falsification=w.falsification,
+            )
+    return accumulate_outcome(
+        ins, corroboration=w.corroboration, falsification=w.falsification)
+
+
+def apply_weights_to_archive(
+    km_path,
+    weights: dict[str, InsightWeight],
+    *,
+    contents=None,
+) -> tuple[int, int]:
+    """Fold a PRE-COMPUTED per-claim weight map into the insight layer's Beta
+    trust, then rewrite the layer in place.
+
+    The shared core. Each claim's weight is folded via `_fold_weight` (corpus:
+    re-derive from born seed; experience/unseeded: additive), then the spine
+    re-evaluates the claim — a corpus claim runs the citation/verdict state
+    machine, an experience claim the recurrence + trust earning gate; the
+    source routing keeps an experience claim out of `consolidate_corpus`'s
+    `CorpusFacts`-only reads. A claim a run of bad outcomes pushed below the
+    retire floor transitions to `retired`.
+
+    Callers must supply the CUMULATIVE weight over the full outcome ledger
+    (the reducers do this) so the re-derivation is idempotent. Returns
+    `(n_updated, n_retired)` — `n_updated` claims actually changed (a
+    zero-weight credit is not a change), of which `n_retired` crossed the
+    retire floor on this pass. A pass that changes nothing rewrites nothing.
+    Returns `(0, 0)` when the archive has no insight layer or no weights.
+    """
+    import sys
+    from pathlib import Path
+    from . import archive
+
+    p = Path(km_path)
+    if contents is None:
+        contents = archive.read(p)
+    if not contents.insights:
+        return 0, 0
+    if not weights:
+        return 0, 0
+
+    updated: list[Claim] = []
+    n_updated = 0
+    n_retired = 0
+    for ins in contents.insights:
+        w = weights.get(ins.claim_id)
+        if w is None or ins.state in FINAL_STATES:
+            updated.append(ins)
+            continue
+        accumulated = _fold_weight(ins, w)
+        evolved = (
+            consolidate_corpus(accumulated) if ins.source == "corpus"
+            else consolidate_experience(accumulated)
+        )
+        if evolved != ins:
+            n_updated += 1
+            if evolved.state == "retired" and ins.state != "retired":
+                n_retired += 1
+        updated.append(evolved)
+
+    if n_updated == 0:
+        return 0, 0
+
+    size = p.stat().st_size
+    if size > _LARGE_ARCHIVE_WARN_BYTES:
+        print(
+            f"[insight-attribution] rewriting large archive "
+            f"({size / (1024 * 1024):.0f} MB) — the insight-layer write "
+            f"re-zips the whole .rlat",
+            file=sys.stderr,
+        )
+    insight_band = contents.bands[archive.INSIGHT_BAND_NAME]
+    archive.write_insight_layer_in_place(p, updated, insight_band)
+    return n_updated, n_retired

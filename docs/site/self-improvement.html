@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Self-improvement — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html" aria-current="page">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>How a knowledge model improves itself</h1>
+  <p class="lede">
+    A knowledge model can audit its own shape — find <strong>gaps</strong>,
+    <strong>contradictions</strong>, and <strong>stale facts</strong> — and, with
+    your approval, grow from trusted outside sources. The detection runs free, on
+    the AI assistant you already have; nothing is changed behind your back.
+  </p>
+  <p>
+    New to rlat? Start with <a href="explainer.html">What is rlat?</a> first. This
+    page is the detailed tour of the self-improvement loop: what each stage does,
+    the commands and skills that drive it, when (if ever) you need an API key, the
+    options you control, and the honest limits.
+  </p>
+  <p>
+    This loop is the <em>corpus</em> half of self-improvement — keeping what your
+    documents say complete, consistent, and current. The other half is your
+    <em>world</em>: capturing the stable facts, standing constraints, and
+    tried-and-failed findings of your own environment. That half lives on the
+    <a href="claim-system.html#world">Claims page</a>.
+  </p>
+
+  <section id="loop">
+    <div class="section-num">01 — The loop at a glance</div>
+    <h2>Six stages</h2>
+    <p>
+      The whole thing is one loop. The expensive part — reading the corpus to
+      decide what's wrong with it — is done by cheap maths first, so the AI only
+      ever judges a short list, never the whole corpus.
+    </p>
+    <div class="toc">
+      <div class="toc-card"><div class="toc-title">1 · Detect</div><div class="toc-desc">Cheap maths (no AI) finds candidate gaps, contradictions, and which external facts to re-check. Stored inside the <code>.rlat</code>.</div></div>
+      <div class="toc-card"><div class="toc-title">2 · Judge</div><div class="toc-desc">An AI rules which candidates are <em>real</em> — free, on the assistant you already use, or metered for automation.</div></div>
+      <div class="toc-card"><div class="toc-title">3 · Fetch</div><div class="toc-desc">For a real gap, pull the missing fact from the web — and require independent sources to agree.</div></div>
+      <div class="toc-card"><div class="toc-title">4 · Land</div><div class="toc-desc">A verified fact enters the model with its source links, born low-trust, never overwriting your files.</div></div>
+      <div class="toc-card"><div class="toc-title">5 · Re-check</div><div class="toc-desc">Re-fetch a web-sourced fact later to catch it going stale against the live world.</div></div>
+      <div class="toc-card"><div class="toc-title">6 · Reconcile</div><div class="toc-desc">Record an authoritative resolution for a confirmed conflict — non-destructively, on your say-so.</div></div>
+    </div>
+    <div class="callout callout-note">
+      <p><strong>The one rule to remember:</strong> rlat <em>surfaces</em>; it does
+      not silently edit. Detection and judging show you findings; growing the model
+      (steps 3–6) only happens with your approval, and never touches your original
+      source files.</p>
+    </div>
+  </section>
+
+  <section id="detect">
+    <div class="section-num">02 — Detect</div>
+    <h2>The corpus audits its own shape (free, no AI)</h2>
+    <p>
+      Every time you <code>build</code> or <code>refresh</code> a model, rlat
+      computes a small <strong>shape report</strong> and stores it inside the
+      <code>.rlat</code>. It is pure maths — no AI call, no API key, no network. It
+      holds two things:
+    </p>
+    <ul>
+      <li><strong>Demand gaps</strong> — topics people keep asking about that the
+        corpus is thin on. (These build up from real usage, so a brand-new model
+        has none yet.)</li>
+      <li><strong>Contradiction candidates</strong> — pairs of passages in
+        <em>different</em> documents that are about the same thing and might
+        disagree. The maths can only prove "same topic"; whether they truly
+        conflict is the judge's job (next stage).</li>
+    </ul>
+    <p>Look at the report — and re-compute it live at a chosen sensitivity:</p>
+    <pre><code># the stored report: demand gaps + contradiction candidates
+rlat audit km.rlat --shape
+
+# recompute candidates live, with the passage text, ready for an AI to judge
+# (--min-cosine is the sensitivity dial; lower finds more, looser pairs)
+rlat audit km.rlat --shape --min-cosine 0.85 --with-text --format json
+
+# list the external (web-fetched) facts in the model + their source URLs
+rlat audit km.rlat --external --format json</code></pre>
+    <p>
+      Candidates come back <strong>demand-ranked</strong> — conflicts that sit in
+      the path of real questions are listed first, so you spend attention where it
+      matters. Full flag reference on the <a href="cli.html#insight-layer">CLI
+      page</a>.
+    </p>
+  </section>
+
+  <section id="judge">
+    <div class="section-num">03 — Judge</div>
+    <h2>Which candidates are real?</h2>
+    <p>
+      The maths hands over a short list; an AI decides which items are genuine. The
+      same judgement runs two ways, and you choose:
+    </p>
+    <ul>
+      <li><strong>Free, in-session</strong> — the skills (below) ask the AI
+        assistant you are <em>already talking to</em> to judge the candidates. No
+        API key, no separate bill. This is the recommended way.</li>
+      <li><strong>Metered, for automation</strong> — the library functions
+        (<code>curator.reconcile.judge_contradictions</code>,
+        <code>store.external_freshness.recheck_external_freshness</code>) accept an
+        Anthropic client so you can run the judgement unattended in a script. That
+        path needs an <a href="api-keys.html">API key</a>.</li>
+    </ul>
+    <p>
+      Why two stages instead of just asking the AI everything? Cost. Judging every
+      possible pair in a large corpus would be millions of AI calls; the geometry
+      narrows that to a handful first, so the AI step stays cheap either way.
+    </p>
+  </section>
+
+  <section id="grow">
+    <div class="section-num">04 — Fetch &amp; land</div>
+    <h2>Grow from trusted outside facts</h2>
+    <p>
+      When a gap is real and the corpus genuinely lacks the fact, rlat can fetch it
+      from the web and add it — under strict safety rules so an unverified claim
+      can never slip in:
+    </p>
+    <ul>
+      <li><strong>Two sources must agree.</strong> A fact only lands if at least
+        two <em>independent</em> sources state it and concur. One source, or
+        disagreement, means nothing lands.</li>
+      <li><strong>It must trace to those sources.</strong> The claim is checked
+        against the fetched text; if it isn't supported, it's dropped.</li>
+      <li><strong>It carries its receipts.</strong> A landed fact stores its source
+        URLs, and is born <em>low-trust</em> — it earns standing only as it proves
+        useful over time.</li>
+    </ul>
+
+    <h3 id="trust-tiers">Trust tiers</h3>
+    <p>
+      Every fact in the model carries a trust level that starts from <em>where it
+      came from</em>, not from how confident the AI sounded:
+    </p>
+    <table class="compact">
+      <thead><tr><th>Source</th><th>Starting trust</th></tr></thead>
+      <tbody>
+        <tr><td><strong>You</strong> (you hand-provided it with a source)</td><td>highest</td></tr>
+        <tr><td><strong>Verified external</strong> (≥2 agreeing web sources)</td><td>high</td></tr>
+        <tr><td><strong>Single external</strong> (one web source)</td><td>baseline</td></tr>
+        <tr><td><strong>Corpus synthesis</strong> (distilled from your own docs)</td><td>baseline</td></tr>
+      </tbody>
+    </table>
+    <p>
+      A higher tier is a starting <em>prior</em>, not a permanent verdict — any fact
+      still earns or loses standing as outcomes come in. (The full trust model is on
+      the <a href="claim-system.html">Claims</a> page.)
+    </p>
+  </section>
+
+  <section id="recheck">
+    <div class="section-num">05 — Re-check</div>
+    <h2>Keep web-sourced facts current</h2>
+    <p>
+      A fact pulled from the web was true when fetched, but the world moves on — a
+      version, a price, a "current" anything. <code>rlat refresh</code> can't catch
+      this, because refresh only re-reads your <em>local</em> files; a web fact has
+      no local copy to re-read. So the freshness re-check re-fetches the cited URLs
+      and asks whether they still support the fact:
+    </p>
+    <ul>
+      <li><strong>fresh</strong> — the sources still back it. Nothing to do.</li>
+      <li><strong>stale</strong> — the sources have moved past it. Surfaced for you
+        to re-fetch or retire.</li>
+      <li><strong>unknown</strong> — a page wouldn't load. Reported as
+        <em>uncheckable</em>, never wrongly marked stale.</li>
+    </ul>
+  </section>
+
+  <section id="reconcile">
+    <div class="section-num">06 — Reconcile</div>
+    <h2>Resolve a confirmed conflict — non-destructively</h2>
+    <p>
+      When you've confirmed two documents genuinely conflict and decided which side
+      is authoritative, rlat records the resolution as a high-trust note that cites
+      <em>both</em> passages. It does <strong>not</strong> edit your source files —
+      the conflicting passages stay exactly as they are; the model simply ranks the
+      resolution first. This is a deliberate, one-at-a-time step on your decision,
+      never an automatic edit.
+    </p>
+  </section>
+
+  <section id="skills">
+    <div class="section-num">07 — The skills</div>
+    <h2>Four skills run the whole loop free</h2>
+    <p>
+      The simplest way to use any of this is the bundled skills. Each runs on the
+      AI assistant you are already using — <strong>no API key, no per-use bill</strong>
+      — and each surfaces findings for you rather than editing anything. See the
+      <a href="skills.html">Skills</a> page for how skills are wired.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Skill</th><th>What it does</th><th>Ask it</th></tr></thead>
+      <tbody>
+        <tr><td><code>rlat-gap-scan</code></td><td>Finds the questions your corpus can't actually answer.</td><td>"What is my corpus missing?", "where are the gaps?"</td></tr>
+        <tr><td><code>rlat-contradictions</code></td><td>Finds documents that disagree with each other.</td><td>"Are there contradictions in my corpus?", "which docs conflict?"</td></tr>
+        <tr><td><code>rlat-refresh-facts</code></td><td>Re-checks web-fetched facts against the live world.</td><td>"Are my fetched facts still current?", "did anything go stale?"</td></tr>
+        <tr><td><code>rlat-curate</code></td><td>Human-in-the-loop: surfaces findings and lets you approve a fill, hand-provide a source, or skip.</td><td>"Curate my knowledge base", "let me review before adding"</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="api-key">
+    <div class="section-num">08 — Do I need an API key?</div>
+    <h2>Mostly no</h2>
+    <p>The honest answer, stage by stage:</p>
+    <table class="compact">
+      <thead><tr><th>Stage</th><th>Needs an API key?</th></tr></thead>
+      <tbody>
+        <tr><td>Detect (gaps, contradiction candidates, <code>rlat audit --shape/--external</code>)</td><td><strong>No</strong> — it's maths.</td></tr>
+        <tr><td>Judge via the skills</td><td><strong>No</strong> — the assistant you're already in does it.</td></tr>
+        <tr><td>Fetch from the web (via the skills)</td><td><strong>No</strong> — the assistant's own web tools.</td></tr>
+        <tr><td>Land a fact you/the assistant verified</td><td><strong>No</strong> — the free landing path.</td></tr>
+        <tr><td>Judge or land <em>unattended</em>, in a script (the metered library path)</td><td><strong>Yes</strong> — an Anthropic key.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      So you only need a key if you want to run the loop as <em>automation</em>,
+      outside an interactive assistant. When you do, rlat finds the key the usual
+      way — see <a href="api-keys.html">API keys</a> for the environment variables it
+      reads.
+    </p>
+  </section>
+
+  <section id="options">
+    <div class="section-num">09 — Options you control</div>
+    <h2>Dials and defaults</h2>
+    <ul>
+      <li><strong>Sensitivity (<code>--min-cosine</code>).</strong> The contradiction
+        finder's floor is a recall/precision dial: lower surfaces more (looser)
+        pairs for the judge to filter; higher surfaces only near-identical ones. The
+        stored default is conservative; <code>0.85</code> is a good floor for prose.</li>
+      <li><strong>How many to judge (<code>--max-pairs</code>).</strong> Caps the
+        candidate list so the judge cost stays bounded on a big corpus.</li>
+      <li><strong>Surface, don't edit.</strong> Everything is review-first by
+        default. Use <code>rlat-curate</code> when you want a human gate on every
+        change — approve a draft, or hand-provide your own authoritative source
+        (which lands at the highest trust tier).</li>
+      <li><strong>Where things land.</strong> New facts and resolutions live in the
+        model's <em>earned layer</em>, alongside — never overwriting — your original
+        passages. Your source files are never modified.</li>
+    </ul>
+  </section>
+
+  <section id="limits">
+    <div class="section-num">10 — Honest limits</div>
+    <h2>What it does and doesn't do</h2>
+    <ul>
+      <li><strong>Detection finds candidates, not certainties.</strong> The geometry
+        only proves two passages are about the same topic; the judge (you or an AI)
+        decides if they truly conflict. Most high-similarity pairs are just
+        restatements.</li>
+      <li><strong>Contradictions need genuine cross-source disagreement.</strong> A
+        clean, consistent corpus correctly finds ~zero — that's the tool working,
+        not failing. The value is on knowledge bases that accumulated conflicting
+        copies over time.</li>
+      <li><strong>Number-heavy corpora can over-flag.</strong> On documents dense
+        with similar-looking figures or tables, the judge sometimes mistakes two
+        different measurements for a conflict — which is exactly why the loop
+        surfaces for review and never auto-edits.</li>
+      <li><strong>"No gaps found" means "none among the questions asked."</strong>
+        It can't see a need nobody has queried for. Don't read it as "complete".</li>
+    </ul>
+  </section>
+
+  <div class="group-label">Where to go next</div>
+  <div class="toc">
+    <a class="toc-card" href="skills.html">
+      <div class="toc-title">Skills</div>
+      <div class="toc-desc">How the four skills are wired into an AI assistant, and the skill-context primitive behind them.</div>
+    </a>
+    <a class="toc-card" href="cli.html#insight-layer">
+      <div class="toc-title">CLI reference</div>
+      <div class="toc-desc">Every flag of <code>rlat audit</code> and the rest of the insight-layer commands.</div>
+    </a>
+    <a class="toc-card" href="claim-system.html">
+      <div class="toc-title">Claims</div>
+      <div class="toc-desc">The trust model in full — how a fact is earned, scored, retrieved, and forgotten.</div>
+    </a>
+  </div>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11.</p>
+  </div>
+</footer>
+
+</body>
+</html>

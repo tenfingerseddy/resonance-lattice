@@ -59,7 +59,7 @@ def _check_cache_round_trip() -> int:
                 prompt_hash=f"h{i}",
                 intent_kind="implement",
                 row_metadata=[
-                    RecallHitMetadata(row_id=f"r{i}", rank=0, cosine=0.9),
+                    RecallHitMetadata(claim_id=f"r{i}", rank=0, cosine=0.9),
                 ],
             ))
         loaded = cache.read_recent()
@@ -67,7 +67,7 @@ def _check_cache_round_trip() -> int:
         print(f"[state_attribution] FAIL (a): order={[e.turn_id for e in loaded]!r}",
               file=sys.stderr)
         return 1
-    if loaded[0].row_metadata[0].row_id != "r0":
+    if loaded[0].row_metadata[0].claim_id != "r0":
         print(f"[state_attribution] FAIL (a): metadata lost",
               file=sys.stderr)
         return 1
@@ -130,12 +130,12 @@ def _check_tier_mapping() -> int:
         prompt_hash="h",
         intent_kind="none",
         row_metadata=[
-            RecallHitMetadata(row_id="r0", rank=0, cosine=0.9),
-            RecallHitMetadata(row_id="r3", rank=3, cosine=0.7),
-            RecallHitMetadata(row_id="r6", rank=6, cosine=0.5),
+            RecallHitMetadata(claim_id="r0", rank=0, cosine=0.9),
+            RecallHitMetadata(claim_id="r3", rank=3, cosine=0.7),
+            RecallHitMetadata(claim_id="r6", rank=6, cosine=0.5),
         ],
     )
-    attribution = {a.row_id: a.tier for a in attribution_from_entries([entry])}
+    attribution = {a.claim_id: a.tier for a in attribution_from_entries([entry])}
     expected = {"r0": "primary", "r3": "secondary", "r6": "incidental"}
     if attribution != expected:
         print(f"[state_attribution] FAIL (d): {attribution!r}", file=sys.stderr)
@@ -153,11 +153,11 @@ def _check_best_tier_wins() -> int:
 
     e1 = RecallEntry(
         turn_id="t1", timestamp="t1", prompt_hash="h1", intent_kind="none",
-        row_metadata=[RecallHitMetadata(row_id="r", rank=1, cosine=0.9)],
+        row_metadata=[RecallHitMetadata(claim_id="r", rank=1, cosine=0.9)],
     )
     e2 = RecallEntry(
         turn_id="t2", timestamp="t2", prompt_hash="h2", intent_kind="none",
-        row_metadata=[RecallHitMetadata(row_id="r", rank=6, cosine=0.5)],
+        row_metadata=[RecallHitMetadata(claim_id="r", rank=6, cosine=0.5)],
     )
     attribution = attribution_from_entries([e1, e2])
     if len(attribution) != 1 or attribution[0].tier != "primary":
@@ -196,7 +196,7 @@ def _check_make_turn_id_deterministic() -> int:
 def _check_end_to_end_loop() -> int:
     """Cache → intent accept → OutcomeRecord with attribution."""
     from resonance_lattice.state import (
-        OutcomeLedger,
+        ClaimOutcomeLog,
         RecallCache,
         RecallEntry,
         RecallHitMetadata,
@@ -227,8 +227,8 @@ def _check_end_to_end_loop() -> int:
             prompt_hash="h",
             intent_kind="implement",
             row_metadata=[
-                RecallHitMetadata(row_id="01HZ_ROW_PRIMARY", rank=0, cosine=0.9),
-                RecallHitMetadata(row_id="01HZ_ROW_SECONDARY", rank=3, cosine=0.7),
+                RecallHitMetadata(claim_id="01HZ_ROW_PRIMARY", rank=0, cosine=0.9),
+                RecallHitMetadata(claim_id="01HZ_ROW_SECONDARY", rank=3, cosine=0.7),
             ],
         ))
 
@@ -240,13 +240,13 @@ def _check_end_to_end_loop() -> int:
             return 1
 
         # Read the ledger and confirm attribution landed.
-        ledger = OutcomeLedger(state_root)
+        ledger = ClaimOutcomeLog(state_root)
         records = ledger.read(intent_id=intent_id)
         if len(records) != 1:
             print(f"[state_attribution] FAIL (h): records={len(records)}",
                   file=sys.stderr)
             return 1
-        attribution = {a.row_id: a.tier for a in records[0].attribution}
+        attribution = {a.claim_id: a.tier for a in records[0].attribution}
         if attribution != {"01HZ_ROW_PRIMARY": "primary",
                            "01HZ_ROW_SECONDARY": "secondary"}:
             print(f"[state_attribution] FAIL (h): attribution={attribution!r}",

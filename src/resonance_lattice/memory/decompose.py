@@ -29,22 +29,19 @@ appends MORE children. Caller decides whether to clear existing children
 first; the v1 CLI surfaces a `--replace` flag to make the destructive
 intent explicit.
 
-LLM seam mirrors `memory/distil.py` and `memory/distil_arrow1.py` — same
-callable shape `(system, messages, max_tokens) -> LLMResponse` so the
-harness suite injects a stub without touching the network.
+LLM seam: `(system, messages, max_tokens) -> LLMResponse` (the shared
+`memory/_llm.py` type) so the harness suite injects a stub without
+touching the network.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Callable
 
-from ..state import LiveIntent, LiveIntentStore
+from ..state import Intent, LiveIntentStore
 from ._common import parse_llm_json
-from .distil import LLMResponse  # canonical client shape
-
-LLMClient = Callable[[str, list[dict], int], LLMResponse]
+from ._llm import LLMClient
 
 # Architecture's fan-out range for task → step decomposition.
 DEFAULT_MIN_STEPS = 2
@@ -92,7 +89,7 @@ a goal-sized chunk needing further breakdown first, or when it's already a
 single-action step."""
 
 
-def _build_messages(parent: LiveIntent) -> list[dict]:
+def _build_messages(parent: Intent) -> list[dict]:
     user = (
         f"Task: {parent.text}\n\n"
         f"Constraints: {parent.constraints or '(none)'}\n"
@@ -130,7 +127,7 @@ def _validate_steps(
 
 
 def decompose(
-    parent: LiveIntent,
+    parent: Intent,
     *,
     llm: LLMClient,
     store: LiveIntentStore,

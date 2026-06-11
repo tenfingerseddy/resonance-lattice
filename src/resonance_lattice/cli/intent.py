@@ -20,20 +20,20 @@ import sys
 from pathlib import Path
 
 from ..state import (
-    Attribution,
-    CriterionCheck,
+    ClaimOutcomeLog,
+    ClaimOutcomeRecord,
+    IntentOutcomeDetails,
     LiveIntentStore,
-    OutcomeLedger,
-    OutcomeRecord,
     PendingSignalLog,
     RecallCache,
-    Signal,
     attribution_from_entries,
     resolve_state_root,
+    roll_up,
+    synthesize_criterion_checks,
 )
-from ..state.ledger import now_iso
+from ..state.claim_outcome import now_iso
 from ._errors import EXIT_OK, EXIT_USER_ERROR, user_error as _user_error
-from ._memory import _open_user_memory, _workspace_polarity_tag
+from ._memory import _open_durable_intents
 
 
 def _state_root(args: argparse.Namespace) -> Path:
@@ -68,7 +68,7 @@ def _cmd_add(args: argparse.Namespace) -> int:
 
 def _cmd_list(args: argparse.Namespace) -> int:
     store = LiveIntentStore(_state_root(args))
-    intents = store.list_active()
+    intents = store.list_all()
     if args.status:
         intents = [i for i in intents if i.status == args.status]
     if args.json:
@@ -98,18 +98,15 @@ def _cmd_path(args: argparse.Namespace) -> int:
     live = LiveIntentStore(state_root)
     # node_id -> (level, text, source_tag, parent_ids)
     nodes: dict[str, tuple[str, str, str, list[str]]] = {}
-    for i in live.list_active():
+    for i in live.list_all():
         nodes[i.intent_id] = (i.level, i.text, "live", list(i.parent_ids))
     # Durable lookup is best-effort: if no user_id can be derived (no
     # --user, no USER/USERNAME), traverse live-only rather than raise.
     try:
-        memory = _open_user_memory(args)
-        rows, _ = memory.read_all()
-        for r in rows:
-            if r.level in ("goal", "direction"):
-                nodes[r.row_id] = (
-                    r.level, r.text, "durable", list(r.parent_ids),
-                )
+        for d in _open_durable_intents(args).list_all():
+            nodes[d.intent_id] = (
+                d.level, d.text, "durable", list(d.parent_ids),
+            )
     except RuntimeError:
         pass
 
@@ -161,9 +158,9 @@ def _record_user_signal(
     state_root = _state_root(args)
     store = LiveIntentStore(state_root)
     log = PendingSignalLog(state_root)
-    ledger = OutcomeLedger(state_root)
+    ledger = ClaimOutcomeLog(state_root)
     cache = RecallCache(state_root)
-    intents = {i.intent_id: i for i in store.list_active()}
+    intents = {i.intent_id: i for i in store.list_all()}
     intent = intents.get(args.intent_id)
     if intent is None:
         return _user_error(f"intent_id {args.intent_id!r} not in live graph")
@@ -196,24 +193,31 @@ def _record_user_signal(
     if not recall_entries:
         recall_entries = cache.read_since(intent_started_at)
     attribution = attribution_from_entries(recall_entries)
-    ledger.write(OutcomeRecord(
+    # The keystone join (S4): evaluate the intent's *declared* success_criteria
+    # against the signals seen during its lifetime — the just-appended user
+    # verdict plus any mechanical signals the PostToolUse hook captured. An
+    # intent with no declared criteria falls back to a single `user_confirms`
+    # criterion synthesised from this verdict, preserving prior behaviour until
+    # S5 auto-harvests criteria. The roll-up is the AND across the checks.
+    pending = log.read(intent_id=args.intent_id, since=intent_started_at)
+    checks = synthesize_criterion_checks(
+        intent.success_criteria,
+        pending,
+        fallback={
+            "text": f"user {verdict}: {args.reason or 'no reason'}",
+            "measure": "user_confirms",
+        },
+    )
+    ledger.write(ClaimOutcomeRecord(
         intent_id=args.intent_id,
-        intent_level=intent.level,
-        criterion_checks=[CriterionCheck(
-            criterion_text=f"user {verdict}: {args.reason or 'no reason'}",
-            measure="user_confirms",
-            verdict=verdict,
-            signals_seen=[Signal(
-                source="user",
-                value={"verdict": verdict},
-                timestamp=timestamp,
-            )],
-            verdict_confidence="high",
-        )],
-        roll_up_verdict=verdict,
-        attribution=attribution,
         resolved_at=timestamp,
-        intent_kind=intent.created_under_intent_kind,
+        roll_up_verdict=roll_up(checks),
+        attribution=attribution,
+        details=IntentOutcomeDetails(
+            intent_level=intent.level,
+            criterion_checks=checks,
+            intent_kind=intent.created_under_intent_kind,
+        ),
     ))
     print(f"{verdict}: {args.intent_id} ({len(attribution)} attributed)")
     return EXIT_OK
@@ -254,7 +258,7 @@ def _maybe_llm_client():
     because the env-var slot is known to ship with trailing newlines that
     crash `httpcore.LocalProtocolError` otherwise.
     """
-    from ..optimise.synth_queries import default_client, discover_api_key
+    from .._anthropic import default_client, discover_api_key
     key = discover_api_key()
     if not key:
         return None
@@ -269,20 +273,19 @@ def _cmd_what_next(args: argparse.Namespace) -> int:
 
     state_root = _state_root(args)
     store = LiveIntentStore(state_root)
-    candidates = pick_candidates(store.list_active(), top_k=args.top_k)
+    candidates = pick_candidates(store.list_all(), top_k=args.top_k)
     llm = None if args.no_llm else _maybe_llm_client()
     print(synthesise_recommendation(candidates, llm=llm))
     return EXIT_OK
 
 
 def _cmd_declare_durable(args: argparse.Namespace) -> int:
-    """Write a durable goal or direction to the per-user memory store.
+    """Write a durable goal or direction to the per-user durable intent store.
 
     The intent-interrogation skill orchestrates the conversation that
-    produces the inputs; this CLI is the write seam. `confidence=verified`
-    + `origin=manual` per architecture §"The intent-interrogation skill".
+    produces the inputs; this CLI is the write seam.
     """
-    memory = _open_user_memory(args)
+    store = _open_durable_intents(args)
     success_criteria = []
     if args.criterion:
         for entry in args.criterion:
@@ -292,44 +295,37 @@ def _cmd_declare_durable(args: argparse.Namespace) -> int:
                 )
             measure, text = entry.split("=", 1)
             success_criteria.append({"text": text, "measure": measure})
-    polarity = ["factual", _workspace_polarity_tag(args)]
-    row_id = memory.add_row(
-        text=args.text,
-        polarity=polarity,
-        transcript_hash="manual",
+    intent = store.add_intent(
         level=args.level,
-        confidence="verified",
-        origin="manual",
+        text=args.text,
         stance=args.stance,
         achievability=args.achievability,
         status="active",
         success_criteria=success_criteria,
         constraints=list(args.constraint or []),
-        created_under_intent_kind="none",
     )
-    print(row_id)
+    print(intent.intent_id)
     return EXIT_OK
 
 
 def _cmd_list_durable(args: argparse.Namespace) -> int:
-    """List durable goal and direction rows in the per-user memory store."""
-    memory = _open_user_memory(args)
-    rows, _ = memory.read_all()
-    durable = [r for r in rows if r.level in ("goal", "direction")]
+    """List durable goals and directions in the per-user durable store."""
+    durable = _open_durable_intents(args).list_all()
     if args.level:
-        durable = [r for r in durable if r.level == args.level]
+        durable = [i for i in durable if i.level == args.level]
     if args.json:
-        print(json.dumps([r.to_jsonl_dict() for r in durable], indent=2))
+        print(json.dumps([i.to_dict() for i in durable], indent=2))
         return EXIT_OK
     if not durable:
         print("(no durable goals or directions)", file=sys.stderr)
         return EXIT_OK
-    for row in durable:
-        text = row.text.replace("\n", " ").strip()
+    for intent in durable:
+        text = intent.text.replace("\n", " ").strip()
         if len(text) > 80:
             text = text[:79] + "…"
         print(
-            f"{row.row_id}  [{row.level:<10} {row.confidence:<8}] {text}"
+            f"{intent.intent_id}  [{intent.level:<10} {intent.status:<10}] "
+            f"{text}"
         )
     return EXIT_OK
 
@@ -340,7 +336,7 @@ def _cmd_decompose(args: argparse.Namespace) -> int:
 
     state_root = _state_root(args)
     store = LiveIntentStore(state_root)
-    intents = {i.intent_id: i for i in store.list_active()}
+    intents = {i.intent_id: i for i in store.list_all()}
     parent = intents.get(args.intent_id)
     if parent is None:
         return _user_error(f"intent_id {args.intent_id!r} not in live graph")
@@ -593,7 +589,7 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     declare_p.add_argument(
         "--level", required=True, choices=["goal", "direction"],
         help="durable level (live store handles step/task; this writes "
-             "goal or direction to the per-user memory store)",
+             "goal or direction to the per-user durable intent store)",
     )
     declare_p.add_argument(
         "--stance", default="do", choices=["do", "avoid", "know"],

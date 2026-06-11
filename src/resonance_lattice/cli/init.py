@@ -76,7 +76,7 @@ def cmd_init_project(args: argparse.Namespace) -> int:
         return 1
 
     output = Path(args.output) if args.output else cwd / f"{cwd.name}.rlat"
-    print(f"[init] detected sources:")
+    print("[init] detected sources:")
     for s in sources:
         print(f"  - {s.relative_to(cwd) if s.is_relative_to(cwd) else s}")
     print(f"[init] output: {output}")
@@ -104,7 +104,7 @@ def cmd_init_project(args: argparse.Namespace) -> int:
     rc = cmd_summary(argparse.Namespace(
         knowledge_model=str(output),
         output=str(primer_path),
-        queries=None,
+        query=None,
         source_root=str(cwd),
     ))
     if rc != 0:

@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glossary — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html" aria-current="page">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>Glossary</h1>
+  <p class="lede">
+    The terms rlat uses, in one place. Plain-language definitions, in
+    alphabetical order.
+  </p>
+
+  <section id="key-terms">
+    <h2 id="start-here">Start here</h2>
+    <p>
+      If you are reading the docs cold, these concepts carry most of the weight:
+    </p>
+    <ul class="checklist">
+      <li><a href="#knowledge-model"><strong>Knowledge model</strong></a> — a
+      <code>.rlat</code> archive: the queryable index of a corpus.</li>
+      <li><a href="#verified-retrieval"><strong>Verified retrieval</strong></a> —
+      every passage carries source provenance and a content hash, so a result
+      can be cited and drift can be detected.</li>
+      <li><a href="#source-layer"><strong>Source</strong></a>,
+      <a href="#insight-layer"><strong>insight</strong></a>, and
+      <a href="#lens"><strong>lens</strong></a> — the three layers rlat keeps
+      knowledge in, never blurred together.</li>
+      <li><a href="#grounding-mode"><strong>Grounding mode</strong></a> — the
+      directive telling a consumer LLM how to weight passages against its
+      training.</li>
+      <li><a href="#deep-search"><strong>Deep-search</strong></a> — the
+      multi-hop research loop that returns a faithfully-grounded answer.</li>
+    </ul>
+    <p>The full alphabetical glossary follows.</p>
+  </section>
+
+  <section id="glossary">
+    <h2 id="terms">Terms</h2>
+    <table class="compact">
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+
+        <tr id="ann"><td><strong>ANN (Approximate Nearest Neighbour)</strong></td>
+        <td>A fast retrieval index used once a knowledge model's passage count
+        crosses a threshold. rlat uses FAISS HNSW; the index is built when a
+        corpus exceeds ~5000 passages. Below that, an exact dense matrix
+        multiply is sub-millisecond and the ANN overhead does not pay.</td></tr>
+
+        <tr id="audit"><td><strong>Audit</strong></td>
+        <td>The <code>rlat audit</code> command. Reports the trust state of a
+        knowledge model — which insights are live, which are provisional, which
+        have gone stale because their source drifted. A read-only health check
+        on the insight layer.</td></tr>
+
+        <tr id="augment-mode"><td><strong>Augment mode</strong></td>
+        <td>The default <a href="#grounding-mode">grounding mode</a>. Tells the
+        consumer LLM to treat the passages as primary context, blended with its
+        training, and to prefer them on conflict. The dynamic body is suppressed
+        when retrieval is weak, so the LLM falls back to training rather than
+        grounding on noise. The right default for broad documentation corpora
+        where the LLM has solid prior knowledge.</td></tr>
+
+        <tr id="backbone"><td><strong>Backbone</strong></td>
+        <td>The encoder model and revision baked into a knowledge model at build
+        time, recorded in <code>metadata.json</code>. Cross-knowledge-model
+        operations require matching backbones — different revisions produce
+        non-comparable embeddings.</td></tr>
+
+        <tr id="band"><td><strong>Band</strong></td>
+        <td>The embedding tensor inside a knowledge model — the
+        <code>base</code> band, 768d, always present. It is stored
+        compressed inside the <code>.rlat</code> archive.</td></tr>
+
+        <tr id="base-band"><td><strong>Base band</strong></td>
+        <td>The universal 768d <code>gte-modernbert-base</code> output. Every
+        knowledge model has one. Cross-knowledge-model operations always use it,
+        because it is the only band comparable across corpora (the
+        <a href="#cross-model-rule">cross-model rule</a>).</td></tr>
+
+        <tr id="bundled-mode"><td><strong>Bundled mode</strong></td>
+        <td>A storage mode where source files are compressed inside the
+        <code>.rlat</code> archive itself. Self-contained — drop the file on a
+        USB stick, ship it to a colleague, query offline.</td></tr>
+
+        <tr id="capture-surface"><td><strong>Capture surface</strong></td>
+        <td>Any entry point that lands knowledge in the <code>.rlat</code>
+        file: the passive miner (opt-in, via <code>rlat memory install-hooks
+        --mine</code>), <code>rlat capture-attribute</code>,
+        <code>rlat capture-env</code>, and <code>rlat memory add</code>.</td></tr>
+
+        <tr id="citation"><td><strong>Citation</strong></td>
+        <td>The provenance record on a retrieved passage:
+        <code>(passage_idx, source_file, char_offset, char_length,
+        content_hash)</code>. Lets any result be traced back to the exact byte
+        span it came from.</td></tr>
+
+        <tr id="confidence-lifecycle"><td><strong>Confidence lifecycle</strong></td>
+        <td>The path an <a href="#insight-layer">insight</a> takes from when it
+        is first created to when it is trusted or retired. A new insight enters
+        <a href="#provisional-insight">provisional</a>; real task outcomes then
+        raise its confidence if it keeps paying off, or retire it out of
+        retrieval if it is falsified. No up-front approval is part of the
+        path.</td></tr>
+
+        <tr id="confidence-ladder"><td><strong>Confidence ladder</strong></td>
+        <td>The four rungs a <a href="#flat-memory">memory</a> lesson or an
+        <a href="#insight-layer">insight</a> can sit on:
+        <code>low → medium → high → verified</code>. Nothing is declared
+        confident; it earns each rung from accumulated evidence. Recalled items
+        always show their rung, so a low-confidence guess is never mistaken for
+        a verified one.</td></tr>
+
+        <tr id="connected-components"><td><strong>Connected-components clustering</strong></td>
+        <td>A single-linkage clustering algorithm used by the dedupe operations.
+        Two items cluster together if any chain of pairwise-similar links
+        connects them, even when the two endpoints are not directly similar.</td></tr>
+
+        <tr id="constrain-mode"><td><strong>Constrain mode</strong></td>
+        <td>An opt-in <a href="#grounding-mode">grounding mode</a> that tells the
+        consumer LLM to answer only from the retrieved passages and to refuse
+        explicitly when the passages do not cover the question. There is no body
+        suppression — the LLM does the refusal. The recommended posture for fact
+        extraction, compliance, and audit work where a wrong-but-confident
+        answer is worse than no answer.</td></tr>
+
+        <tr id="constraint-kind"><td><strong>Constraint (claim kind)</strong></td>
+        <td>A standing hard rule of the world the knowledge model covers.
+        Constraints are served in full on every context serve — not retrieved
+        by similarity — so a hard rule is never missed because a query didn't
+        happen to resemble it. Captured via
+        <code>rlat capture-attribute --kind constraint</code>.</td></tr>
+
+        <tr id="content-hash"><td><strong>Content hash</strong></td>
+        <td>A SHA-256 of a passage's source bytes, recorded at build time. At
+        query time the live source bytes are hashed and compared — a mismatch is
+        <a href="#drift">drift</a>.</td></tr>
+
+        <tr id="cross-model-rule"><td><strong>Cross-model rule</strong></td>
+        <td>Any operation spanning two knowledge models always uses the
+        <a href="#base-band">base band</a> — the band every knowledge model
+        shares, so the numbers are always directly comparable.</td></tr>
+
+        <tr id="cls-pooling"><td><strong>CLS pooling</strong></td>
+        <td>Taking the <code>[CLS]</code> token's hidden state as the sentence
+        embedding. The pooling convention rlat's encoder uses.</td></tr>
+
+        <tr id="deep-search"><td><strong>Deep-search / deep-research</strong></td>
+        <td>The multi-hop research loop — plan, retrieve, refine, retrieve again,
+        synthesize — that returns a faithfully-grounded answer plus an evidence
+        union of citations. Two surfaces run the same loop: the
+        <code>deep-research</code> skill drives it inside a Claude Code session
+        with no API key; the <code>rlat deep-search</code> CLI verb exposes it
+        for non-Claude-Code agents, CI, and batch jobs and needs an Anthropic
+        API key.</td></tr>
+
+        <tr id="distillation-arrows"><td><strong>Distillation arrows</strong></td>
+        <td>The three steps that lift raw <a href="#flat-memory">memory</a>
+        capture into durable lessons. Arrow 1 groups one-off events into
+        patterns. Arrow 2 weighs patterns against their outcomes to form
+        learnings. Arrow 3 lifts learnings that hold across different kinds of
+        work into cross-domain principles.</td></tr>
+
+        <tr id="drift"><td><strong>Drift</strong></td>
+        <td>Divergence between a passage's recorded <a href="#content-hash">
+        content hash</a> and the live source bytes. Three statuses:
+        <code>verified</code> (hash matches), <code>drifted</code> (source
+        exists but the hash mismatches), <code>missing</code> (the source file
+        is gone). Computed at query time.</td></tr>
+
+        <tr id="drift-cascade"><td><strong>Drift cascade</strong></td>
+        <td>When a source file changes, the <a href="#insight-layer">insights</a>
+        built on that source are automatically marked stale and drop out of
+        retrieval until re-verified. This keeps an earned summary from outliving
+        the ground truth it was drawn from. <code>--include-stale</code>
+        overrides the cascade when you want to see stale insights anyway.</td></tr>
+
+        <tr id="encoder"><td><strong>Encoder</strong></td>
+        <td>The <code>gte-modernbert-base</code> model that turns text into 768d
+        L2-normalised embeddings. A single recipe — no preset, no pooling
+        toggle, no projection knob — pinned to a specific Hugging Face
+        revision.</td></tr>
+
+        <tr id="expertise-primer"><td><strong>Expertise primer</strong></td>
+        <td>A synthesised markdown summary of what the assistant has earned
+        about a project — the durable distillation of corpus, memory, and intent
+        into directly usable context. Produced by <code>rlat expertise</code>
+        and read at the start of a session so the assistant begins already
+        oriented.</td></tr>
+
+        <tr id="faithfulness-gate"><td><strong>Faithfulness gate</strong></td>
+        <td>The check a <a href="#deep-search">deep-search</a> answer must pass
+        before it can become a <a href="#provisional-insight">provisional
+        insight</a>. An answer is faithful when every claim in it traces to a
+        cited source passage. The gate replaces the retired up-front
+        approve/reject step: an insight is kept because it is grounded, not
+        because someone signed off on it.</td></tr>
+
+        <tr id="falsified-finding"><td><strong>Falsified finding (negation)</strong></td>
+        <td>A record that something was tried and proved not to work, with its
+        evidence in the text. Served with the "Tried and falsified" framing so
+        an assistant stops re-recommending dead ends. Captured via
+        <code>rlat capture-attribute --kind falsified</code>.</td></tr>
+
+        <tr id="field"><td><strong>Field</strong></td>
+        <td>The router layer of rlat's three-layer architecture — the encoder
+        plus dense cosine retrieval plus the ANN index.</td></tr>
+
+        <tr id="flat-memory"><td><strong>Flat memory</strong></td>
+        <td>The memory model rlat uses: one flat store of short, polarity-tagged
+        lesson rows, each with a recurrence count and a
+        <a href="#confidence-ladder">confidence rung</a>, scoped to a
+        <a href="#workspace">workspace</a>. There are no tiers, no half-lives,
+        and no tier-weighted recall — a lesson's standing comes entirely from its
+        confidence and how it has performed. See the
+        <a href="claim-system.html">claim system</a> page.</td></tr>
+
+        <tr id="grounding-mode"><td><strong>Grounding mode</strong></td>
+        <td>The directive stamped at the top of LLM-facing markdown by
+        <code>rlat skill-context</code> and <code>rlat search --format
+        context</code>, telling the consumer LLM how to weight passages against
+        its training. Three modes: <a href="#augment-mode">augment</a> (default),
+        <a href="#constrain-mode">constrain</a>, and
+        <a href="#knowledge-mode">knowledge</a>. Selected with <code>--mode</code>.
+        The directive header always ships, even when the dynamic body is
+        suppressed.</td></tr>
+
+        <tr id="insight-layer"><td><strong>Insight layer / insight passage</strong></td>
+        <td>The middle of rlat's three layers. An <strong>insight passage</strong>
+        is a compact, cited summary earned from past research — every claim in it
+        traces down to <a href="#source-layer">source</a>. Insights carry a
+        confidence and are served alongside source passages at query time, each
+        clearly labelled. They enter through the
+        <a href="#faithfulness-gate">faithfulness gate</a> and live or retire by
+        their <a href="#confidence-lifecycle">confidence lifecycle</a>. Insights
+        are derived from the corpus; captured world claims —
+        <a href="#world-fact">facts</a>, <a href="#constraint-kind">constraints</a>,
+        <a href="#falsified-finding">falsified findings</a> — come from you or
+        your sessions and live alongside them, each labelled by kind.</td></tr>
+
+        <tr id="intent"><td><strong>Intent</strong></td>
+        <td>A live record of what a user is trying to accomplish. <code>rlat
+        intent</code> manages them — <code>add</code> declares one,
+        <code>list</code> shows the active ones, <code>path</code> shows how an
+        intent decomposes into steps, <code>activate</code> switches the live
+        one, and <code>accept</code> / <code>reject</code> record whether an
+        intent was satisfied. Captured intent lets the harness condition
+        retrieval and attribute outcomes.</td></tr>
+
+        <tr id="knowledge-mode"><td><strong>Knowledge mode</strong></td>
+        <td>An opt-in <a href="#grounding-mode">grounding mode</a> that tells the
+        consumer LLM to treat the passages as a supplement to its training
+        knowledge for the corpus's domain. It uses a lighter weak-retrieval gate
+        than augment, because the directive already invites training-blending.
+        Choose it for domains where training data may be stale but partial
+        knowledge is still useful.</td></tr>
+
+        <tr id="knowledge-model"><td><strong>Knowledge model</strong></td>
+        <td>The canonical name for a <code>.rlat</code> archive — the queryable
+        index built from a corpus. Always "knowledge model", never
+        "cartridge".</td></tr>
+
+        <tr id="lens"><td><strong>Lens / <code>.lens</code> file</strong></td>
+        <td>A portable layer that carries one person's perspective on a
+        knowledge model — which sources they trust, which earned insights have
+        served them well, an optional written stance, and their accumulated
+        memory. A lens names patterns of trust rather than specific files, so the
+        same <code>.lens</code> can travel to a different knowledge model.
+        Several lenses can be merged into a team lens. A lens selects and
+        ranks, and is the review surface for what has been captured — it never
+        creates knowledge. See the
+        <a href="claim-system.html">claim system</a> page.</td></tr>
+
+        <tr id="local-mode"><td><strong>Local mode</strong></td>
+        <td>The default storage mode. Source files stay on disk; the
+        <code>.rlat</code> carries embeddings, coordinates, and a recorded
+        <a href="#source-root">source root</a>. Drift detection works against
+        live filesystem state.</td></tr>
+
+        <tr id="memory-confidence-ladder"><td><strong>Memory confidence ladder</strong></td>
+        <td>The <a href="#confidence-ladder">confidence ladder</a> as it applies
+        to memory: every lesson sits on <code>low</code>, <code>medium</code>,
+        <code>high</code>, or <code>verified</code>. Outcome corroboration,
+        corpus verification, and direct user confirmation move a lesson up;
+        confidence also orders recall, so the most trusted relevant lesson
+        surfaces first.</td></tr>
+
+        <tr id="name-check"><td><strong>Name-check / <code>--strict-names</code></strong></td>
+        <td>A distinctive-token verification applied when grounded output is
+        emitted. It extracts proper nouns, acronyms, and alphanumeric IDs from
+        the question and presence-checks each against the retrieved passages. By
+        default it prepends a refusal directive when a token is missing from all
+        passages; under <code>--strict-names</code> it exits non-zero instead.
+        Catches the name-aliasing failure that score-based gating cannot.</td></tr>
+
+        <tr id="outcome-ledger"><td><strong>Outcome ledger</strong></td>
+        <td>The record of how tasks actually turned out — did a task succeed,
+        and how much had to be re-done. Outcomes are what make
+        <a href="#confidence-ladder">confidence</a> honest: a memory lesson or an
+        insight is trusted because the sessions that used it went well, not
+        because it was written down.</td></tr>
+
+        <tr id="passage"><td><strong>Passage</strong></td>
+        <td>A chunked text fragment from a source file — the unit retrieval
+        works over. Built by rlat's chunker, which falls back from paragraph to
+        sentence to a hard split, with defaults of roughly 200–3200 characters
+        per passage.</td></tr>
+
+        <tr id="passage-idx"><td><strong>Passage_idx</strong></td>
+        <td>A zero-based row index identifying a passage. It maps to a row in
+        every band tensor and a line in the registry — the bridge between the
+        field layer and the store layer.</td></tr>
+
+        <tr id="probe"><td><strong>Probe</strong></td>
+        <td>The <code>rlat probe</code> command — a diagnostic that inspects how
+        a knowledge model behaves on a query or set of queries, used to
+        investigate retrieval quality without changing anything.</td></tr>
+
+        <tr id="provisional-insight"><td><strong>Provisional insight</strong></td>
+        <td>An <a href="#insight-layer">insight</a> that has just passed the
+        <a href="#faithfulness-gate">faithfulness gate</a> but has not yet earned
+        confidence from outcomes. Because it is grounded, it is safe to serve
+        right away — it is served carrying a visible <em>provisional</em>
+        confidence, so the reader knows it is new. From there it hardens if it
+        keeps paying off or retires if it is falsified.</td></tr>
+
+        <tr id="re-verification"><td><strong>Re-verification</strong></td>
+        <td>The <code>rlat reverify</code> command. When source drifts and the
+        <a href="#drift-cascade">drift cascade</a> marks insights stale,
+        re-verification walks those stale insights so each one is checked again
+        against current source and either kept or retired.</td></tr>
+
+        <tr id="registry"><td><strong>Registry</strong></td>
+        <td>The list of records inside a knowledge model mapping each
+        <a href="#passage-idx">passage_idx</a> to its source coordinates.</td></tr>
+
+        <tr id="rlat"><td><strong>rlat</strong></td>
+        <td>The command-line entry point. <code>resonance_lattice</code> is the
+        Python module; <code>rlat</code> is the command.</td></tr>
+
+        <tr id="rql"><td><strong>RQL (Resonance Query Language)</strong></td>
+        <td>The typed Python API surface — a curated set of operations grouped
+        Foundation / Comparison / Composition / Evidence / Experimental. Some CLI
+        subcommands wrap RQL operations; the rest are library-callable.</td></tr>
+
+        <tr id="remote-mode"><td><strong>Remote mode</strong></td>
+        <td>A storage mode where source is resolved over HTTP(S) against a
+        SHA-pinned manifest baked into the <code>.rlat</code> at build time. The
+        first query downloads cited source to a per-knowledge-model cache, with
+        SHA verification on every read.</td></tr>
+
+        <tr id="skill-context"><td><strong>Skill-context</strong></td>
+        <td>The <code>rlat skill-context</code> command, designed as the body of
+        an Anthropic skill <code>!command</code> block. Its stdout is markdown —
+        query-relevant grounded passages with citation anchors, per-passage drift
+        status, calibration data, and a <a href="#grounding-mode">grounding
+        mode</a> directive — that replaces the placeholder before the model sees
+        the skill.</td></tr>
+
+        <tr id="source-coordinates"><td><strong>Source coordinates</strong></td>
+        <td>The <code>(source_file, char_offset, char_length)</code> triple
+        identifying a passage's exact byte span in its source file, plus
+        <code>content_hash</code> for drift detection.</td></tr>
+
+        <tr id="source-layer"><td><strong>Source layer</strong></td>
+        <td>The bottom of rlat's three layers — the raw passages from your
+        files, hash-verified and drift-checked. Source is ground truth: it never
+        changes meaning, and everything in the
+        <a href="#insight-layer">insight</a> and <a href="#lens">lens</a> layers
+        traces back down to it. <code>--source-only</code> restricts any search
+        to this layer alone — the honest baseline.</td></tr>
+
+        <tr id="source-root"><td><strong>Source root</strong></td>
+        <td>The filesystem directory that a knowledge model's
+        <code>source_file</code> paths are relative to. Local mode needs it; it
+        is recorded at build time, and the CLI <code>--source-root</code> flag
+        overrides it.</td></tr>
+
+        <tr id="stable-passage-id"><td><strong>Stable passage_id</strong></td>
+        <td>A hash of a passage's source-file slice that survives
+        <code>refresh</code> and <code>sync</code> deltas. A passage that changes
+        content but keeps its file slice keeps the same id; one that moves within
+        a file gets a new id. Stable ids keep citation chains intact when
+        passages are added or removed.</td></tr>
+
+        <tr id="store"><td><strong>Store</strong></td>
+        <td>The authoritative content layer of rlat's three-layer architecture.
+        It resolves <a href="#source-coordinates">source coordinates</a> to text
+        and computes drift status. Three storage modes:
+        <a href="#bundled-mode">bundled</a>, <a href="#local-mode">local</a>,
+        <a href="#remote-mode">remote</a>.</td></tr>
+
+        <tr id="trace"><td><strong>Trace</strong></td>
+        <td>The <code>rlat trace</code> command. Follows a single
+        <a href="#insight-layer">insight</a> all the way down to the source
+        passages it rests on, so you can see exactly what an earned summary was
+        built from.</td></tr>
+
+        <tr id="verdict-lifecycle"><td><strong>Verdict lifecycle</strong></td>
+        <td>The path an insight follows as evidence accumulates: it enters
+        <a href="#provisional-insight">provisional</a>, hardens up the
+        <a href="#confidence-ladder">confidence ladder</a> as outcomes
+        corroborate it, and retires out of retrieval if it is falsified or if
+        the <a href="#drift-cascade">drift cascade</a> marks its source stale and
+        <a href="#re-verification">re-verification</a> cannot save it.</td></tr>
+
+        <tr id="verified-retrieval"><td><strong>Verified retrieval</strong></td>
+        <td>The contract that every passage in every <code>.rlat</code> carries
+        source provenance and a content hash, so a query result can be cited
+        back to source and drift can be detected. rlat's single biggest
+        architectural advantage over opaque-embedding-store retrievers.</td></tr>
+
+        <tr id="watch"><td><strong>Watch</strong></td>
+        <td>The <code>rlat watch</code> command — a live, silent,
+        self-discovering refresh loop running the same incremental delta-apply as
+        <code>rlat refresh</code>. Filesystem events debounce-trigger a
+        per-archive refresh. <code>--once</code> is the synchronous one-shot for
+        CI and pre-commit. Local mode only.</td></tr>
+
+        <tr id="workspace"><td><strong>Workspace</strong></td>
+        <td>The scope a <a href="#flat-memory">memory</a> store belongs to —
+        usually a project, resolved from the git repository. Lessons learned in
+        one workspace stay attached to it.</td></tr>
+
+        <tr id="world-fact"><td><strong>World fact / attribute (claim kind)</strong></td>
+        <td>A stable fact about the knowledge model's world — a capacity, a
+        version, a region, a policy. Captured from a single mention; at serve
+        time the newest value per subject wins, so a corrected fact replaces
+        the one it supersedes.</td></tr>
+
+      </tbody>
+    </table>
+  </section>
+
+  <section id="next">
+    <h2 id="where-next">Where to go next</h2>
+    <div class="next">
+      <a href="faq.html">
+        <span class="next-label">Related</span><br>
+        <span class="next-title">FAQ</span>
+      </a>
+      <a href="getting-started.html">
+        <span class="next-label">Start here</span><br>
+        <span class="next-title">Getting started</span>
+      </a>
+    </div>
+  </section>
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -3,13 +3,17 @@
 The product surface for power users + integrators who want more than `rlat
 search`. RQL is the Python API; CLI subcommands wrap a subset of it.
 
-The 14 ops are organised into 5 groups:
+The 12 ops are organised into 4 groups:
 
   Foundation (4):     locate, profile, neighbors, near_duplicates
   Comparison (3):     compare, unique, intersect
   Composition (2):    compose, merge
   Evidence + drift (3): evidence, drift, corpus_diff
-  Experimental (2):   contradictions, audit
+
+(The experimental contradictions/audit pair was removed in the 2026-06
+review — superseded by the production self-audit path: `store/self_audit`
+finds the candidate pairs LLM-free at build/refresh, and the free
+`rlat-contradictions` skill judges them. See docs/internal/RQL.md.)
 
 Cross-knowledge-model ops (compare, unique, intersect, compose, merge,
 corpus_diff) ALWAYS use the base band — the cross-model rule that makes
@@ -28,17 +32,14 @@ Phase 6 deliverable. Per-op rationale: docs/internal/RQL.md.
 
 from .compare import compare, intersect, unique
 from .compose import ComposedKnowledgeModel, compose, merge
-from .experimental import audit, contradictions
 from .inspect import locate, near_duplicates, profile
 from .navigate import corpus_diff, drift, evidence, neighbors
 from .types import (
-    AuditReport,
     Citation,
     CitationHit,
     CompareResult,
     ComposedHit,
     ConfidenceMetrics,
-    ContradictionPair,
     CorpusDiff,
     DriftRecord,
     DriftReport,
@@ -67,17 +68,12 @@ __all__ = [
     "evidence",
     "drift",
     "corpus_diff",
-    # Experimental ops (commit 5) — heuristic surfaces, may produce noise
-    "contradictions",
-    "audit",
     # Typed results
-    "AuditReport",
     "Citation",
     "CitationHit",
     "CompareResult",
     "ComposedHit",
     "ConfidenceMetrics",
-    "ContradictionPair",
     "CorpusDiff",
     "DriftRecord",
     "DriftReport",

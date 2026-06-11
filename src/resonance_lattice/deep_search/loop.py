@@ -15,15 +15,14 @@ corpus, 63 questions, 4 hops max): mean $0.010/q vs augment $0.004/q.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from .._pricing import SONNET_MODEL, cost_usd
+from .._pricing import SONNET_MODEL, CostMeter, cost_usd
 from ..cli import _namecheck
-from ..field import ann, retrieve, retrieve_insight
+from ..field import ann, capture, retrieve, retrieve_insight
 from ..field.encoder import Encoder
 from ..store import archive, open_store
 from ..store.verified import InsightHit, VerifiedHit, verify_hits, verify_insight_hits
@@ -63,7 +62,7 @@ def _render_evidence_block(
         if not h.content:
             continue
         parts.append(
-            f"[earned insight {h.insight_id} · verdict={h.verdict_state} "
+            f"[earned insight {h.claim_id} · state={h.state} "
             f"· confidence {h.confidence:.2f}] (score {h.score:.3f}) "
             f"{h.content.strip()}"
         )
@@ -86,29 +85,40 @@ def _retrieve_hop(
     insight layer takes the source-only path unchanged.
     """
     q_emb = np.asarray(encoder.encode([query])[0])
-    src_raw = retrieve(q_emb, handle, ann_index, contents.registry, top_k)
-    source_hits = verify_hits(src_raw, store, contents.registry)
+    # Deep-search hops are machine-generated queries, not user intent — raise
+    # the hand so the capture heart tags them is_user_query=False (capture.md §3).
+    with capture.internal_retrieval():
+        src_raw = retrieve(q_emb, handle, ann_index, contents.registry, top_k)
+        source_hits = verify_hits(src_raw, store, contents.registry)
 
-    insight_hits: list[InsightHit] = []
-    if insight_handle is not None:
-        ins_raw = retrieve_insight(
-            q_emb, insight_handle.band, insight_ann, top_k,
-        )
-        insight_hits = verify_insight_hits(ins_raw, contents.insights)
+        insight_hits: list[InsightHit] = []
+        if insight_handle is not None:
+            ins_raw = retrieve_insight(
+                q_emb, insight_handle.band, insight_ann, top_k,
+                km_id=insight_handle.km_id,
+            )
+            insight_hits = verify_insight_hits(ins_raw, contents.insights)
     return source_hits, insight_hits
 
 
-def _llm_call(client: Any, system: str, user: str, max_tokens: int) -> tuple[str, int, int]:
-    """Wrap the Anthropic SDK call into a (text, in_tokens, out_tokens) triple."""
+def _llm_call(
+    client: Any, system: str, user: str, max_tokens: int,
+    meter: CostMeter | None = None,
+) -> tuple[str, int, int]:
+    """Wrap the Anthropic SDK call into a (text, in_tokens, out_tokens) triple.
+
+    When `meter` is supplied, the observed token usage is recorded so a
+    per-session cap can be enforced upstream.
+    """
     msg = client.messages.create(
         model=SONNET_MODEL, max_tokens=max_tokens, system=system,
         messages=[{"role": "user", "content": user}],
     )
-    return (
-        msg.content[0].text.strip(),
-        int(msg.usage.input_tokens),
-        int(msg.usage.output_tokens),
-    )
+    in_t = int(msg.usage.input_tokens)
+    out_t = int(msg.usage.output_tokens)
+    if meter is not None:
+        meter.add(in_t, out_t)
+    return (msg.content[0].text.strip(), in_t, out_t)
 
 
 def _parse_refiner_action(raw: str) -> dict | None:
@@ -134,6 +144,7 @@ def _parse_refiner_action(raw: str) -> dict | None:
 
 def _synthesize_from_evidence(
     client: Any, question: str, evidence_blocks: list[str],
+    meter: CostMeter | None = None,
 ) -> tuple[str, int, int]:
     """One synthesizer call over accumulated evidence.
 
@@ -148,7 +159,10 @@ def _synthesize_from_evidence(
         f"Provide a concise answer based ONLY on the evidence above. "
         f"If the evidence doesn't cover the question, say so."
     )
-    return _llm_call(client, SYNTHESIZER_SYSTEM, synth_prompt, max_tokens=1000)
+    return _llm_call(
+        client, SYNTHESIZER_SYSTEM, synth_prompt, max_tokens=1000,
+        meter=meter,
+    )
 
 
 def _dedupe_passages(
@@ -193,6 +207,7 @@ def deep_search(
     top_k: int = 5,
     source_root: str | None = None,
     strict_names: bool = False,
+    meter: CostMeter | None = None,
 ) -> DeepSearchResult:
     """Multi-hop research loop against `km_path`.
 
@@ -209,9 +224,21 @@ def deep_search(
       - `strict_names=True`: replace the answer with the standard
         name-mismatch refusal and skip any further work
 
+    `meter` — when supplied, accumulates token usage across every LLM
+    call this invocation makes (planner + refiner + synthesizer).
+    Before each LLM call, the loop checks `meter.has_exceeded_cap()`;
+    on cap-crossed it bails with a synth-from-accumulated-evidence (if
+    any hops completed) or a cap-reason refusal (if cap crossed
+    pre-plan). Same pattern as `store/reverification.py` — see
+    `docs/internal/FAILURE_MODES.md §"LLM client"`. Pass a shared
+    meter across multiple `deep_search` calls (e.g. from `rlat probe`)
+    to enforce a session-wide cap.
+
     `client` is an instance of `anthropic.Anthropic`; the loop uses
     only `client.messages.create`. Inject a fake here for tests.
     """
+    if meter is None:
+        meter = CostMeter(cap_usd=None)
     # Use the underlying archive/store APIs directly so library callers get
     # a raised exception instead of `sys.exit(1)`. CLI surfaces translate
     # the exception into a friendly error themselves.
@@ -233,9 +260,24 @@ def deep_search(
     encoder = Encoder()
     result = DeepSearchResult(question=question, answer="")
 
+    # Pre-flight cost-cap check. With a shared meter (e.g. `rlat probe`
+    # iterating over many queries), the previous query may have already
+    # crossed the cap; bail before the planner call without burning more
+    # spend. Matches `store/reverification.py`'s pre-flight pattern.
+    if meter.has_exceeded_cap():
+        result.answer = (
+            f"I cannot produce an answer — cost cap crossed before "
+            f"deep-search planner could run "
+            f"(${meter.cost_so_far():.4f} of ${meter.cap_usd:.4f})."
+        )
+        result.hops.append(DeepSearchHop(n=1, kind="cost_cap_crossed"))
+        result.cost_usd = cost_usd(result.input_tokens, result.output_tokens)
+        return result
+
     # Hop 1: planner generates the first query.
     plan_text, in_t, out_t = _llm_call(
         client, PLANNER_SYSTEM, f"Question: {question}", max_tokens=100,
+        meter=meter,
     )
     result.input_tokens += in_t
     result.output_tokens += out_t
@@ -290,6 +332,27 @@ def deep_search(
             n_passages=len(source_hits), n_insights=len(insight_hits),
         ))
 
+        # Cap-check before the refiner call — the dominant cost per hop.
+        # On cap-crossed, terminate with a synth-from-accumulated-evidence
+        # if any passages were retrieved; otherwise a cap-reason refusal.
+        if meter.has_exceeded_cap():
+            result.hops.append(DeepSearchHop(
+                n=hop_n, kind="cost_cap_crossed",
+            ))
+            if evidence_blocks:
+                result.answer = (
+                    f"(cost cap crossed at hop {hop_n}; partial answer from "
+                    f"{len(evidence_blocks)} hop(s) of evidence) "
+                    + "\n\n".join(evidence_blocks)[:2000]
+                )
+            else:
+                result.answer = (
+                    f"I cannot produce an answer — cost cap crossed "
+                    f"(${meter.cost_so_far():.4f} of "
+                    f"${meter.cap_usd:.4f})."
+                )
+            break
+
         # Refiner decides next action.
         evidence = "\n\n".join(evidence_blocks)
         evidence_for_llm = evidence[:8000]
@@ -303,7 +366,7 @@ def deep_search(
         # 400 was tight for `answer` actions whose JSON carries the full
         # synthesis; truncation mid-string bust parses.
         raw, in_t, out_t = _llm_call(
-            client, REFINER_SYSTEM, prompt, max_tokens=1000,
+            client, REFINER_SYSTEM, prompt, max_tokens=1000, meter=meter,
         )
         result.input_tokens += in_t
         result.output_tokens += out_t
@@ -317,7 +380,7 @@ def deep_search(
                 n=hop_n, kind="parse_failed", error=raw[:300],
             ))
             synth_text, in_t, out_t = _synthesize_from_evidence(
-                client, question, evidence_blocks,
+                client, question, evidence_blocks, meter=meter,
             )
             result.input_tokens += in_t
             result.output_tokens += out_t
@@ -352,23 +415,35 @@ def deep_search(
     else:
         # Hops exhausted without `answer`. Synthesise from accumulated evidence.
         passages_seen_by_llm = "\n\n".join(passage_blocks)[:10000]
-        synth_text, in_t, out_t = _synthesize_from_evidence(
-            client, question, evidence_blocks,
-        )
-        result.input_tokens += in_t
-        result.output_tokens += out_t
-        result.answer = synth_text
-        result.hops.append(DeepSearchHop(
-            n=max_hops + 1, kind="synth_after_max_hops",
-        ))
+        if meter.has_exceeded_cap():
+            # Cap exhausted right at the end-of-loop synth boundary.
+            # Skip the synth call; return what we have.
+            result.hops.append(DeepSearchHop(
+                n=max_hops + 1, kind="cost_cap_crossed",
+            ))
+            result.answer = (
+                f"(cost cap crossed at end-of-loop synthesis; partial "
+                f"answer from {len(evidence_blocks)} hop(s) of evidence) "
+                + "\n\n".join(evidence_blocks)[:2000]
+            )
+        else:
+            synth_text, in_t, out_t = _synthesize_from_evidence(
+                client, question, evidence_blocks, meter=meter,
+            )
+            result.input_tokens += in_t
+            result.output_tokens += out_t
+            result.answer = synth_text
+            result.hops.append(DeepSearchHop(
+                n=max_hops + 1, kind="synth_after_max_hops",
+            ))
 
     result.evidence_passages = _dedupe_passages(all_verified, contents.registry)
     # Insight ids engaged across all hops, deduped on best score, rank-ordered.
     best_insight_score: dict[str, float] = {}
     for ih in all_insight_hits:
-        if (ih.insight_id not in best_insight_score
-                or ih.score > best_insight_score[ih.insight_id]):
-            best_insight_score[ih.insight_id] = ih.score
+        if (ih.claim_id not in best_insight_score
+                or ih.score > best_insight_score[ih.claim_id]):
+            best_insight_score[ih.claim_id] = ih.score
     result.insight_ids = [
         iid for iid, _ in sorted(
             best_insight_score.items(), key=lambda kv: -kv[1],

@@ -35,7 +35,14 @@ The encoder is fetched from HuggingFace at the revision pinned by the
 `.rlat`'s `metadata.backbone.revision` — no per-workspace tarball staging.
 """
 
-from ._runtime import bootstrap, embed_query, list_kms_for, search_with_state
+from ._runtime import (
+    bootstrap,
+    embed_query,
+    list_kms_for,
+    search_with_state,
+    slice_stream_native,
+    slice_with_state,
+)
 from .errors import FabricSetupError
 from .onelake_store import OneLakeStore
 
@@ -46,4 +53,6 @@ __all__ = [
     "embed_query",
     "list_kms_for",
     "search_with_state",
+    "slice_stream_native",
+    "slice_with_state",
 ]

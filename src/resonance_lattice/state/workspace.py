@@ -99,9 +99,35 @@ def resolve_state_root(cwd: Path | str | None = None) -> Path:
     return state_root_for(resolve_workspace(cwd).root)
 
 
-def workspace_polarity_tag(workspace_id: str) -> str:
-    """Build the `workspace:<hash>` scope-tag for polarity."""
-    return f"workspace:{workspace_id}"
+def resolve_primary_km(cwd: Path | str | None = None) -> Path | None:
+    """The workspace's primary `.rlat` archive, or `None` if not resolvable.
+
+    Scans the resolved workspace *root* (`resolve_workspace(cwd).root`, not raw
+    `cwd` — so a hook fired from a subdirectory still finds a root-level
+    archive) for top-level `*.rlat` files and picks the project's one:
+
+      - exactly one `*.rlat` → that one;
+      - several → prefer `<root-name>.rlat` (the `init-project` default name,
+        `cli/init.py`); otherwise `None` (ambiguous — never guess);
+      - none → `None`.
+
+    Fails open by design: the prompt-time recall path treats `None` as "no
+    corpus band to rank" and proceeds with experience recall only. This is a
+    convention resolver, not a registry — a project may `build` its `.rlat`
+    anywhere; the `<root-name>.rlat` tie-break matches what `init-project`
+    writes. Non-recursive (top-level only), mirroring `rlat watch`'s discovery.
+    """
+    root = resolve_workspace(cwd).root
+    try:
+        candidates = sorted(p for p in root.glob("*.rlat") if p.is_file())
+    except OSError:
+        return None
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    preferred = root / f"{root.name}.rlat"
+    return preferred if preferred.is_file() else None
 
 
 def _load_declaration(state_dir: Path) -> dict | None:

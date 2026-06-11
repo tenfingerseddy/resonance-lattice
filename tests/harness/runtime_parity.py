@@ -15,4 +15,4 @@ import sys
 def run() -> int:
     print("[runtime_parity] SKIP — multi-runtime fixture not built",
           file=sys.stderr)
-    return 0
+    return 2  # harness SKIP sentinel — runner reports as skipped, not passed

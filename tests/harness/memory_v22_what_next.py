@@ -28,7 +28,7 @@ from resonance_lattice.memory.what_next import (
     pick_candidates,
     synthesise_recommendation,
 )
-from resonance_lattice.state.intent import LiveIntent
+from resonance_lattice.state.intent import Intent
 
 _NOW = _dt.datetime(2026, 5, 8, 12, tzinfo=_dt.timezone.utc)
 
@@ -42,11 +42,11 @@ def _intent(
     achievability: str = "medium",
     updated_hours_ago: float = 0.5,
     blocks: list[str] | None = None,
-) -> LiveIntent:
+) -> Intent:
     updated = (_NOW - _dt.timedelta(hours=updated_hours_ago)).strftime(
         "%Y-%m-%dT%H:%M:%SZ",
     )
-    return LiveIntent(
+    return Intent(
         intent_id=intent_id,
         level=level,
         text=text,

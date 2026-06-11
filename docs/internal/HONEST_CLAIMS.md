@@ -1,6 +1,6 @@
 # Honest Claims
 
-What `rlat` v2.0 claims, what it doesn't, and what's measured vs. projected. Calibration discipline — every public claim either has evidence behind it or is explicitly flagged as forward-looking.
+What `rlat` claims, what it doesn't, and what's measured vs. projected. Calibration discipline — every public claim either has evidence behind it or is explicitly flagged as forward-looking. The retrieval-substrate entries date from the v2.0 cycle; the user-world entries from the v3 cycle.
 
 ## What we claim, with evidence
 
@@ -53,7 +53,7 @@ Evidence: round-trip + parity tests in `tests/harness/`; remote-mode end-to-end 
 
 > **`rlat watch`** keeps a local-mode archive current as you edit, on the same `store/incremental.py` pipeline as `rlat refresh`. Default UX is silent. `--once` is a synchronous one-shot for CI / pre-commit. Concurrent FS events can't race the atomic write path; transient read failures don't become silent deletes.
 
-Evidence: `tests/harness/watch_loop.py` — 9 hermetic guarantees + 1 sanity check, all green. Specifically: (1) zero-arg auto-discovery of `*.rlat` in cwd, (2) single-event refresh updates the archive, (3) add+remove cycle reflects both, (4) per-archive `threading.Lock` serialises concurrent refreshes (closes the `<archive>.tmp` race), (5) bundled-mode preflight rejection with `rlat convert` hint, (6) optimised band re-projects through the watch path, (7) `--once` reconciles synchronously without waiting for events (the CI/pre-commit shape that the original event-waiting `--once` got wrong), (8) `force=True` dispatch on rename/delete/dir events bypasses the suffix pre-filter so `foo.md → foo.bak` doesn't leave stale passages indexed, (9) `_filter_skipped_removals` defends against the silent-delete hazard where Windows file locks during atomic save would otherwise make `bucketise` emit destructive removals for transiently unreadable files. Mental model in the implementation: events are hints to reconcile, not the unit of correctness — `bucketise` against the live source tree is the source of truth.
+Evidence: `tests/harness/watch_loop.py` — 8 hermetic guarantees, all green (the optimised-band re-projection guarantee left with the retired optimise feature). Specifically: (1) zero-arg auto-discovery of `*.rlat` in cwd, (2) single-event refresh updates the archive, (3) add+remove cycle reflects both, (4) per-archive `threading.Lock` serialises concurrent refreshes (closes the `<archive>.tmp` race), (5) bundled-mode preflight rejection with `rlat convert` hint, (6) `--once` reconciles synchronously without waiting for events (the CI/pre-commit shape that the original event-waiting `--once` got wrong), (7) `force=True` dispatch on rename/delete/dir events bypasses the suffix pre-filter so `foo.md → foo.bak` doesn't leave stale passages indexed, (8) `_filter_skipped_removals` defends against the silent-delete hazard where Windows file locks during atomic save would otherwise make `bucketise` emit destructive removals for transiently unreadable files. Mental model in the implementation: events are hints to reconcile, not the unit of correctness — `bucketise` against the live source tree is the source of truth.
 
 ### Deep-search loop accuracy
 
@@ -103,7 +103,95 @@ Combined-stack reading: load both primers at session start (free, ~5 KB) **and**
 
 Evidence: ported from v0.11 WS3 #292; `Store.verify` walks the registry against live source bytes. Tested in `tests/harness/property.py:_check_rql_invariants` (drift-aware ops surface drift fraction in evidence reports).
 
-## What we measured on `rlat optimise` — full honest framing
+### Environment / world-premise serving (v3 user-world band)
+
+> Serving the user's true environment premise lifts answers on premise-decisive items, replicated across two corpus types under paired oracle−placebo contrasts.
+
+Scope — and the scope of every user-world claim below (standing constraints, falsification ledger): **gate-conditional** — measured on decisive-item subsets, items where the blind answer actually fails, not unconditional across all questions.
+
+Evidence: the locked env-premise proof (paired within-item oracle−placebo, build-gate-selected decisive items, two corpus types). R1's design isolates serve value "oracle-style, exactly like the locked env-premise proof did" ([`benchmarks/constraint_band/DESIGN.md`](../../benchmarks/constraint_band/DESIGN.md)); it is the first of the three serve-proven content classes in the v3 earned-claim list (`.claude/plans/v3-ship-plan.md`).
+
+### Standing constraints (R1 + R1-X)
+
+> Serving a handful of standing hard rules ("never preview features", "organic only", "NSW matters only") collapses rule-violating answers at zero collateral cost — in a Fabric tenant, a home garden, and a NSW law practice.
+
+Design (pre-registered before any arm ran, both benches): paired within-item arms — blind / served / placebo (R1-X adds a blind-2 resample as the noise-aware placebo reference) — judged by a binary violation verdict with quoted-span evidence; a violation-decisive item gate (STEP 0); two guards: the placebo arm (an irrelevant served rule must not change answers) and a collateral set (questions untouched by every constraint must stay substantively answered). Serve-all, no retrieval, no selection — ~3–10 rules fit in context every time.
+
+R1 numbers (Fabric; [`benchmarks/constraint_band/VERDICT.md`](../../benchmarks/constraint_band/VERDICT.md)):
+
+| Measure | Subscription primary | API (Haiku) confirm |
+|---|---|---|
+| Blind gate yield | 15/24 (62%) | 10/15 on the decisive subset |
+| Served violation rate | **1/15 (7%)** | **0/15 (0%)** |
+| Placebo violation rate | 14/15 (93%) | 9/15 (60%) |
+| Collateral substantive | 10/10 → 10/10 | 10/10 → 10/10 |
+
+R1-X numbers (cross-domain; [`benchmarks/constraint_band_xdomain/VERDICT.md`](../../benchmarks/constraint_band_xdomain/VERDICT.md)):
+
+| Measure | Garden | Practice |
+|---|---|---|
+| Blind gate (violation-decisive) | 12/12 | 11/12 |
+| Served violation rate | **2/12 (17%)** | **1/11 (9%)** |
+| Placebo flips (bar: ≤ blind-2 flips) | 0 (≤1) | 0 (≤0) |
+| Collateral substantive | 6/6 → 6/6 | 6/6 → 6/6 |
+
+API-judge confirm on R1-X: served 0/8 (garden) and 0/4 (practice) within the API judge's own decisive subsets; collateral 12/12 → 12/12.
+
+Scope limits:
+
+- Conditional on **constraint-decisive items** (the STEP 0 gate), stated as such. Gate yield is itself a finding: 62% of natural Fabric answers and 23/24 garden/legal answers violate a standing rule blind.
+- **Serve-all design** — proven for small rule sets served whole; says nothing about retrieval-selected constraints.
+- Cross-domain generality is earned on **garden + NSW practice** (plus Fabric); other domains are extrapolation.
+- Serve value only, oracle-style — nothing about *capturing* constraints (that's E2c's track).
+
+DISCLAIMER — **the placebo guard is judge-sensitive**, stated as the R1-X verdict states it: "under Haiku the guard FAILS in both domains (garden 2 placebo flips vs 0 blind-2; practice 2 vs 1), while under the subscription judge it passes with zero placebo flips. Haiku's known leniency on hedged answers compresses its gate (8/12, 4/12) and shifts borderline calls; the divergence concentrates exactly on the items the two judges already disagree about at the blind gate. Honest statement: the *constraint-specific* effect (the claim) is decisive under both judges; whether an *irrelevant* served rule also nudges answers a little is judge-dependent and unresolved at this n." Same picture on R1 (post-merge correction): computed within the API judge's own decisive subset, placebo reads 7/10 vs a 100% blind reference — a 30pp breach of the ±10pp form. The served-collapse and zero-over-blocking bars are judge-robust everywhere; only the placebo guard moves with the judge. Claims state the constraint-specific effect only.
+
+### Falsification ledger (R2)
+
+> Serving tried-and-falsified claims as first-class atoms ("Tried and falsified in this project (evidence: …): <finding>") stops the assistant re-recommending dead ends — and the falsification **verdict** is the active ingredient, not topical mention of the approach.
+
+Design (pre-registered): paired within-item arms — blind / ledger / topical-mention control (a verdict-free description of the same approach in identical framing) / irrelevant-ledger placebo — binary `recommends` judge with quoted-span evidence, a recommendation-decisive gate, and a collateral set answered with the full 10-atom ledger served.
+
+Run-2 numbers (fictional "Lumera" project; [`benchmarks/falsification_ledger/VERDICT.md`](../../benchmarks/falsification_ledger/VERDICT.md)):
+
+| Measure | Result |
+|---|---|
+| Gate yield (blind recommends) | 7/20 (35%) |
+| Ledger arm recommend rate | **0/7 (0%)** |
+| Topical-mention control | 6/7 (86%) — active-ingredient gap **86pp** |
+| Placebo, raw | 5/7 (71%) — raw ±10pp bar **breached** (−29pp), resolved below |
+| Collateral (full ledger served) | 8/8 → 8/8 |
+
+API-judge confirm (Haiku, byte-identical judge prompts): ledger 0/7, topical 6/7, gap 86pp, collateral 16/16; arm-verdict agreement 21/21 exact.
+
+Method note — run-1 invalidation (in-repo contamination): run 1's gate yield was 0/20 because the blind arm was not blind — answerer subagents ran inside this repository, where the project context and the committed falsification record are visible; 9/20 blind answers cited the project's own record explicitly. Run 2 moved to a fictional project with a true blind arm. Salvage finding worth keeping: an in-repo agent self-serves a committed falsification ledger and follows it correctly — good for the product story, fatal for that blind arm.
+
+Blind-resample noise decomposition (run 2b, pre-registered before running): a fresh blind-2 resample of the identical blind prompt reproduced the placebo arm exactly — 5/7 recommend, identical flip set {q12, q18}. Decision rule: blind-2 flips (2) ≥ placebo flips (2) → the placebo deviation is sampling noise; the guard is judged passed at this n, with the caveat on the record — those two items' recommend propensity is genuinely ~50/50, which makes a 7-item ±10pp bar brittle. Future runs size the decisive subset accordingly.
+
+Scope limits: recommendation-decisive subset only; phase-1 internal falsifications (the evidence is a committed benchmark file in the repo) — world-absence claims ("library X has no feature Y") are out of scope; nothing about capturing falsifications automatically.
+
+Framing note: the bench measured atoms framed "Tried and falsified in this project (evidence: …)". The shipped serve heading (`store/serve_framing.py`) is the domain-neutral variant "Tried and falsified in this environment:" — same verdict-carrying structure (the measured active ingredient), reworded for non-project worlds; the variant itself has not been separately benched.
+
+### Validated capture with privacy gate (E2c)
+
+> The 4-gate, domain-neutral attribute extractor on the production user-turn channel measures **precision 0.86, recall 1.00, zero person-fact leaks** — all four pre-registered bars passed.
+
+Evidence: [`benchmarks/attribute_gate_e2c/DESIGN.md`](../../benchmarks/attribute_gate_e2c/DESIGN.md) (run-1 verdict inline; pre-registration committed before the run). 10 synthetic user-turn sessions (4 software/Fabric, 3 garden, 3 legal) with ground-truth world facts plus 2–4 traps each across six classes (transient / discovered / person / quoted-assistant / hypothetical / corpus-fact); the REAL `extract_attributes` via the production client (Sonnet); deterministic term-match grading — zero judge noise.
+
+| Bar | Result |
+|---|---|
+| Precision ≥ 0.83 | **0.86** (19 matched / 22 emitted) |
+| Recall ≥ 0.85 | **1.00** (19/19 world facts) |
+| Person-fact leaks = 0 (hard bar) | **0** — all 7 person traps dropped |
+| Every domain ≥ 0.75 precision | software 0.80, garden 1.00, legal 0.83 |
+
+Supersedes the earlier 3-gate E2b numbers (precision 0.83 / recall 0.95) — those belonged to the coding-flavoured prompt; the shipped prompt is 4-gate and domain-neutral, and this bench measures it on the real production path. Cite E2c, not E2b.
+
+Honest framing: the three false positives are borderline-defensible captures, none personal (one hypothetical restated as a present-tense fact, two corpus-stated facts relayed as operative constraints) — they pollute mildly, they don't leak. A post-run grader fix (person-trap scan on every emission regardless of ground-truth match) re-graded the committed run-1 emissions and still found 0 leaks.
+
+SCOPE: **GATE 4 is a prompt-level gate, not a structural guarantee.** The privacy contract is enforced by the extractor prompt and validated by this bench (0/7 traps); the architecture does not make a leak impossible. `rlat lens` remains the inspect/delete surface.
+
+## The retired `rlat optimise` — measurements kept as the falsification record
 
 ### Three-row table (Fabric / fiqa / nfcorpus)
 
@@ -139,13 +227,13 @@ deploy against the corpus. fiqa's regression comes from real human
 StackExchange queries differing from the synth distribution Sonnet
 generates against the corpus.
 
-### What we ship
+### Status: retired
 
-`rlat optimise` ships **opt-in-with-real-caveat**. The
-[user OPTIMISE.md](../user/OPTIMISE.md) "When to optimise / When not"
-sections are explicit about the conditions under which lift is
-expected vs unexpected. The README and BENCHMARKS.md surface both the
-Fabric win and the BEIR-fiqa / nfcorpus losses in the same table.
+`rlat optimise` and the MRL trainer were **removed** (2026-06; the
+optimised/optimised_W bands left the v4.1 format with them). The
+measurements above stand as the falsification record — 2 of 3 corpora
+regressed under the locked hparams, and the BEIR-3 soak falsified the
+projected lift. Do not re-add without new evidence that beats this record.
 
 ### MRL hparam validity
 
@@ -190,6 +278,20 @@ Measured null on strong-dense in Phase 0; not shipped.
 
 Evidence: falsified 3 times in independent benchmarks (exp dominates log; collapses to `exp_only` or NaN). Memory: `project_eml_retrieval_falsified.md`. Note: user-facing CLI EML transforms (`--sharpen` etc.) were a SEPARATE feature in v0.11; v2.0 doesn't ship either form.
 
+### Auto-suppression / "gets better with use" self-cleaning
+
+> No claim that the band cleans itself — that a suppression rule automatically retires wrong facts safely. Falsified three ways in the R4 cycle. Corrections stay explicit (say it or delete it).
+
+Evidence ([`benchmarks/r4_continuous_credit/`](../../benchmarks/r4_continuous_credit/)):
+
+1. **v1 pre-registered rule** (anytime-valid confidence sequence on pooled per-serve credit): FAIL — the only rule that never cuts a gold (0/3 seeds; every prior rule kills one), but it cuts zero wrongs; with the pre-chosen conservative constant the interval is still ±~0.5 at ~20 serves/fact. The structural diagnosis: pooled per-fact helpfulness is the wrong sufficient statistic — a true gold (Windows PowerShell 5.1, mean Δ −0.140 over 122 serves) orders BELOW two wrong facts because the selector serves it heavily off-item. Four rule families have failed here for the same structural reason, not four tuning accidents (`VERDICT.md`).
+2. **v2 same-stream replay** (r4c, context-conditioned credit): FAIL on the effectiveness bar — 0 golds cut, 2 wrongs/seed vs wilson2's 3 (wilson2 buys its third wrong by killing a true fact every seed). Replay optimism was flagged up front: same-stream, provisional only (`DESIGN_V2.md`).
+3. **Live confirmation**: FAIL on SAFE (one seed suppressed a gold, seed-avg 0.33) AND VALUE (learning − nolearn mean −0.028, p_wilcoxon 0.76). Off-policy replay was optimistic on both axes — live suppression changes the serving distribution, and a gold was cut before accruing its protecting on-item record (`DESIGN_CONFIRM.md`).
+
+wilson2 is NOT "the best rule" (retracting any earlier framing to that effect): its instrumented baseline measured +0.074 mean (p_wilcoxon 0.031) while killing a gold every seed — value with a casualty, which the program's own trust premise rejects.
+
+Open problem (documented, not hidden): a noise-robust, safe + effective suppression rule. Committed streams: two recorded per-serve streams (the nolearn baseline + the r4c live run, `benchmarks/results/outcome/closed_loop_v2_r4_instrumented.json` + `r4_continuous_credit/run_results/live_confirm_stream.json`) stand as the free offline test bench. Any successor rule must model selection feedback (e.g. protect-before-cut ordering, minimum on-item exposure before any cut) and pre-register cost-weighted effectiveness bars BEFORE its replay.
+
 ## Known limits
 
 ### Scale
@@ -211,14 +313,11 @@ Evidence: falsified 3 times in independent benchmarks (exp dominates log; collap
 
 ### Optimised band
 
-- Optimised is corpus-specific. Doesn't transfer to OTHER corpora. Doesn't help cross-knowledge-model `compare`/`unique`/`intersect` (those use base band by design).
-- The optimised band re-projects from the new base on every `rlat refresh`, `rlat sync`, and `rlat watch` fire — `optimised = (new_base @ W.T)` row-wise L2-normalised, sub-second for 50K passages, no LLM call, no GPU. The W matrix is preserved byte-identically (no retraining). Pass `--discard-optimised` (refresh / sync) to drop the band instead of re-projecting (rare).
-- Below ~1000 passages: the InfoNCE training early-kills at step 100 if dev R@1 < 0.2. You'll spend $14-21 on Haiku and get a band no better than base.
+- Removed from the format together with `rlat optimise` (2026-06). Archives are base-band only; cross-knowledge-model ops always used the base band anyway.
 
 ### Memory
 
-- **Tier pair-write recovery is implemented**, but a crash before the first `os.replace` of either tier can still leave an orphaned tmp file. The load-time self-heal handles this; no data loss; some tmp file cleanup may be required in pathological cases.
-- **Embedding staleness contract**: `recall` and `all_entries` mutate `entry.embedding` in place to re-attach from the tier's NPY slice. Long-lived API consumers should `entry.embedding.copy()` if they want to hold it across re-queries.
+- The tier-era limits previously listed here described the deleted `LayeredMemory`. Production memory is the flat `ExperienceClaimStore`; its current contracts and limits are documented in [`docs/internal/MEMORY.md`](MEMORY.md) (verified against code 2026-06).
 
 ### MCP / HTTP
 

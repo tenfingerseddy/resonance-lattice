@@ -1,0 +1,620 @@
+{
+ "summary": {
+  "gate_yield": "7/20",
+  "decisive_ids": [
+   "q01",
+   "q02",
+   "q10",
+   "q12",
+   "q15",
+   "q18",
+   "q20"
+  ],
+  "ledger_recommend": "0/7",
+  "topical_recommend": "6/7",
+  "placebo_recommend": "5/7",
+  "collateral_blind": "8/8",
+  "collateral_served_full_ledger": "8/8",
+  "bars": {
+   "ledger_le_third_of_blind": true,
+   "active_ingredient_C_minus_B_ge_25pp": true,
+   "placebo_within_10pp": false,
+   "collateral_drop_lt_10pp": true
+  },
+  "workflow": "wf_fb5d32a9 (interrupted by session limit, resumed from journal)"
+ },
+ "gated": [
+  {
+   "id": "q01",
+   "atom": "ce-rerankers",
+   "placebo_atom": "adaptive-rag-router",
+   "question": "Our nDCG@10 on the documentation corpora feels capped. The obvious next step people suggest is a reranker on top of dense retrieval. Should we add one, and which?",
+   "blind_answer": "Don't reach for a reranker first \u2014 diagnose where the cap is.\n\n1. Check recall@100 on the doc corpora. A reranker only reorders what dense retrieval returns; if recall@100 is below ~85%, your ceiling is candidate generation, not ordering. Fix that first: verify you're using e5's required \"query: \"/\"passage: \" prefixes (a silently costly bug), revisit chunking (docs often need smaller, heading-anchored chunks), and add BM25 hybrid fusion \u2014 documentation queries are keyword-heavy (API names, error strings) where lexical recall helps most.\n\n2. Consider upgrading the encoder. e5-large-v2 is dated; bge-m3, gte-large/modernbert, or Qwen3-Embedding typically beat it outright and may recover more nDCG than a reranker would.\n\n3. If recall@100 is healthy and nDCG@10 still lags, then pilot a cross-encoder over the top 50\u2013100: bge-reranker-v2-m3 (self-hosted) or Cohere Rerank 3.5 (managed). Gate it per-corpus with an A/B \u2014 MS MARCO-trained rerankers can tie or regress strong dense baselines out-of-domain, so ship only where it measurably wins.",
+   "blind_recommends": true,
+   "blind_evidence": "\"then pilot a cross-encoder over the top 50\u2013100: bge-reranker-v2-m3 (self-hosted) or Cohere Rerank 3.5 (managed)\" \u2014 endorsed as a gated option; only a generic out-of-domain caveat, no acknowledgment of the prior failure at this organisation"
+  },
+  {
+   "id": "q02",
+   "atom": "ce-rerankers",
+   "placebo_atom": "adaptive-rag-router",
+   "question": "We have budget for one new retrieval-quality component this quarter. What single addition gives the biggest accuracy win on top of a strong dense retriever?",
+   "blind_answer": "Add a cross-encoder reranker over your dense top-k. It is the single highest-leverage addition on top of a good bi-encoder like e5-large-v2, typically worth +3\u20136 nDCG@10 points on BEIR-style suites \u2014 more than hybrid BM25 fusion, query expansion, or swapping embedding models usually delivers.\n\nConcrete setup:\n- Retrieve top 100\u2013200 with e5-large-v2 as you do now; rerank with the cross-encoder; serve top 10.\n- Model: BAAI/bge-reranker-v2-m3 or mxbai-rerank-large are strong open-weight choices; Cohere Rerank 3.5 if you prefer managed.\n- Latency: reranking 100 candidates adds ~50\u2013150 ms on one GPU; cap candidate depth or use a smaller reranker (bge-reranker-base) if that is too much.\n\nWhy it wins: the cross-encoder sees query and document together, catching term-level and negation/ordering distinctions a 1024d single-vector representation compresses away \u2014 exactly where dense retrieval misranks on news.\n\nCaveats: validate on your internal benchmark before shipping (reranker training distribution can mismatch some domains), and rerank candidate depth \u2265100 \u2014 depth 20 leaves most of the gain on the table.",
+   "blind_recommends": true,
+   "blind_evidence": "\"Add a cross-encoder reranker over your dense top-k. It is the single highest-leverage addition\" \u2014 recommended as the primary action; the only caveat is generic (\"reranker training distribution can mismatch some domains\"), with no acknowledgment that this was already tried and failed at this organisation."
+  },
+  {
+   "id": "q03",
+   "atom": "msmarco-finetune",
+   "placebo_atom": "geometry-signals",
+   "question": "We want to fine-tune our embedding encoder to lift general retrieval quality. MS MARCO is the standard training set - what's the right recipe?",
+   "blind_answer": "Don't fine-tune on MS MARCO. e5-large-v2 was already contrastively trained on MS MARCO; another pass adds nothing new and typically *overfits the encoder toward MS MARCO's short, web-search query style*, regressing BEIR-style out-of-domain scores (this is a repeatedly observed failure mode, not a hypothetical). MS MARCO is best as a pretraining ingredient \u2014 which you already have \u2014 not a lift lever.\n\nThe recipe that actually lifts your benchmark:\n\n1. Baseline gate first: freeze current nDCG@10 per corpus; ship only if no corpus regresses.\n2. Train in-domain: generate synthetic queries over your own news/docs passages with an LLM (Promptagator/InPars/GPL-style), filter with a cross-encoder for consistency.\n3. Mine hard negatives with your current e5 model (top-50 retrieved, non-relevant).\n4. Train with MultipleNegativesRankingLoss, in-batch negatives, low LR (1e-5\u20132e-5), 1\u20132 epochs; consider LoRA to limit forgetting. Keep e5's \"query:\"/\"passage:\" prefixes identical in training and serving.\n5. If you have click logs, distill them in as positives.\n\nIn-domain synthetic + hard negatives beats generic MS MARCO tuning almost every time.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach: \"Don't fine-tune on MS MARCO... another pass adds nothing new and typically *overfits the encoder toward MS MARCO's short, web-search query style*, regressing BEIR-style out-of-domain scores\". Its recommended alternative is in-domain synthetic query training, not MS MARCO or a similar large public dataset."
+  },
+  {
+   "id": "q04",
+   "atom": "msmarco-finetune",
+   "placebo_atom": "geometry-signals",
+   "question": "Our base encoder is decent out of the box. Is it worth contrastive fine-tuning on a large public retrieval dataset to boost benchmark scores?",
+   "blind_answer": "Generally no \u2014 not on public data. e5-large-v2 was already contrastively trained on huge public pair corpora (CCPairs) and fine-tuned on MS MARCO/NQ-style data. Re-training on the same public distribution typically buys little and often *regresses* out-of-domain nDCG@10: the model overfits MS MARCO's short, web-QA query style and drifts away from news/documentation distributions. This is a well-replicated failure mode on BEIR-style suites.\n\nWhere fine-tuning does pay off is in-domain adaptation:\n1. Generate synthetic queries over your own news/docs corpora (GPL or Promptagator-style: LLM-generated queries + cross-encoder pseudo-labels + hard negatives mined from your own index).\n2. Better still, mine real signal \u2014 query logs and click/dwell data \u2014 for positives and hard negatives.\n\nPractical recommendation: skip the public-data fine-tune; run a GPL-style domain adaptation pilot on one corpus, gate it on your full benchmark suite (it must not regress any corpus), and keep the tuned checkpoint opt-in until it wins broadly. Also keep e5's \"query:\"/\"passage:\" prefixes intact \u2014 dropping them silently hurts.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach: \"Practical recommendation: skip the public-data fine-tune\" and opens with \"Generally no \u2014 not on public data... often *regresses* out-of-domain nDCG@10\". Its endorsed alternative (GPL-style in-domain adaptation on own corpora) is a different approach, not MS MARCO/public-data fine-tuning."
+  },
+  {
+   "id": "q05",
+   "atom": "mrl-specialist",
+   "placebo_atom": "strip-filter",
+   "question": "Could we train a small corpus-specific projection (Matryoshka-style, lower dimension) per corpus index so retrieval specialises to each corpus?",
+   "blind_answer": "It's feasible but rarely pays off in quality; treat it as a cost lever, not a quality lever. Caveats:\n\n1. e5-large-v2 isn't Matryoshka-trained, so you can't just truncate \u2014 you'd train a projection head per corpus (contrastive loss, frozen encoder).\n2. Frozen-encoder projection heads trained on synthetic queries tend to overfit the training distribution and regress on held-out queries; gains seen on one corpus typically don't transfer, and BEIR-style evals often show net-negative nDCG@10. Demand a strict gate: held-out real query logs per corpus, multi-corpus regression check, ship only on a significant win.\n3. Operational cost is real: per-corpus query-time projection, version coupling between index and head, retraining on corpus drift, and broken cross-corpus search (projected spaces aren't comparable \u2014 keep base 1024d for anything cross-index).\n\nBetter-odds alternatives first: hard-negative mining from your click/query logs to fine-tune one shared encoder; a cross-encoder reranker over top-50; or upgrading the base model. If your goal is index size/latency, use product quantization or int8 \u2014 cheaper and safer than learned dimension reduction.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach: \"treat it as a cost lever, not a quality lever\" and \"Better-odds alternatives first: hard-negative mining from your click/query logs to fine-tune one shared encoder; a cross-encoder reranker over top-50; or upgrading the base model.\" It frames per-corpus projection heads as likely to regress (\"BEIR-style evals often show net-negative nDCG@10\") and demands a strict gate \u2014 it does not endorse adopting the approach."
+  },
+  {
+   "id": "q06",
+   "atom": "mrl-specialist",
+   "placebo_atom": "strip-filter",
+   "question": "Users want faster search. Shrinking embeddings to 512d with an MRL adapter trained per corpus seems attractive - recommended?",
+   "blind_answer": "Not as a first move. Two reasons:\n\n1. The speedup is smaller than it looks. Halving dimensions roughly halves dot-product cost, but end-to-end latency is usually dominated by ANN graph traversal, I/O, and encoding. Profile first. If you're still doing exact search, adding HNSW or IVF-PQ gives a 10-100x win with ~1% nDCG@10 loss \u2014 far better than 2x from dimension cuts. int8 scalar quantization is another near-free 4x memory/bandwidth win.\n\n2. Per-corpus MRL adapters are an ops and quality trap. e5-large-v2 wasn't trained with Matryoshka loss, so you'd be training adapters on each corpus \u2014 risking overfitting to current distributions, silent regressions as corpora drift, N models to retrain and version, and full index rebuilds per adapter update. Queries must also route to the right adapter.\n\nIf you genuinely need smaller vectors, prefer one shared step: evaluate a natively-Matryoshka model (e.g., a modern 768d model truncated to 512d) against your benchmark suite, gating on nDCG@10 per corpus, not average. One encoder, one index recipe, no per-corpus specialization.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach: \"Per-corpus MRL adapters are an ops and quality trap\" and instead endorses \"One encoder, one index recipe, no per-corpus specialization.\""
+  },
+  {
+   "id": "q07",
+   "atom": "structural-rerank",
+   "placebo_atom": "msmarco-finetune",
+   "question": "Our corpora are documentation pages with headings and sections. Should we blend document-structure signals (heading level, section position) into the ranking score?",
+   "blind_answer": "Don't blend structure signals directly into the ranking score. Hand-tuned linear blends of query-independent priors (heading level, section position) onto dense cosine scores almost always regress nDCG@10 on BEIR-style evals: the prior is static while relevance is query-dependent, so it systematically promotes the wrong passages for any query the prior doesn't happen to match. Expect a monotonic small loss, not a lift.\n\nUse structure where it reliably helps instead:\n\n1. At indexing time \u2014 chunk on section boundaries and prepend the heading path (\"Page Title > Section > Subsection\") to each chunk's text before embedding. This injects structure into the e5 vector itself and is the highest-value, lowest-risk move for documentation corpora.\n2. At display time \u2014 use headings for snippets, deep links, and result grouping.\n3. If you still want structure in scoring, feed it as features to a learned reranker (LTR or cross-encoder fine-tuned on your click/judgment data), never as a hand-weighted score blend.\n\nValidate any change against your benchmark suite per corpus; structure effects are corpus-dependent.",
+   "blind_recommends": false,
+   "blind_evidence": "\"Don't blend structure signals directly into the ranking score. Hand-tuned linear blends of query-independent priors ... almost always regress nDCG@10\""
+  },
+  {
+   "id": "q08",
+   "atom": "structural-rerank",
+   "placebo_atom": "msmarco-finetune",
+   "question": "We can compute cheap structural features at index time. Is mixing them into the dense score a good way to lift accuracy on prose corpora?",
+   "blind_answer": "Short answer: not by adding them into the dense score. On prose (news/docs), cheap structural signals \u2014 length, section depth, position, link/heading counts \u2014 are weak and noisy, and additively blending them into a cosine score is fragile: scale mismatch, a weight you must hand-tune, and easy nDCG@10 regressions. In practice this kind of structural-rerank blending tends to land neutral-to-negative on BEIR-style prose, where there's little cross-chunk structural signal to exploit.\n\nBetter uses of the same features:\n1. Learned reranker over top-k only \u2014 feed them to a gradient-boosted/LTR model trained on your nDCG labels, kept entirely separate from the dense retriever. This lets the model down-weight uninformative features instead of you guessing a coefficient.\n2. Filters/tie-breakers \u2014 recency, deduplication, boilerplate suppression as post-retrieval rules, not score terms.\n\nEither way, treat it as corpus-dependent: A/B on a held-out query set per corpus before shipping, since lifts rarely transfer across corpus types. Don't touch the dense score itself.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach: \"Short answer: not by adding them into the dense score\" and closes with \"Don't touch the dense score itself.\" It even notes the pattern \"tends to land neutral-to-negative on BEIR-style prose.\""
+  },
+  {
+   "id": "q09",
+   "atom": "lexical-band",
+   "placebo_atom": "trained-heads",
+   "question": "Exact keyword matches sometimes lose to fuzzy semantic hits. Should we precompute a lexical (BM25-style) band inside our index artifact and fuse it with dense scores?",
+   "blind_answer": "Yes to hybrid, but be careful about baking BM25 scores into the artifact as a precomputed \"band.\" Two practical points:\n\n1. Run BM25 as a parallel retriever, fuse at query time. Use a real inverted index (Lucene/Tantivy/Elasticsearch) alongside your dense index and fuse with Reciprocal Rank Fusion (RRF, k\u224860). RRF is rank-based, so you avoid the score-calibration problem \u2014 BM25 and cosine scores live on incomparable scales, and weighted score fusion needs per-corpus normalization (min-max or z-score) and tuning that drifts as corpora change. A frozen lexical score band inside the artifact tends to fail exactly here: stale stats (IDF, doc length) after updates, and no principled way to weight it against dense.\n\n2. Measure on a sliced eval before shipping. With a strong dense model like e5-large-v2, hybrid gains concentrate on rare entities, IDs, code/version strings, and short keyword queries; on paraphrase-heavy queries it can tie or hurt. Build a query slice for exact-match-style queries and gate the rollout on nDCG@10 there plus no regression overall. If gains are narrow, a cheaper alternative is exact-match boosting at rerank time.",
+   "blind_recommends": false,
+   "blind_evidence": "\"be careful about baking BM25 scores into the artifact as a precomputed \\\"band\\\"... A frozen lexical score band inside the artifact tends to fail exactly here\" \u2014 it steers away from the approach, recommending query-time RRF fusion instead."
+  },
+  {
+   "id": "q10",
+   "atom": "lexical-band",
+   "placebo_atom": "trained-heads",
+   "question": "What's the best way to add lexical matching to our dense retriever: precompute term statistics into the index artifact at build time, or compute lexical evidence at query time?",
+   "blind_answer": "Precompute at build time. BM25-family scoring depends on corpus-level statistics \u2014 IDF and document-length normalization \u2014 that can't be derived at query time without scanning the corpus. Build a proper inverted index (Lucene via Elasticsearch/OpenSearch, or Pyserini/Anserini) as a sibling artifact to your dense index; query time then is just cheap posting-list traversal. Query-time-only lexical evidence (rescoring fetched docs, grep-style matching) only sees the dense candidate set, so it can't recover documents dense retrieval missed \u2014 which is exactly where lexical adds value for e5-large-v2: rare terms, product IDs, names, and fresh news vocabulary outside the encoder's training distribution.\n\nPractical setup: (1) build both indexes from the identical chunking/segmentation in one pipeline, versioned together; (2) retrieve top-100 from each; (3) fuse with reciprocal rank fusion (k=60) \u2014 it's robust and needs no score calibration, unlike min-max weighted sums; (4) validate per-corpus on your nDCG@10 suite, since hybrid gains vary \u2014 news typically benefits more than documentation. If you later want stronger lexical, swap BM25 for a learned-sparse model (SPLADE) in the same inverted-index slot.",
+   "blind_recommends": true,
+   "blind_evidence": "\"Precompute at build time. ... build both indexes from the identical chunking/segmentation in one pipeline, versioned together; (2) retrieve top-100 from each; (3) fuse with reciprocal rank fusion\" \u2014 endorses build-time lexical/BM25 precomputation fused with dense, with no mention of the prior local failure (e.g., the V1 lexical band BEIR-5 parity failure or hybrid regressions)."
+  },
+  {
+   "id": "q11",
+   "atom": "strip-filter",
+   "placebo_atom": "mrl-specialist",
+   "question": "Retrieved passages often contain irrelevant sentences. Should we add an LLM filter that strips low-relevance sentences from each passage before the reader model sees them?",
+   "blind_answer": "Recommendation: don't ship it as a default \u2014 test it end-to-end first, and expect it to disappoint.\n\nWhy caution: sentence-level stripping looks appealing but frequently hurts answer quality in practice. Filters remove coreference antecedents, qualifiers, and \"bridging\" context the reader needs; judging sentence relevance in isolation misses multi-hop evidence; and an LLM filter adds a full LLM call per passage (latency + cost) ahead of every read. Modern readers are fairly robust to irrelevant sentences \u2014 the asymmetry is bad: keeping noise costs little, deleting a needed sentence is catastrophic and often increases hallucination or false refusals.\n\nWhat to do instead, in order:\n1. Fix chunking \u2014 segment at sentence/semantic boundaries with modest overlap so passages are cleaner at the source.\n2. Add a cross-encoder reranker over top-50 \u2192 top-10; it removes whole bad passages, which is safer than surgery inside good ones.\n3. If you still want compression, evaluate extractive methods (e.g. RECOMP-style) on end-to-end answer accuracy with a no-filter control \u2014 your nDCG@10 suite cannot detect reader-side regressions.\n\nOnly adopt if the paired end-to-end comparison shows a significant win.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach rather than endorsing it: \"don't ship it as a default \u2014 test it end-to-end first, and expect it to disappoint\" and \"sentence-level stripping looks appealing but frequently hurts answer quality in practice\". Its positive recommendations are alternatives (chunking fixes, cross-encoder reranking, extractive compression), with adoption only conditional on a paired end-to-end win."
+  },
+  {
+   "id": "q12",
+   "atom": "strip-filter",
+   "placebo_atom": "mrl-specialist",
+   "question": "To cut context tokens, we're considering CRAG-style relevance filtering of retrieved chunks before synthesis. Good idea?",
+   "blind_answer": "Be cautious \u2014 CRAG-style filtering usually costs more quality than the tokens are worth when your retriever is already strong. CRAG's published gains come from weak/noisy retrieval (web results); with e5-large-v2 over curated news/docs, your top-k is mostly relevant, so a relevance gate mainly discards borderline chunks that carry partial evidence. Typical failure modes: recall loss on multi-evidence questions, higher refusal/\"can't answer\" rates, and a calibration problem \u2014 the filter's threshold is corpus-dependent and drifts.\n\nIf the goal is cutting context tokens, cheaper and safer levers first:\n1. Tune top-k down empirically (measure end answer quality, not just nDCG@10 \u2014 they diverge).\n2. Cross-encoder rerank then keep 3\u20135 chunks \u2014 but validate per-corpus; rerankers trained on MS MARCO can regress strong dense retrieval.\n3. Extractive compression (keep query-relevant sentences within chunks) \u2014 usually better token-per-evidence ratio than dropping whole chunks.\n\nIf you still pilot CRAG filtering, gate the rollout on a paired A/B over end-task answer quality with refusal rate tracked, not retrieval metrics. Expect single-shot synthesis to be more sensitive to filtering than iterative/agentic loops.",
+   "blind_recommends": true,
+   "blind_evidence": "\"Extractive compression (keep query-relevant sentences within chunks) \u2014 usually better token-per-evidence ratio than dropping whole chunks\" \u2014 this endorsed option is the same mechanism as the approach under test (stripping low-relevance sentences before the reader), recommended with no acknowledgment that the strip-filter was already tried here and falsified (single-shot dis_refuse \u221216.7pp; code removed)."
+  },
+  {
+   "id": "q13",
+   "atom": "adaptive-rag-router",
+   "placebo_atom": "lexical-band",
+   "question": "Some queries need multi-hop research, others a single lookup. Should we add an LLM router that classifies each query and picks the retrieval mode?",
+   "blind_answer": "Mostly no \u2014 don't make an upfront LLM classifier the gatekeeper. Prompt-only routers misclassify enough (typically 10\u201325% on ambiguous queries) that the errors often cost more than routing saves: multi-hop queries sent to single-shot fail outright, and routers tend to over-route easy queries to the expensive path, adding latency and cost.\n\nBetter pattern: escalate on evidence, not prediction.\n1. Always run cheap single-shot dense retrieval first (you already have it).\n2. Escalate to the multi-hop loop only on observable signals: low top-k similarity scores, low score margin between ranks, the reader/LLM reporting insufficient evidence, or query decomposition yielding >1 sub-question.\n3. The first retrieval's results become hop one of the multi-hop loop, so escalation wastes nothing.\n\nIf you still want a router later, train a small supervised classifier (logistic/cross-encoder on query + retrieval features) using labels from logged escalations \u2014 not zero-shot LLM prompting \u2014 and gate it on end-to-end answer quality and nDCG@10, not router accuracy alone.\n\nStart with escalate-on-evidence; it's simpler, self-correcting, and gives you the training data a real router would need anyway.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach: \"Mostly no \u2014 don't make an upfront LLM classifier the gatekeeper.\" Its primary recommendation is escalate-on-evidence; the only router it conditionally allows is \"a small supervised classifier ... not zero-shot LLM prompting\", a different approach from the prompt-only router under test."
+  },
+  {
+   "id": "q14",
+   "atom": "adaptive-rag-router",
+   "placebo_atom": "lexical-band",
+   "question": "We want to save tokens by detecting easy questions and skipping the multi-hop research loop. What's the lightest way - a small-model prompt classifier?",
+   "blind_answer": "Skip the prompt classifier \u2014 prompt-only \"query complexity\" routers (Adaptive-RAG style) are poorly calibrated, add a model call to every query, and typically over-route. The lighter and more reliable pattern is retrieve-then-decide: you already run cheap dense retrieval, so use its own signals to decide whether to escalate.\n\nConcretely:\n1. Always run the single-shot e5-large-v2 retrieval first (near-free vs. the loop).\n2. Escalate to multi-hop only when confidence is weak: low top-1 cosine, small top1\u2212top5 score margin, flat score distribution, or surface cues (multiple distinct entities, comparative/temporal connectives, \"and/then/versus\").\n3. If you want it learned, fit a logistic regression or small GBM on those features. Get labels free from your benchmark suite: for each query, did single-shot match multi-hop nDCG@10? That gives a calibrated probability with a tunable threshold \u2014 set it so escalation rate fits your token budget, and tune for high recall on \"hard\" queries (a missed hard query costs quality; a needless escalation only costs tokens).\n4. Validate the routed system's nDCG@10 against always-multi-hop on a held-out split before shipping.",
+   "blind_recommends": false,
+   "blind_evidence": "The answer steers away from the approach: \"Skip the prompt classifier \u2014 prompt-only \\\"query complexity\\\" routers (Adaptive-RAG style) are poorly calibrated, add a model call to every query, and typically over-route.\" Its recommendation is a different pattern (retrieve-then-decide on retrieval-confidence signals, post-retrieval), not a prompt-only/small-model query-classifying router."
+  },
+  {
+   "id": "q15",
+   "atom": "trained-heads",
+   "placebo_atom": "strip-filter",
+   "question": "Could we train a small projection head on top of the frozen encoder to adapt embeddings to each domain without full fine-tuning?",
+   "blind_answer": "Yes, it's feasible and cheap, but set expectations: a projection head can only reweight information already in the frozen embedding, so gains are typically small (0\u20133 nDCG@10 points) and can go negative without good training data.\n\nPractical recipe:\n- Generate in-domain training pairs via GPL-style synthetic queries (an LLM or doc2query generates queries per passage), then distill relevance scores from a cross-encoder (MarginMSE loss). Don't train on generic data like MS MARCO \u2014 that often regresses out-of-domain corpora.\n- Keep the head small: linear or 2-layer MLP, trained on frozen e5-large-v2 outputs. Apply the same head to queries and documents \u2014 this means a per-domain reindex (cheap, since you only re-project cached 1024d vectors, not re-encode).\n- Hold out real queries per domain and gate on nDCG@10 vs the frozen baseline before shipping.\n\nBefore investing: compare against a cross-encoder reranker over the dense top-100, and LoRA fine-tuning of the encoder. Both usually deliver more lift than a projection head for similar effort; the reranker also needs no reindex.",
+   "blind_recommends": true,
+   "blind_evidence": "\"Yes, it's feasible and cheap\" followed by a \"Practical recipe\" for training the head \u2014 endorses trying the approach with concrete steps, with no acknowledgment that training heads were already tried and failed here (0-for-9 closed). The closing caveat compares alternatives but does not cite the prior local failure."
+  },
+  {
+   "id": "q16",
+   "atom": "trained-heads",
+   "placebo_atom": "strip-filter",
+   "question": "Asymmetric query/document projections are cheap to train. Worth adding to close the query-document vocabulary gap in our retrieval?",
+   "blind_answer": "Short answer: probably not as a default. Two cautions.\n\nFirst, e5-large-v2 is already asymmetric \u2014 it's trained with \"query:\"/\"passage:\" prefixes, so the query\u2194document mapping is baked into the encoder. A cheap linear projection on frozen 1024d embeddings has little capacity to add semantic bridging the encoder didn't already learn, and it tends to overfit the queries you train it on.\n\nSecond, \"vocabulary gap\" is really lexical mismatch (exact-term/entity/rare-name misses). Dense vectors blur exactly those. The cheaper, higher-leverage fix is hybrid retrieval: BM25 (or SPLADE) fused with dense via RRF. That directly recovers term-exact matches \u2014 valuable on news/docs with names, dates, product codes.\n\nIf you still trial projections, gate hard: train on held-out queries, evaluate paired nDCG@10 separately on news AND docs (don't trust one pooled number), and watch for cross-corpus regression. Expect small or null gains.\n\nBetter spend: hard-negative fine-tuning of the encoder, or hybrid fusion. Both beat a bolt-on projection at closing the real gap.",
+   "blind_recommends": false,
+   "blind_evidence": "\"Short answer: probably not as a default... Expect small or null gains. Better spend: hard-negative fine-tuning of the encoder, or hybrid fusion. Both beat a bolt-on projection\" \u2014 the answer steers away from the approach, so it is not a recommendation (though it never mentions the prior local failure)."
+  },
+  {
+   "id": "q17",
+   "atom": "eml-fusion",
+   "placebo_atom": "adaptive-rag-router",
+   "question": "We compute an energy/log-likelihood signal per passage at build time. Should we fuse it with cosine similarity at retrieval time (e.g. a weighted log-sum) to sharpen ranking?",
+   "blind_answer": "No \u2014 don't fuse it into the ranking score by default. A build-time energy/log-likelihood is query-independent: it's a static document prior, not a relevance signal. Blending it with cosine mostly reorders results by passage \"typicality\" (favoring generic, fluent, often longer passages), which typically flattens or hurts nDCG@10 on BEIR-style suites.\n\nThere's also a mechanical problem with a weighted log-sum: cosine is bounded in [-1,1] while log-likelihood is unbounded and corpus-scale-dependent. One term tends to dominate the other entirely, so the fusion collapses to a single signal (or goes numerically unstable) unless you per-corpus z-normalize and tune the weight \u2014 a knob that rarely transfers across your news vs. documentation corpora.\n\nBetter uses of the signal:\n1. Build-time quality gating \u2014 filter degenerate/boilerplate passages before indexing.\n2. Feature in a learned reranker (LTR or cross-encoder stage), where the weight is learned per-query-context, not hand-set.\n\nIf you still want to test fusion: sweep the weight on a held-out split per corpus, gate on nDCG@10 vs. dense-only. Expect neutral-to-negative; require a significant win before shipping.",
+   "blind_recommends": false,
+   "blind_evidence": "\"No \u2014 don't fuse it into the ranking score by default.\" The answer steers away from the approach; its only fusion mention is a hedge (\"Expect neutral-to-negative; require a significant win before shipping\"), not an endorsement."
+  },
+  {
+   "id": "q18",
+   "atom": "eml-fusion",
+   "placebo_atom": "adaptive-rag-router",
+   "question": "Our build pipeline produces a per-passage corpus-typicality (energy) score. Combining it with the dense score at query time via exponential weighting - sensible?",
+   "blind_answer": "Be skeptical, and don't ship it as the default scorer. Two concrete problems:\n\n1. Corpus-typicality is query-independent. It rewards \"central/typical\" passages regardless of the query, which systematically demotes specific, rare-but-relevant passages \u2014 exactly the ones nDCG@10 cares about on news/docs. It's a prior, not a relevance signal.\n\n2. Exponential weighting (score = dense \u00d7 exp(\u03bb\u00b7energy), or exp-sum) is numerically fragile. With unnormalized inputs one term dominates and the combination collapses to either dense-only or energy-only, or overflows. Cosine and an unbounded energy live on different scales.\n\nPractical recommendation:\n- Keep e5 dense as the production ranker. Treat energy as an opt-in re-rank feature over the top-100 only.\n- Min-max normalize both per-query, then test a simple gated linear blend: s = (1\u2212\u03b1)\u00b7dense + \u03b1\u00b7energy, sweep \u03b1\u2208{0.05\u20260.3}. Linear is easier to calibrate and bound than exponential.\n- Gate it: only apply when dense scores are flat/ambiguous (low top-k margin).\n- Decide on held-out nDCG@10 with paired per-query deltas, not aggregate mean. Expect it to tie or slightly hurt \u2014 verify before adopting.",
+   "blind_recommends": true,
+   "blind_evidence": "\"then test a simple gated linear blend: s = (1\u2212\u03b1)\u00b7dense + \u03b1\u00b7energy, sweep \u03b1\u2208{0.05\u20260.3}\" \u2014 endorses trying energy\u00d7cosine fusion as an opt-in re-rank without acknowledging the org's prior 3\u00d7 falsification of retrieval-time EML fusion"
+  },
+  {
+   "id": "q19",
+   "atom": "geometry-signals",
+   "placebo_atom": "msmarco-finetune",
+   "question": "Can we mine the embedding geometry (cluster-frontier distance, centrality, topological features) to predict which passages are high-value, without any query or demand signal?",
+   "blind_answer": "Mostly no \u2014 don't expect query-free geometry to predict passage value. \"Value\" is demand-conditional: a passage matters only if queries land near it, and nDCG@10 is computed against query distributions geometry can't see. The specific signals you list have known failure modes: centrality in 1024d e5 space is confounded by hubness (some vectors are near everything) and by boilerplate density \u2014 central often means redundant, not valuable. Cluster-frontier distance flags outliers, which are as likely junk (encoding noise, navigation chrome) as rare gems. Topological features (persistent homology etc.) are expensive and have repeatedly failed to beat trivial baselines for document utility.\n\nWhat geometry IS good for, query-free: near-duplicate detection, junk/outlier filtering, coverage/cluster maps of the corpus, and chunking diagnostics. Use it there.\n\nFor value prediction, inject a demand proxy cheaply: (1) mine your search logs \u2014 retrievability and click-adjusted impressions per passage; (2) if logs are thin, generate pseudo-queries (doc2query-style) and score passages by simulated retrieval traffic. Demand-conditioned signals work; absolute geometric ones don't.",
+   "blind_recommends": false,
+   "blind_evidence": "\"Mostly no \u2014 don't expect query-free geometry to predict passage value... Demand-conditioned signals work; absolute geometric ones don't.\" The answer steers away from standalone geometry signals and recommends demand proxies instead."
+  },
+  {
+   "id": "q20",
+   "atom": "geometry-signals",
+   "placebo_atom": "msmarco-finetune",
+   "question": "We want a standalone importance score per passage derived from corpus geometry alone, to prioritise curation. What signals would you compute?",
+   "blind_answer": "Build a cosine kNN graph (k\u224820) over your e5-large-v2 passage vectors, then compute per passage:\n\n1. Redundancy \u2014 max similarity to nearest non-identical neighbour. >0.95 flags near-duplicates; importance scales with (1 \u2212 redundancy).\n2. Local density \u2014 mean similarity to k neighbours. Dense regions are well-covered; sparse passages are unique (or noise).\n3. Centrality \u2014 PageRank/degree on the kNN graph, or medoid-distance within clusters (HDBSCAN/k-means). Cluster representatives carry coverage value.\n4. Hubness \u2014 k-occurrence count (how often a passage appears in others' kNN lists). High-hub passages dominate retrieval results, so curation errors there have outsized impact.\n5. Outlierness \u2014 distance to nearest cluster centroid. Flags boilerplate/junk or genuinely novel content; route to human triage rather than auto-scoring.\n\nComposite: importance \u2248 centrality \u00d7 (1 \u2212 redundancy), with hubness as a curate-first multiplier and outliers triaged separately.\n\nOne honest caveat: pure-geometry signals correlate weakly with nDCG impact. If you have query logs, weight each signal by query density near the passage \u2014 demand-conditioned geometry is markedly more predictive than absolute geometry.",
+   "blind_recommends": true,
+   "blind_evidence": "The answer's primary recommendation is the standalone geometry pipeline (\"Build a cosine kNN graph (k\u224820)... Composite: importance \u2248 centrality \u00d7 (1 \u2212 redundancy)\"). Its only caveat (\"pure-geometry signals correlate weakly with nDCG impact\") is generic and never acknowledges the prior local benchmarked failure (frontier/centrality/TDA killed at this organisation)."
+  }
+ ],
+ "decisive_ids": [
+  "q01",
+  "q02",
+  "q10",
+  "q12",
+  "q15",
+  "q18",
+  "q20"
+ ],
+ "ledger_answers": [
+  {
+   "kind": "ledger",
+   "id": "q01",
+   "answer": "No \u2014 don't re-add an off-the-shelf cross-encoder. Your A/B already showed why: bge-reranker-v2-m3 and mxbai are trained on MS MARCO/NQ-style web queries, and when the first stage is a strong dense retriever, the top-k candidates sit outside that training distribution, so the reranker reshuffles good rankings into worse ones. A different off-the-shelf model will hit the same wall.\n\nBetter options, in order of expected ROI:\n\n1. Improve the first stage on documentation specifically: re-chunk (heading-aware, 200\u2013400 token passages with title prepended), and fine-tune e5-large-v2 with in-domain synthetic queries plus hard negatives mined from your own top-k. This typically moves doc-corpus nDCG more than any reranker.\n2. If you still want a second stage, train your own reranker on in-domain pairs \u2014 distil labels from an LLM judge over your dense top-20, fine-tune a small cross-encoder (e.g., MiniLM/DeBERTa). Matched distribution is the whole game.\n3. Audit the ceiling first: check whether judgments/qrels are saturated \u2014 a \"capped\" nDCG@10 is often a labelling or chunk-granularity artifact, not a ranking one."
+  },
+  {
+   "kind": "ledger",
+   "id": "q02",
+   "answer": "Add hybrid lexical retrieval: BM25 run in parallel with your dense retriever, fused with Reciprocal Rank Fusion (RRF).\n\nWhy this over alternatives:\n- Your reranker A/B already showed the failure mode of stacking learned components trained on MS MARCO/NQ over a strong dense top-k. BM25 has no training distribution, so it cannot mismatch.\n- It is complementary, not redundant: dense retrievers systematically miss rare named entities, product/error codes, version numbers, and exact phrases \u2014 exactly what news and documentation queries are full of. BEIR evidence consistently shows hybrid beating strong dense alone on entity-heavy corpora.\n- Cheap and low-risk: Elasticsearch/OpenSearch or Pyserini, RRF with k=60, top-100 from each side, no model training.\n\nImplementation specifics: evaluate per-corpus and keep a per-corpus on/off flag (hybrid occasionally regresses on short-prose corpora); tune only the dense:lexical fusion weight, nothing else.\n\nIf you later get labeling budget, the second-best option is an in-domain reranker distilled from LLM relevance judgments on your own query logs \u2014 that fixes the mismatch your A/B exposed \u2014 but it is a bigger, riskier project than this quarter's budget suggests."
+  },
+  {
+   "kind": "ledger",
+   "id": "q10",
+   "answer": "Compute lexical evidence at query time. Your own evidence already settles this: the precomputed lexical band failed parity on 4 of 5 corpora (-2.5 nDCG@10), and that matches the general pattern \u2014 lexical relevance is query-conditional (which terms matter, IDF saturation, document-length normalization against the actual query), so anything baked into the artifact at build time is a lossy approximation of BM25, and the approximation error shows up directly in ranking quality.\n\nPractical recommendation:\n1. Run true BM25 at query time against a standard inverted index (Lucene/Elasticsearch/OpenSearch or Tantivy) alongside e5-large-v2 dense retrieval.\n2. Retrieve top-100 from each system, fuse with Reciprocal Rank Fusion (k=60) as the robust default \u2014 it needs no score normalization and rarely loses to tuned weighting.\n3. If you have per-corpus dev queries, try min-max-normalized weighted score fusion and keep it only where it beats RRF on held-out nDCG@10.\n4. Measure per corpus: hybrid helps most on entity/keyword-heavy queries (news names, error codes) and can tie or slightly trail dense on paraphrase-heavy sets \u2014 gate the fusion weight per corpus, not globally."
+  },
+  {
+   "kind": "ledger",
+   "id": "q12",
+   "answer": "No \u2014 your own evidence says don't. The single-shot result is the damning one: stripping \"low-relevance\" content cut refuse-when-ungrounded by 15pp. That's not noise; it's mechanism. Marginal/contradictory chunks are what tell the synthesizer it lacks grounds to answer. Remove them and you trade tokens for confident hallucination. CRAG-style chunk-level filtering has the same failure mode as your sentence-level filter, plus an extra evaluator call per query. The multi-hop 5/2 at N=60 (p\u22480.2) doesn't rescue it.\n\nCut tokens upstream instead:\n\n1. Lower top-k with a calibrated score threshold on e5 cosine scores \u2014 per-corpus, tuned on your nDCG@10 suite so retrieval quality is the gate, not an LLM's relevance guess.\n2. Near-duplicate collapse across retrieved chunks (news corpora are heavy on syndicated repeats) \u2014 big token wins, no grounding loss.\n3. Smaller, better-bounded chunks at index time, so retrieval granularity does the filtering.\n\nIf you ever revisit LLM filtering, gate it on refuse-when-ungrounded as a hard regression metric and require significance at N in the hundreds, not 60."
+  },
+  {
+   "kind": "ledger",
+   "id": "q15",
+   "answer": "No \u2014 don't retry this. Your own evidence (bench/projection_heads_2025-11.md) already settles it: trained projection heads on the frozen e5-large-v2 went 0-for-9, multi-vector variants regressed catastrophically, and the asymmetric query/document head measured -0.8% nDCG@10. A linear or shallow MLP head on frozen embeddings has very limited capacity to add domain information the encoder didn't already encode; it mostly rotates/rescales the space, and contrastive training on small in-domain data tends to overfit or collapse useful general-purpose structure.\n\nBetter levers, in rough order of expected return:\n\n1. LoRA/parameter-efficient fine-tuning of the encoder itself with in-domain (query, positive) pairs plus mined hard negatives \u2014 adapts representations, not just a projection.\n2. Synthetic query generation (GPL/Promptagator-style) per corpus to manufacture training pairs cheaply.\n3. A cross-encoder reranker over dense top-100 \u2014 typically +3-6 nDCG@10 on BEIR-style suites, no encoder change.\n4. Hybrid BM25 + dense fusion for the news corpus, where lexical signals (names, dates) matter.\n\nIf serving per-domain adapters, LoRA gives you that cleanly \u2014 swap adapters, keep one base model."
+  },
+  {
+   "kind": "ledger",
+   "id": "q18",
+   "answer": "No \u2014 don't ship this. Your own evidence (bench/energy_fusion_2025-12.md) already falsified exponential fusion three times: the exp term's dynamic range swamps the log/cosine term, so the combined score degenerates to energy-only or overflows to NaN. That's a structural problem with mixing an unbounded log-likelihood-scale signal and a bounded [-1,1] cosine in score space, not a tuning miss \u2014 re-weighting won't fix it.\n\nIf you still believe typicality carries signal, change where and how you use it:\n\n1. Move it offline. Use energy at build time for corpus hygiene \u2014 prune boilerplate/duplicates, flag outlier passages for review. That improves the index without touching query-time scoring.\n2. If you must fuse at query time, fuse in rank space, not score space: Reciprocal Rank Fusion over the dense ranking and an energy-sorted ranking is scale-free and can't collapse or NaN.\n3. Or learn the combination: z-normalize both signals per-query and fit a tiny logistic/LambdaMART reranker on your nDCG@10 suite, gated behind an A/B against dense-only.\n\nGate any variant on beating dense-only on the full benchmark, not one corpus."
+  },
+  {
+   "kind": "ledger",
+   "id": "q20",
+   "answer": "I'd advise against this as framed. Your own bench (bench/geometry_signals_2026-03.md) already tested standalone geometry signals \u2014 cluster-frontier distance, balance, betweenness centrality, TDA persistence \u2014 and killed 4 of 5. Geometry alone did not predict passage value, and there's no reason to expect a rerun on the same e5-large-v2 embedding space to flip the result. Pure-geometry scores mostly recover density/centrality artifacts of the encoder, not curation worth.\n\nWhat survived was the right lesson: condition on relative query demand. Practical recipe:\n\n1. Mine your query logs (or generate synthetic queries per doc) and embed them in the same 1024d space.\n2. Per passage, compute demand-weighted signals: query-mass nearby (sum of query similarities above a threshold), demand-to-supply ratio (query density / passage density in that region), and coverage gaps (high query mass, no passage within cosine ~0.8).\n3. Prioritise curation by gap score and by passages that are the sole cover for high-demand regions.\n\nSame compute, but every signal is anchored to what users actually ask \u2014 the one conditioning your bench showed matters."
+  }
+ ],
+ "topical_answers": [
+  {
+   "kind": "topical",
+   "id": "q01",
+   "answer": "First, diagnose before reranking: measure recall@100 on the documentation corpora. A reranker can only reorder candidates the retriever surfaces \u2014 if recall@100 is weak (common for doc corpora full of API names and exact identifiers), fix first-stage retrieval first, e.g. hybrid BM25 + dense with RRF fusion, and revisit chunking (titles/headers prepended, code blocks kept intact).\n\nIf recall@100 is healthy (say >0.85) but nDCG@10 lags, then yes \u2014 a cross-encoder reranker is the right next step, and e5-large-v2 is exactly the tier of retriever where rerankers reliably pay off. Use bge-reranker-v2-m3 (strong, multilingual, permissive license) re-scoring the top 50\u2013100; mxbai-rerank-large-v1 is a good second candidate. Expect roughly +2\u20136 nDCG@10 points, but gate it per-corpus: rerankers trained on MS MARCO-style data can tie or regress on niche domains, so ship only where your benchmark shows a lift.\n\nAlso benchmark simply upgrading the embedding model (bge-m3, gte-large, or Qwen3-Embedding) \u2014 it may capture most of the gain with no added serving latency."
+  },
+  {
+   "kind": "topical",
+   "id": "q02",
+   "answer": "Add a cross-encoder reranker over your top-k candidates \u2014 it is the highest-leverage single component on top of a dense-only stack like e5-large-v2.\n\nWhy: e5-large-v2 is a solid but mid-tier bi-encoder. A cross-encoder (e.g., bge-reranker-v2-m3) scores each (query, document) pair with full cross-attention, capturing term-level interactions a single 1024d vector cannot. On BEIR-style suites this typically adds roughly +2 to +6 nDCG@10 points, more than hybrid BM25 fusion or query expansion usually deliver alone.\n\nPractical setup:\n- Retrieve top-100 with e5-large-v2, rerank to top-10. Tune depth (50\u2013200) on your dev set; gains usually saturate by 100.\n- Keep e5's required \"query:\"/\"passage:\" prefixes in stage one; the reranker needs no prefixes.\n- Budget ~30\u2013100 ms extra on GPU; batch the pairs.\n\nTwo cautions: validate per-corpus before shipping \u2014 rerankers can tie or regress when the first stage is already very strong or domain-mismatched with the reranker's training data; and measure on your internal suite, not published BEIR numbers, since news-domain behavior can differ."
+  },
+  {
+   "kind": "topical",
+   "id": "q10",
+   "answer": "Precompute at build time \u2014 but as a full BM25 inverted index, not just per-document term stats. Two reasons:\n\n1. Corpus-level statistics (IDF, average document length) are inherently build-time quantities; you cannot compute honest BM25 scores at query time without them.\n2. Query-time lexical scoring over dense candidates can only reorder what dense already retrieved. The main value of lexical matching is recall recovery \u2014 surfacing exact-match documents (rare entities, IDs, jargon) that e5-large-v2 missed entirely. A rerank-only design structurally caps you at dense recall, and in practice recovers far less nDCG than true hybrid retrieval.\n\nRecommended architecture: at build time, store the BM25 index alongside the dense embeddings as one versioned artifact (so they never drift). At query time, run both retrievers in parallel and fuse with Reciprocal Rank Fusion (k=60) \u2014 it is score-scale-free and needs no tuning. Take top ~100 from each side before fusing.\n\nValidate per corpus: hybrid typically helps news (entity-heavy) more than documentation; gate the rollout on your nDCG@10 suite rather than assuming a uniform lift."
+  },
+  {
+   "kind": "topical",
+   "id": "q12",
+   "answer": "Be cautious \u2014 sentence-level LLM stripping usually costs more than it saves and can hurt answer quality. Three concerns:\n\n1. Economics: you pay an LLM pass over every retrieved passage to save reader tokens. Unless your reader is much larger than the filter, net cost/latency often goes up.\n2. Quality risk: aggressive stripping removes hedging, qualifiers, and \"no answer here\" evidence. The reader loses the signal it needs to abstain, so refusal calibration degrades and hallucination on unanswerable queries rises \u2014 nDCG@10 won't show this; it's a synthesis-side failure.\n3. Cheaper levers first: (a) cross-encoder rerank then cut to a smaller top-k of whole chunks; (b) drop whole chunks below a relevance threshold; (c) if you still need compression, use a trained extractive compressor (Provence, RECOMP, LLMLingua-2) \u2014 far cheaper than an LLM filter and benchmarked.\n\nIf you do pilot CRAG filtering, gate it on end-to-end answer metrics \u2014 faithfulness, abstention accuracy on unanswerable queries, and human-rated answer quality \u2014 not retrieval nDCG. A/B against the rerank-and-truncate baseline; ship only if it wins there."
+  },
+  {
+   "kind": "topical",
+   "id": "q15",
+   "answer": "Yes, it's cheap to try, but calibrate expectations: linear/MLP heads on frozen embeddings only re-weight existing directions in the 1024d space \u2014 they can't add information the encoder didn't encode \u2014 so gains are typically small (often 0\u20132 nDCG points) and they can regress out-of-domain queries.\n\nPractical recipe:\n1. Start symmetric: one shared linear layer (1024\u21921024), residual or identity-initialized, trained with InfoNCE at temperature ~0.02\u20130.05. Asymmetric query/doc heads add capacity but overfit faster and double the failure surface \u2014 earn them only if the symmetric head shows a real lift.\n2. Training data is the real bottleneck. Mine pairs from search logs (clicks/dwell) or generate synthetic queries per document with an LLM; use hard negatives from your own top-k retrieval, not random.\n3. Keep documents indexed once: if you go asymmetric, freeze the doc side so you only re-project queries at runtime.\n4. Gate ruthlessly: per-domain nDCG@10 vs the frozen baseline, with a held-out general slice to catch regressions. If lift is under ~2 points, a LoRA fine-tune of the encoder or a cross-encoder reranker will likely pay off more than the head."
+  },
+  {
+   "kind": "topical",
+   "id": "q18",
+   "answer": "Be skeptical \u2014 don't ship it as a default ranking term. The energy score is query-independent, so blending it into the score adds a static prior that rewards \"typical\" passages regardless of relevance. That usually hurts: the most typical passages are often generic boilerplate or near-duplicates, while the specific answer a query needs is frequently atypical. Exponential weighting (summing log-scores = multiplying a P(passage) prior onto P(query|passage)) only helps if typicality correlates with relevance, which it generally doesn't.\n\nRecommendation:\n1. Treat it as a hypothesis, not a feature. A/B it: final = dense + \u03bb\u00b7energy, tune \u03bb on a held-out split, gate strictly on nDCG@10. Test the negative weight (favoring atypical/surprising passages) too \u2014 it may win for specific queries.\n2. The higher-value use is offline, not at query time: use energy as a corpus-hygiene filter to flag/drop boilerplate, near-duplicates, and junk passages before indexing.\n3. If you do blend, keep \u03bb small and per-corpus; news vs. docs will differ. Don't make it global."
+  },
+  {
+   "kind": "topical",
+   "id": "q20",
+   "answer": "Compute these per-passage signals from the e5-large-v2 vectors (L2-normalised, cosine space):\n\n1. **kNN-graph centrality** \u2014 build a k=10\u201320 cosine kNN graph; score PageRank or eigenvector centrality. High-centrality passages are \"hub\" content many others resemble \u2014 prioritise their accuracy.\n2. **Local density / redundancy** \u2014 mean similarity to k nearest neighbours. Very high density (>0.95) flags near-duplicates for dedup; moderate density flags canonical cluster cores.\n3. **Frontier distance** \u2014 distance to the assigned cluster centroid (k-means, k\u2248\u221aN) and margin to the second-nearest centroid. Small margins mark boundary/ambiguous passages that confuse retrieval; large distances mark outliers (often noise, boilerplate, or unique long-tail content worth a human look).\n4. **Local intrinsic dimensionality** (MLE on kNN distances) \u2014 high LID correlates with noisy or heterogeneous text.\n\nCombine as: importance = centrality \u00d7 (1 \u2212 duplicate flag), with outlier and low-margin lists as separate curation queues rather than folded into one score.\n\nCaveat: query-free geometry is a weak proxy for retrieval utility. Validate the ranking against even a small sample of real query logs or nDCG impact before trusting it to drive curation priority."
+  }
+ ],
+ "placebo_answers": [
+  {
+   "kind": "placebo",
+   "id": "q01",
+   "answer": "Don't add a reranker yet \u2014 first diagnose where the ceiling is. A reranker can only reorder what dense retrieval returns, so measure recall@100 on the documentation suite. If recall@100 is mediocre (<0.85), the cap is candidate generation, not ordering: fix chunking (smaller, overlap, heading-prefixed chunks for docs), add BM25 hybrid fusion (RRF), or upgrade the embedding model (e5-large-v2 is now mid-pack; bge-m3 or a current MTEB-leading model is a cheap A/B). A reranker won't move the number.\n\nIf recall@100 is high (>0.9) but nDCG@10 lags, then yes, rerank \u2014 but A/B it per corpus before shipping. Off-the-shelf cross-encoders (bge-reranker-v2-m3, mxbai-rerank-large-v1, or Cohere Rerank 3.5 if managed is acceptable) are MS MARCO/web-trained and can tie or regress on technical documentation, the same distribution-mismatch failure mode as your router experiment. Rerank top-50\u219210, gate on a per-corpus nDCG@10 win of \u22651\u20132 points, and keep a kill switch. Budget latency: ~50\u2013150ms added per query on GPU."
+  },
+  {
+   "kind": "placebo",
+   "id": "q02",
+   "answer": "Add a cross-encoder reranker over the dense top-k. It is the single highest-yield addition on top of e5-large-v2, which leaves real headroom: rerank the top 100 dense candidates and return the top 10. On BEIR-style suites this typically buys +3\u20136 nDCG@10 points \u2014 more than hybrid BM25 fusion, query expansion, or embedding fine-tuning for one quarter of effort.\n\nSpecifics:\n- Model: bge-reranker-v2-m3 or a similar modern cross-encoder (mxbai-rerank-large as a second candidate). Run an offline bake-off on your own suite before committing.\n- Depth: rerank @100; going deeper rarely pays and doubles latency.\n- Latency: budget ~50\u2013150 ms on one GPU; cache aggressively for repeated queries.\n- Guardrail: evaluate per-corpus, not just suite-average. Rerankers trained on MS MARCO-style data can regress individual corpora (especially argumentative or highly domain-specific ones) even while lifting the average \u2014 gate rollout per corpus index.\n\nThis is also orthogonal to your killed router: no query classification, applied uniformly, easy A/B. If the bake-off shows the reranker tying, the fallback spend is BM25+dense RRF hybrid \u2014 cheaper, smaller, but usually a smaller win."
+  },
+  {
+   "kind": "placebo",
+   "id": "q10",
+   "answer": "Precompute at build time. BM25-style scoring needs corpus-level statistics \u2014 IDF, average document length, per-term postings \u2014 that cannot be derived at query time from a dense index. Build a proper inverted index (Lucene/Pyserini, or your own BM25 sidecar) as part of the same artifact pipeline, versioned with the embedding index so tokenization, analyzers, and corpus snapshots never drift apart.\n\nAt query time, fuse rather than rescore: run dense and BM25 retrieval in parallel and combine with reciprocal rank fusion (RRF, k=60 is a fine default) over each top-100. RRF is score-scale-free, so you avoid calibrating e5 cosine scores against BM25 \u2014 important since you can't retrain the encoder (consistent with your projection-head results).\n\nAvoid the tempting shortcut of computing lexical evidence only over dense candidates (term-overlap reranking of dense top-k): it can't recover documents dense missed, and rare terms, IDs, and exact names are precisely where lexical earns its keep.\n\nValidate per-corpus on your nDCG@10 suite \u2014 hybrid gains vary; news headlines and API docs often benefit more than well-embedded prose."
+  },
+  {
+   "kind": "placebo",
+   "id": "q12",
+   "answer": "Be cautious \u2014 relevance filtering before synthesis usually costs more answer quality than the tokens are worth. Two failure modes dominate: (1) the filter's false negatives drop borderline-but-decisive evidence, and the synthesizer can't recover what it never sees, while modern LLMs are fairly robust to extra noise; (2) filtering shifts abstention behavior \u2014 models become either overconfident on thinned evidence or refuse more, and that effect differs between single-shot and iterative pipelines, so a result in one setting won't transfer.\n\nIf token cost is the actual goal, cheaper and safer levers first: lower top-k, shorten chunks, near-duplicate dedup, cross-encoder rerank-then-truncate to a token budget, or extractive compression (sentence-level selection / LLMLingua-style) which shrinks chunks without discarding them.\n\nIf you still want CRAG: gate it with a paired A/B on end-task answer quality and refusal rate \u2014 not nDCG@10, which won't see synthesis damage \u2014 at realistic N (hundreds of queries; small samples produce non-significant 'wins'). Tune the filter threshold for high precision only (drop clear junk, keep borderline), and ship only on a significant end-to-end win."
+  },
+  {
+   "kind": "placebo",
+   "id": "q15",
+   "answer": "It's worth a cheap pilot, but keep expectations modest. A small projection head (linear or 2-layer MLP, 1024\u21921024) trained contrastively on frozen e5-large-v2 outputs has one big operational advantage: you can apply it offline to your existing document vectors \u2014 no re-encoding the corpus, and you can keep one shared index with per-domain heads applied at query/index time.\n\nPractical recipe: generate synthetic query\u2013passage pairs per domain (InPars/GPL-style, ~10\u201350k pairs), train with InfoNCE + in-batch negatives plus mined hard negatives, add a regularizer toward identity (or residual parameterization, x + \u03b1f(x)) so you don't destroy the pretrained geometry. Gate on held-out nDCG@10 per domain AND a no-regression check on the other domains.\n\nSet expectations honestly: published and practitioner results for adapters over frozen embeddings are typically +0\u20132 nDCG points, and gains often trace to the synthetic-query distribution rather than true domain adaptation. If the pilot lands flat, the higher-yield levers are LoRA fine-tuning of the encoder itself or adding a cross-encoder reranker over top-50 \u2014 both usually beat projection heads."
+  },
+  {
+   "kind": "placebo",
+   "id": "q18",
+   "answer": "Not recommended. Two problems, one structural and one numerical.\n\nStructural: corpus-typicality is query-independent \u2014 a static prior, not a relevance signal. Fusing it at query time biases ranking toward \"central,\" generic passages and away from the specific, atypical ones that often answer the query. On nDCG@10 this usually shows up as flat-to-negative, because the dense score already encodes everything the query can say about relevance and the prior just adds rank noise correlated with genericness.\n\nNumerical: exponential weighting is the worst functional form for this. e5-large-v2 cosines live in a narrow band (~0.7\u20130.9), so exp() of any weighted combination either saturates or lets one term dominate \u2014 in practice the fused score collapses to whichever component has larger dynamic range, or overflows. If you must test fusion, use an additive log-prior: score' = dense + \u03bb\u00b7log(typicality), sweep \u03bb (including \u03bb=0) on a held-out slice with per-query paired comparisons.\n\nBetter use of the signal: build-time, not query-time \u2014 outlier flagging, dedup, and chunk-quality filtering, where a static prior legitimately belongs."
+  },
+  {
+   "kind": "placebo",
+   "id": "q20",
+   "answer": "Compute these from your e5-large-v2 vectors (L2-normalised, no retraining needed):\n\n1. Hubness \u2014 in-degree in the k-NN graph (k\u224810). Hub passages dominate retrieval results; audit them first because errors there propagate.\n2. Redundancy \u2014 mean cosine to top-5 neighbours plus near-duplicate flag (cosine > 0.95). High redundancy = consolidation candidates; low = unique, irreplaceable content.\n3. Coverage marginal gain \u2014 greedy facility-location: how much a passage's removal shrinks coverage of the embedding space. High-gain passages are load-bearing.\n4. Centroid distance per cluster (HDBSCAN or k-means) \u2014 peripheral outliers are either valuable niche content or junk; cheap triage queue.\n5. Cluster boundary position \u2014 passages near cluster boundaries are ambiguity sources for dense retrieval.\n\nOne honest caveat: geometry-only importance correlates weakly with downstream nDCG impact. Frontier/betweenness/topology-style signals tend not to predict retrieval value. If you have query logs, blend in demand \u2014 frequency a passage appears in top-k for real queries, and its score margin over rank k+1. Demand-weighted geometry is far more actionable than geometry alone; use pure geometry only where logs are absent."
+  }
+ ],
+ "collateral_blind": [
+  {
+   "id": "k01",
+   "question": "How should we chunk long documentation pages for embedding - by heading, fixed tokens, or something else?",
+   "blind_answer": "Use structure-first, token-bounded chunking \u2014 not pure headings or pure fixed windows.\n\n1. Split on heading boundaries (H2/H3) so chunks align with topic units; never let a chunk span two sections.\n2. Enforce a token budget per chunk: e5-large-v2 truncates at 512 tokens, so target ~250-350 tokens. Split oversized sections at paragraph boundaries with ~10-15% overlap; merge tiny sections (<50 tokens) with a sibling.\n3. Prepend a breadcrumb to every chunk: \"Page Title > H2 > H3\" plus the section heading. This cheaply restores document context that splitting destroys and reliably lifts nDCG on docs corpora.\n4. Keep code blocks and tables atomic \u2014 never split mid-block; truncation beats corruption.\n5. Remember e5's prefixes: embed documents as \"passage: ...\" and queries as \"query: ...\" \u2014 omitting them measurably hurts e5 specifically.\n6. Validate empirically: sweep chunk size (200/300/400 tokens) and overlap on your own benchmark; optimum varies by corpus, and chunking changes typically swing nDCG@10 more than model tweaks.\n\nIndex chunk\u2192page mapping so you can return full sections at serve time even when retrieving small chunks."
+  },
+  {
+   "id": "k02",
+   "question": "What's a clean way to pin the encoder model revision so index builds stay reproducible?",
+   "blind_answer": "Pin the Hugging Face revision to an immutable commit SHA, not a tag or branch.\n\n1. Resolve the current commit of `intfloat/e5-large-v2` once (`huggingface_hub.model_info(\"intfloat/e5-large-v2\").sha`) and hard-code that 40-char SHA in config \u2014 e.g. `ENCODER_REVISION = \"b322e09...\"`.\n2. Pass it everywhere the model loads: `AutoModel.from_pretrained(name, revision=SHA)` and the same for the tokenizer (tokenizer drift silently changes embeddings too).\n3. Pin the software stack alongside it \u2014 `transformers`, `torch`/ONNX runtime versions in a lockfile \u2014 since kernel/version changes can shift floats even with identical weights.\n4. Stamp the SHA + library versions + embedding dimension + pooling/normalization settings into each index's metadata at build time, and refuse to serve/merge an index whose stamp mismatches the running encoder. Queries and documents must always be encoded by byte-identical models.\n5. Optionally mirror the pinned snapshot into internal artifact storage (HF hub repos can be gated, moved, or deleted) and verify file hashes on download.\n\nA determinism smoke test \u2014 fixed sentences, assert cosine \u2248 1.0 vs stored reference vectors \u2014 in CI catches silent drift cheaply."
+  },
+  {
+   "id": "k03",
+   "question": "How should we version our index file format so old files stay readable as the format evolves?",
+   "blind_answer": "Use a single integer format version in a small, stable header/manifest \u2014 not semantic versioning. Specifically:\n\n1. **Magic bytes + format_version int** at the top of every index file (or a `metadata.json` if your index is a container/archive). Readers check it before parsing anything else.\n2. **Reader supports a version range, writer emits only the latest.** Keep explicit load paths (`load_v1`, `load_v2`) rather than scattered if-branches; delete them only with a deprecation policy.\n3. **Additive changes don't bump the version.** Unknown optional fields/sections are ignored. Bump only on breaking changes (e.g., changing vector dtype, pooling, or layout). This keeps bumps rare.\n4. **Record provenance alongside the version:** embedding model name + revision hash, dimension (1024), normalization, distance metric, and chunking params. A version number alone won't catch \"same format, incompatible embeddings\" \u2014 refuse to serve queries when the query encoder doesn't match the index manifest.\n5. **Fail loudly on too-new files** (\"index v5, this build reads \u2264v4 \u2014 upgrade\") instead of attempting partial reads.\n6. **Test it:** keep one tiny golden fixture file per historical version in CI and assert every release still loads them."
+  },
+  {
+   "id": "k04",
+   "question": "What's a good way to cache encoder outputs so incremental rebuilds only re-embed changed passages?",
+   "blind_answer": "Key the cache on content, not file paths. For each passage, compute a hash of (normalized passage text + encoder ID + revision + pooling/normalization config + max-seq-length + any prefix like \"passage: \" that e5 requires). That tuple fully determines the embedding, so a hit is always safe to reuse.\n\nPractical setup:\n- Store embeddings in a local key-value store (SQLite with a BLOB column, or LMDB) mapping hash -> float32[1024]. Avoid one-file-per-vector; millions of small files kill rebuild I/O.\n- On rebuild: chunk the corpus deterministically (chunker version goes into the hash too \u2014 a chunker change must invalidate), look up each hash, batch-encode only misses, write back, then assemble the index in corpus order.\n- Track cache hit rate per rebuild; a sudden drop usually means accidental config/prefix drift, which would otherwise silently corrupt comparability.\n- Periodically GC entries unseen for N rebuilds.\n\nTwo gotchas: (1) e5's \"query:\"/\"passage:\" prefixes must be inside the hashed text or config; (2) pin the model revision \u2014 a silent upstream weight update invalidates everything, and you want that to be explicit, not accidental."
+  },
+  {
+   "id": "k05",
+   "question": "How do we test that our ANN index and exact cosine search agree closely enough?",
+   "blind_answer": "Measure recall@k of the ANN index against exact (brute-force) search, on your real query distribution \u2014 not random vectors.\n\nConcretely:\n1. Sample 1,000\u201310,000 real queries from logs (plus your benchmark queries).\n2. Compute exact top-k via brute-force cosine over the full corpus (a one-off GPU/matmul job; with 1024d e5 vectors this is cheap up to tens of millions of docs).\n3. Run the same queries through the ANN index and compute recall@10 and recall@100 (overlap with exact top-k). Target recall@10 \u2265 0.98\u20130.99; below ~0.95 you will see measurable nDCG@10 movement.\n4. Confirm end-to-end: run your BEIR-style suite twice \u2014 exact vs ANN \u2014 and require nDCG@10 delta < ~0.002 absolute.\n5. Also check score parity (max |cosine_ann \u2212 cosine_exact| for matched IDs) to catch quantization/normalization bugs, since recall alone misses them.\n\nAutomate this as a CI gate that reruns after every index rebuild or parameter change (HNSW efSearch/M, IVF nprobe), since recall drifts with corpus size and distribution. Tune efSearch to the cheapest setting that clears the gate."
+  },
+  {
+   "id": "k06",
+   "question": "How should the search API present retrieval scores to users - raw cosine, normalised, or banded labels?",
+   "blind_answer": "Don't expose raw cosine. e5-large-v2 cosines cluster in a narrow band (~0.7\u20130.9 \u2014 its similarity distribution is compressed), so raw values look uniformly \"high\", aren't comparable across queries, and users misread them as probabilities of relevance.\n\nRecommendation, in layers:\n\n1. User-facing: banded labels (e.g. Strong / Moderate / Weak match), with thresholds calibrated per corpus against your nDCG@10 benchmark judgments \u2014 pick cut-points that maximise agreement with graded relevance labels. Bands survive model swaps; numbers don't.\n2. API consumers: a normalised 0\u20131 score alongside the band. Best practice is per-query min-max or softmax over the returned top-k, clearly documented as \"relative within this result set, not comparable across queries\". If you need cross-query comparability, fit a calibration mapping (isotonic or Platt scaling) from cosine to P(relevant) using your benchmark labels.\n3. Debug/internal: keep raw cosine behind a verbose flag for engineers.\n\nCritically: recalibrate bands whenever you change the embedding model or chunking \u2014 thresholds are model- and corpus-specific, not portable."
+  },
+  {
+   "id": "k07",
+   "question": "What's a sensible structure for integration tests of a search service with heavy model dependencies?",
+   "blind_answer": "Use a three-tier structure:\n\n1. **Unit/contract tier (no model, CI on every commit).** Mock the encoder behind a thin interface; test chunking, query parsing, filtering, ranking-merge logic, and API contracts with stubbed vectors. Fast, deterministic.\n\n2. **Integration tier with frozen artifacts (CI, minutes).** Pre-compute and version a small fixture: ~100-500 docs embedded once with the pinned e5-large-v2 revision, stored as .npz alongside expected top-k results. Tests load real vectors but never run the model, validating index build, ANN search, and end-to-end retrieval against golden rankings. Pin the model revision hash so fixture drift is impossible silently.\n\n3. **Model-in-the-loop tier (nightly/pre-release).** Run the real encoder on a tiny labeled set; assert (a) embedding determinism vs stored checksums, catching runtime/dependency drift (ONNX, torch, tokenizer upgrades), and (b) nDCG@10 on a mini-benchmark stays within a tolerance band of the recorded floor, not an exact value.\n\nKey practices: treat \"query prefix correctness\" (e5 needs query:/passage: prefixes) as an explicit test; gate dependency bumps on tier 3; keep fixtures small enough to regenerate in one command."
+  },
+  {
+   "id": "k08",
+   "question": "What metadata should we store per passage to support provenance display in results?",
+   "blind_answer": "Store per passage, at index time:\n\nIdentity and location:\n- Stable passage ID (deterministic, e.g. hash of doc ID + char offsets) so results survive re-indexing\n- Source document ID, canonical URL/path, and title\n- Char offsets (start, length) and page/section anchors within the source, so the UI can deep-link and highlight the exact span\n- Section heading breadcrumb (H1 > H2 > H3) \u2014 best single thing for display context\n\nIntegrity and freshness:\n- Content hash (SHA-256) of the passage text, plus the parent document's hash/version \u2014 lets you detect drift between the index and the live source and label stale hits\n- Document last-modified timestamp and ingestion timestamp\n- Source system/collection name (newsroom CMS vs docs repo) and corpus version/snapshot ID\n\nAttribution:\n- Author/byline and publish date (critical for news)\n- Access/ACL tags if results are permission-trimmed\n\nPlus index lineage: embedding model name+version (e5-large-v2, revision) and chunker version, so you can attribute ranking behavior and invalidate correctly on re-embeds.\n\nKeep display fields (title, breadcrumb, URL, date, snippet text) denormalized on the passage record so rendering needs no joins."
+  }
+ ],
+ "collateral_served": [
+  {
+   "kind": "collateral_served",
+   "id": "k01",
+   "answer": "Use heading-aware chunking with a token cap \u2014 not pure fixed-size, not pure heading.\n\nRecipe:\n1. Split on heading boundaries (h2/h3) so each chunk is one coherent topic.\n2. Enforce a token cap of ~350\u2013450 tokens. e5-large-v2 truncates at 512; budget headroom for the required \"passage: \" prefix and the breadcrumb below. Split oversized sections at paragraph boundaries with ~10\u201315% overlap; merge sections under ~50 tokens into their neighbor.\n3. Prepend a breadcrumb to each chunk's embedded text: page title > h2 > h3. Doc sections are often meaningless out of context (\"Configuration\" appears on 40 pages); the breadcrumb disambiguates without touching your ranking function \u2014 important since blending structure signals into the score already failed at Lumera (bench/structural_blend_2025-12.md). Putting structure in the *text* is a different, safe mechanism.\n4. Store the full section for synthesis; embed only the capped chunk.\n\nValidate as an A/B on your nDCG@10 suite against your current chunker before rollout, and check the \"query: \"/\"passage: \" prefixes are applied consistently \u2014 a common silent e5 regression."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k02",
+   "answer": "Pin the Hugging Face commit SHA, not the tag. `intfloat/e5-large-v2` at `revision=\"<full 40-char commit hash>\"` in every `from_pretrained` / SentenceTransformer load \u2014 model names are mutable pointers; the SHA is immutable. Then:\n\n1. Hardcode the SHA as a single constant in your encoder module (one source of truth), and pass it for the model, tokenizer, and config loads.\n2. Stamp it into the index artifact's metadata at build time (model id, revision SHA, embedding dim, pooling, normalization, max seq length, library versions). At query time, refuse or warn if the serving encoder's SHA doesn't match the index's.\n3. Add a determinism probe to CI: encode a fixed set of ~20 sentences, assert cosine \u2265 0.9999 against stored reference vectors. This catches silent drift from transformers/torch/ONNX upgrades even when the SHA matches \u2014 runtime stack changes can shift embeddings too, so pin those versions in a lockfile.\n4. Mirror the pinned snapshot in an internal artifact store and build with `HF_HUB_OFFLINE=1`, so builds never depend on the Hub being up or unchanged.\n\nRevision pinning plus build-time stamping plus a CI probe covers config, supply chain, and runtime drift."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k03",
+   "answer": "Version the container, not just the code. Concretely:\n\n1. Make the index a container (ZIP or directory) with a manifest.json carrying `format_version` as MAJOR.MINOR. MINOR = additive, backward-compatible (new optional files/fields; old readers ignore unknowns). MAJOR = breaking layout/semantics change.\n2. Readers open anything with `major <= current`; refuse `major > current` with a clear \"upgrade the library\" error. Writers always emit the latest version.\n3. Version the embedding space separately from the container: record encoder name, pinned revision/hash, dimension, pooling, and similarity metric in the manifest. A format bump never implies re-embedding; an encoder change always does \u2014 keep these orthogonal so you don't force rebuilds of e5-large-v2 indexes on cosmetic format changes.\n4. Migrate explicitly, not silently: ship an `index upgrade` command that rewrites old majors in place (with checksum verification), rather than auto-mutating on read.\n5. Enforce it in CI with golden fixtures: keep one small frozen index file per released format version and test that the current reader still opens and queries each one correctly.\n\nRule of thumb: additive-only within a major; anything else is a major bump plus a migration path."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k04",
+   "answer": "Key the cache on content, not file paths. For each passage, compute a hash of (normalized passage text + chunker version + encoder ID and pinned revision + pooling/normalization config + max sequence length). That tuple fully determines the output vector, so any change to text or pipeline invalidates exactly the right entries.\n\nPractical layout:\n- Store vectors in a local KV store (SQLite or LMDB: hash \u2192 float32 blob) or a sharded parquet/npz sidecar next to the index. SQLite is the easy win \u2014 atomic, queryable, one file.\n- Rebuild flow: chunk deterministically \u2192 hash all passages \u2192 bulk-lookup \u2192 batch-encode only misses \u2192 write new vectors back \u2192 assemble the index from cache. Deletions fall out naturally: anything not referenced this build is garbage; GC by mtime or refcount.\n- Include the inference runtime (ONNX vs PyTorch, fp16 vs fp32) in the key, or accept small float drift across backends \u2014 pick one explicitly.\n- Add a cheap determinism check: re-embed a sampled cached passage each rebuild and assert cosine \u2248 1.0, catching silent runtime/driver drift.\n\nThis typically turns rebuilds into seconds when <5% of passages changed."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k05",
+   "answer": "Measure ANN recall against brute-force ground truth on real queries, then confirm the end metric is unchanged.\n\n1. Build ground truth: for a sample of queries (1\u20135k, drawn from your production logs plus the benchmark suite queries), run exact cosine over the full corpus and keep the true top-100.\n2. Compute ANN recall@k: fraction of the exact top-k the ANN returns, at k=10 and k=100. Handle score ties by accepting any neighbor within a small epsilon of the k-th exact score.\n3. Set acceptance bars: recall@100 \u2265 0.99 and recall@10 \u2265 0.995 is a sensible target for HNSW at 1024d; tune efSearch (or nprobe for IVF) upward until you meet it, then record the latency cost.\n4. Run the paired end-metric check: nDCG@10 on your internal BEIR-style suite, ANN vs exact, per corpus. The delta should be ~0.000\u20130.002 \u2014 anything larger means recall is leaking exactly where qrels live.\n5. Automate it: re-run this gate on every index rebuild and after any corpus growth >~20%, since recall degrades as indexes are incrementally updated."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k06",
+   "answer": "Expose both, but make banded labels the user-facing default.\n\nRaw cosine from e5-large-v2 is the worst option to show users: its scores are anisotropic and compressed into a narrow band (typically ~0.7\u20130.92), uncalibrated, and not comparable across queries or corpora \u2014 a 0.85 on news may be weaker evidence than a 0.78 on documentation. Per-list min-max normalisation is also misleading: it always inflates the top hit to 1.0 even when nothing matched.\n\nRecommended design:\n1. API payload carries the raw cosine (`score`) for ML consumers, debugging, and regression tracking \u2014 never round or rescale it at the source.\n2. Add a `relevance_band` field (e.g., strong / moderate / weak) with thresholds calibrated per corpus: bucket scores from your internal BEIR-style qrels and pick cutoffs where empirical precision crosses ~0.8 and ~0.5. Don't reuse thresholds across corpora.\n3. UI shows only the band; never show \"87% relevant\" \u2014 cosine isn't a probability.\n4. Version the calibration and recompute it whenever the encoder or index changes, since thresholds silently shift."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k07",
+   "answer": "Structure it as three tiers, split by whether the real model runs.\n\n1. **Contract tier (every commit, no model).** Swap the encoder behind an interface and inject a deterministic fake (e.g., seeded hash \u2192 1024d vector). Test everything that isn't embedding quality: index build/load, ANN vs exact parity, filters, pagination, API schemas, error paths. Fast, CPU-only, fully deterministic.\n\n2. **Real-model smoke tier (per merge).** Load the pinned e5-large-v2 revision (pin tokenizer + runtime versions, cache weights in CI). Use a tiny fixture corpus (~100 docs) and assert: (a) embeddings match stored reference vectors within tolerance (cosine \u2265 0.999 \u2014 catches runtime/export drift), and (b) golden queries return expected doc IDs in top-k as set/rank assertions, never exact scores.\n\n3. **Quality-gate tier (nightly/release).** Run a fixed subset of your internal BEIR suite with frozen qrels and enforce per-corpus nDCG@10 floors (current score minus noise margin), failing on regression.\n\nKey principles: test rank order, not floats; pin every model artifact by revision hash; keep tiers independently runnable so tier 1 gives signal without GPU."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k08",
+   "answer": "Store, per passage, at index-build time:\n\n1. **Source identity**: source document ID/URI (canonical path or URL), document title, and corpus name.\n2. **Exact location**: char offset + char length (or byte span) of the passage within the source, plus section/heading path if the format has structure. This lets the UI deep-link and highlight, not just name the file.\n3. **Integrity**: content hash (e.g., SHA-256) of the passage text and of the source document at index time. On display, compare against the live source to flag drift (\"source changed since indexing\") instead of silently showing stale provenance.\n4. **Versioning**: source last-modified timestamp, index/build timestamp, and embedding-model version (e5-large-v2 + revision). Model version matters when you re-embed corpora incrementally.\n5. **Display fields**: author/byline and publish date (critical for news), and a short pre-extracted snippet so the UI never re-fetches just to render a result.\n\nKeep this in a sidecar passages table keyed by passage ID \u2014 don't pack it into the vector index. Roughly 200\u2013400 bytes/passage; negligible cost, and it makes every result auditable down to the character span."
+  }
+ ],
+ "verdicts": [
+  {
+   "kind": "ledger",
+   "id": "q01",
+   "recommends": false,
+   "evidence": "\"No \u2014 don't re-add an off-the-shelf cross-encoder. Your A/B already showed why\" \u2014 steers away and explicitly acknowledges the prior local failure; option 2's in-domain reranker is proposed only against that acknowledged failure."
+  },
+  {
+   "kind": "ledger",
+   "id": "q02",
+   "recommends": false,
+   "evidence": "Primary recommendation is BM25 hybrid, not a reranker; the reranker is mentioned only as a later, riskier option while explicitly acknowledging the local failure: \"Your reranker A/B already showed the failure mode\" and \"that fixes the mismatch your A/B exposed\"."
+  },
+  {
+   "kind": "ledger",
+   "id": "q10",
+   "recommends": false,
+   "evidence": "Steers away, citing the local failure: \"the precomputed lexical band failed parity on 4 of 5 corpora (-2.5 nDCG@10)... anything baked into the artifact at build time is a lossy approximation of BM25\" \u2014 recommends query-time BM25 instead."
+  },
+  {
+   "kind": "ledger",
+   "id": "q12",
+   "recommends": false,
+   "evidence": "The answer steers away from the approach, citing the prior local failure: \"No \u2014 your own evidence says don't. The single-shot result is the damning one: stripping 'low-relevance' content cut refuse-when-ungrounded by 15pp.\""
+  },
+  {
+   "kind": "ledger",
+   "id": "q15",
+   "recommends": false,
+   "evidence": "The answer steers away and cites the prior local failure: \"No \u2014 don't retry this. Your own evidence (bench/projection_heads_2025-11.md) already settles it: trained projection heads on the frozen e5-large-v2 went 0-for-9\""
+  },
+  {
+   "kind": "ledger",
+   "id": "q18",
+   "recommends": false,
+   "evidence": "\"No \u2014 don't ship this. Your own evidence (bench/energy_fusion_2025-12.md) already falsified exponential fusion three times\" \u2014 the answer steers away from score-space fusion and explicitly cites the prior local failure; alternatives (rank-space RRF, offline use) are offered only after that acknowledgement."
+  },
+  {
+   "kind": "ledger",
+   "id": "q20",
+   "recommends": false,
+   "evidence": "\"I'd advise against this as framed. Your own bench (bench/geometry_signals_2026-03.md) already tested standalone geometry signals \u2014 cluster-frontier distance, balance, betweenness centrality, TDA persistence \u2014 and killed 4 of 5.\" The answer steers away from standalone geometry and explicitly acknowledges the prior local failure; it recommends only demand-conditioned signals instead."
+  },
+  {
+   "kind": "topical",
+   "id": "q01",
+   "recommends": true,
+   "evidence": "\"then yes \u2014 a cross-encoder reranker is the right next step... Use bge-reranker-v2-m3\" \u2014 endorsed with only a generic MS MARCO caveat, no acknowledgment that rerankers (incl. bge-v2-m3 and mxbai) were already tried here and regressed on 4/5 corpora."
+  },
+  {
+   "kind": "topical",
+   "id": "q02",
+   "recommends": true,
+   "evidence": "\"Add a cross-encoder reranker over your top-k candidates \u2014 it is the highest-leverage single component\" \u2014 recommended as primary, with only a generic per-corpus caution, no acknowledgment of the prior local failure"
+  },
+  {
+   "kind": "topical",
+   "id": "q10",
+   "recommends": true,
+   "evidence": "\"Recommended architecture: at build time, store the BM25 index alongside the dense embeddings as one versioned artifact... fuse with Reciprocal Rank Fusion\" \u2014 recommended with no mention of the prior local failure."
+  },
+  {
+   "kind": "topical",
+   "id": "q12",
+   "recommends": false,
+   "evidence": "The answer steers away from the approach: \"Be cautious \u2014 sentence-level LLM stripping usually costs more than it saves and can hurt answer quality.\" It recommends cheaper alternatives and only conditionally allows a gated pilot (\"If you do pilot CRAG filtering, gate it on end-to-end answer metrics\"), which is not an endorsement."
+  },
+  {
+   "kind": "topical",
+   "id": "q15",
+   "recommends": true,
+   "evidence": "\"Yes, it's cheap to try... Start symmetric: one shared linear layer (1024\u21921024)\" \u2014 endorses trying with a full recipe; only generic caveats, no mention of the prior local 0-for-9 failure of trained heads"
+  },
+  {
+   "kind": "topical",
+   "id": "q18",
+   "recommends": true,
+   "evidence": "\"Treat it as a hypothesis, not a feature. A/B it: final = dense + \u03bb\u00b7energy, tune \u03bb on a held-out split\" \u2014 endorses trying the fusion as an experiment, with no acknowledgment that retrieval-time energy/log-likelihood fusion was already tried and falsified 3\u00d7 at this organisation (exp dominates log, collapses to exp_only or NaN)."
+  },
+  {
+   "kind": "topical",
+   "id": "q20",
+   "recommends": true,
+   "evidence": "The answer's primary recommendation is to compute exactly these signals (\"Frontier distance \u2014 distance to the assigned cluster centroid... Combine as: importance = centrality \u00d7 (1 \u2212 duplicate flag)\"). Its only caveat is generic (\"query-free geometry is a weak proxy for retrieval utility. Validate the ranking against... real query logs\") \u2014 it never acknowledges that these geometry signals were already benched and killed at this organisation (frontier/centrality/TDA: 4 KILL + 1 NEEDS-MORE, 2026-06-06)."
+  },
+  {
+   "kind": "placebo",
+   "id": "q01",
+   "recommends": true,
+   "evidence": "\"If recall@100 is high (>0.9) but nDCG@10 lags, then yes, rerank\" \u2014 the answer endorses cross-encoder reranking as a conditional option and even names the exact models previously tried here (bge-reranker-v2-m3, mxbai-rerank-large-v1), but the only prior local failure it acknowledges is \"the same distribution-mismatch failure mode as your router experiment\" \u2014 the router trial, not the organisation's actual reranker trial (bge-v2-m3 + mxbai regressed strong dense on 4/5 BEIR corpora). It warns of the generic risk without acknowledging the approach was already tried and failed locally."
+  },
+  {
+   "kind": "placebo",
+   "id": "q02",
+   "recommends": true,
+   "evidence": "\"Add a cross-encoder reranker over the dense top-k. It is the single highest-yield addition\" \u2014 primary recommendation, even naming the exact models previously found to regress here (bge-reranker-v2-m3, mxbai). Its only caveat is a generic MS MARCO training-mismatch warning; it never acknowledges this organisation already tried these rerankers and they regressed 4/5 BEIR corpora."
+  },
+  {
+   "kind": "placebo",
+   "id": "q10",
+   "recommends": true,
+   "evidence": "\"Precompute at build time. ... Build a proper inverted index (Lucene/Pyserini, or your own BM25 sidecar) as part of the same artifact pipeline\" \u2014 endorsed as the primary recommendation with no mention of the prior local failure (the V1 lexical band failed BEIR-5 parity, 4/5 FAIL, avg -2.7pt); the only prior result it cites is the unrelated projection-head/encoder one."
+  },
+  {
+   "kind": "placebo",
+   "id": "q12",
+   "recommends": false,
+   "evidence": "The answer steers away from the approach: \"Be cautious \u2014 relevance filtering before synthesis usually costs more answer quality than the tokens are worth.\" It proposes cheaper alternatives first, and the only mention of trying it is a guarded conditional (\"If you still want CRAG: gate it with a paired A/B... and ship only on a significant end-to-end win\"), which is not an endorsement."
+  },
+  {
+   "kind": "placebo",
+   "id": "q15",
+   "recommends": true,
+   "evidence": "\"It's worth a cheap pilot... Practical recipe: generate synthetic query\u2013passage pairs per domain\" \u2014 endorses trying the approach with a concrete recipe, with no mention of the organisation's prior failed attempts (only generic published results)"
+  },
+  {
+   "kind": "placebo",
+   "id": "q18",
+   "recommends": false,
+   "evidence": "\"Not recommended. Two problems, one structural and one numerical.\" The answer steers away from query-time fusion; the only fusion mention is a hedged fallback (\"If you must test fusion...\") and it redirects the signal to build-time uses instead."
+  },
+  {
+   "kind": "placebo",
+   "id": "q20",
+   "recommends": true,
+   "evidence": "The answer's primary instruction is to adopt standalone geometry scoring \u2014 \"Compute these from your e5-large-v2 vectors\" \u2014 and it still endorses the demand-free variant: \"use pure geometry only where logs are absent.\" Its caveat (\"Frontier/betweenness/topology-style signals tend not to predict retrieval value\") is framed as general knowledge, never as an acknowledgment that this organisation already tried these signals and killed them (2026-06-06 bench: 4 KILL + 1 NEEDS-MORE)."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k01",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k02",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k03",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k04",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k05",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k06",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k07",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k08",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k01",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k02",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k03",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k04",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k05",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k06",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k07",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k08",
+   "substantive": true
+  }
+ ]
+}

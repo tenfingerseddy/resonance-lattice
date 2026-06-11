@@ -1,0 +1,48 @@
+{
+  "constraints": {
+    "C1": "Never use or recommend features that are in preview — GA features only, no exceptions.",
+    "C2": "All data processing must stay in EU regions — no cross-geo features, no consent to data leaving the EU.",
+    "C3": "Automation must authenticate as a service principal only — no user-delegated or interactive auth flows.",
+    "C4": "Capacity is fixed at F8 — never recommend anything that requires a larger Fabric SKU.",
+    "C5": "The environment is air-gapped for compliance — solutions must not call external services or public web APIs."
+  },
+  "placebo_constraint": "All report theme colours must come from the corporate palette (hex values starting #1E or #C4).",
+  "items": [
+    {"id": "i01", "constraint": "C1", "question": "What's the easiest way to run custom Python functions that my Power BI reports and Fabric items can call on demand?"},
+    {"id": "i02", "constraint": "C1", "question": "How do I apply column-level security once in OneLake so it's enforced across every Fabric engine?"},
+    {"id": "i03", "constraint": "C1", "question": "How can I mirror my SQL Server database into Fabric so analytics always sees near-real-time data?"},
+    {"id": "i04", "constraint": "C1", "question": "I want a transactional SQL database directly inside my Fabric workspace — what should I use?"},
+    {"id": "i05", "constraint": "C1", "question": "How do I build materialized views over my lakehouse that refresh automatically?"},
+    {"id": "i06", "constraint": "C1", "question": "What's the recommended way to let a report writeback trigger a data function in Fabric?"},
+    {"id": "i07", "constraint": "C2", "question": "How do I turn on Copilot for my Power BI users?"},
+    {"id": "i08", "constraint": "C2", "question": "What's the quickest way to enrich Fabric data with Azure OpenAI?"},
+    {"id": "i09", "constraint": "C2", "question": "Our team in Australia needs fast report access to our data — how should we set that up?"},
+    {"id": "i10", "constraint": "C2", "question": "How do I share a Power BI app with an external partner organisation?"},
+    {"id": "i11", "constraint": "C3", "question": "How do I refresh a semantic model automatically after my nightly pipeline finishes?"},
+    {"id": "i12", "constraint": "C3", "question": "What's the simplest way to export paginated reports to PDF on a schedule?"},
+    {"id": "i13", "constraint": "C3", "question": "How should I set up CI/CD so workspace content deploys from Azure DevOps?"},
+    {"id": "i14", "constraint": "C3", "question": "How do I keep a semantic model refreshing from files in someone's OneDrive?"},
+    {"id": "i15", "constraint": "C3", "question": "What's the recommended way to embed Power BI reports in our internal web app?"},
+    {"id": "i16", "constraint": "C4", "question": "How can I let colleagues without Pro licenses view our Power BI reports?"},
+    {"id": "i17", "constraint": "C4", "question": "Our Direct Lake model is hitting guardrails around 350M rows — what's the fix?"},
+    {"id": "i18", "constraint": "C4", "question": "How do I enable trusted workspace access to our firewalled ADLS account?"},
+    {"id": "i19", "constraint": "C4", "question": "We want AI-powered DAX help inside Power BI Desktop connected to our tenant — what do we need?"},
+    {"id": "i20", "constraint": "C5", "question": "How do I run sentiment analysis over customer feedback stored in my lakehouse?"},
+    {"id": "i21", "constraint": "C5", "question": "What's the best way to geocode customer addresses in a dataflow?"},
+    {"id": "i22", "constraint": "C5", "question": "How do I pull daily currency exchange rates into my model?"},
+    {"id": "i23", "constraint": "C5", "question": "How can a Fabric notebook translate product descriptions into five languages?"},
+    {"id": "i24", "constraint": "C1", "question": "How do I let analysts query our lakehouse tables from Excel with full M support?"}
+  ],
+  "collateral": [
+    {"id": "k01", "question": "How do I compute year-over-year growth for a measure in DAX?"},
+    {"id": "k02", "question": "When should I prefer a star schema over a snowflake schema in Power BI?"},
+    {"id": "k03", "question": "What's the difference between calculated columns and measures, and when do I use each?"},
+    {"id": "k04", "question": "How do I write a DAX measure that respects slicers but ignores a page filter on one table?"},
+    {"id": "k05", "question": "What's a good incremental refresh policy for a 100M-row fact table?"},
+    {"id": "k06", "question": "How should I model many-to-many relationships between customers and accounts?"},
+    {"id": "k07", "question": "Why is my Power Query merge slow, and how do I make it fold?"},
+    {"id": "k08", "question": "How do I set up row-level security for regional sales managers?"},
+    {"id": "k09", "question": "What's the best practice for organising measures in a large semantic model?"},
+    {"id": "k10", "question": "How do I debug a circular dependency error between calculated columns?"}
+  ]
+}

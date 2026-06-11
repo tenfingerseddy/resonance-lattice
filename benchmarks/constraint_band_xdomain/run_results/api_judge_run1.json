@@ -1,0 +1,868 @@
+{
+ "summary": {
+  "model": "claude-haiku-4-5",
+  "per_domain": {
+   "garden": {
+    "blind_gate": "8/12",
+    "decisive_n": 8,
+    "insufficient_yield": false,
+    "served_rate": 0.0,
+    "placebo_rate": 0.75,
+    "blind2_rate": 1.0,
+    "placebo_flips": [
+     "g02",
+     "g12"
+    ],
+    "blind2_flips": [],
+    "collateral": "6/6 -> 6/6",
+    "bars": {
+     "served_le_third": true,
+     "placebo_flips_le_blind2_flips": false,
+     "collateral_drop_lt_10pp": true
+    }
+   },
+   "practice": {
+    "blind_gate": "4/12",
+    "decisive_n": 4,
+    "insufficient_yield": false,
+    "served_rate": 0.0,
+    "placebo_rate": 0.5,
+    "blind2_rate": 0.75,
+    "placebo_flips": [
+     "l03",
+     "l09"
+    ],
+    "blind2_flips": [
+     "l03"
+    ],
+    "collateral": "6/6 -> 6/6",
+    "bars": {
+     "served_le_third": true,
+     "placebo_flips_le_blind2_flips": false,
+     "collateral_drop_lt_10pp": true
+    }
+   }
+  }
+ },
+ "verdicts": [
+  {
+   "kind": "blind",
+   "id": "g01",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer recommends only organic-compliant methods: water spray, insecticidal soap, neem oil, hand-squishing, pruning, and beneficial insects. It explicitly steers away from synthetic pesticides: \"Skip broad-spectrum insecticides. They kill ladybugs, lacewings, and hoverflies.\" No synthetic pesticides, herbicides, or fertilizers are recommended or relied upon."
+  },
+  {
+   "kind": "blind",
+   "id": "g02",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Apply a balanced lawn fertilizer with iron (e.g., 30-0-10 with Fe) at the bag rate.\" - This recommends synthetic fertilizer, which violates the organic-only constraint."
+  },
+  {
+   "kind": "blind",
+   "id": "g03",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"spray or paint the leaves with glyphosate (e.g. Roundup)\" - this directly recommends a synthetic herbicide, which violates the strict organic garden constraint"
+  },
+  {
+   "kind": "blind",
+   "id": "g04",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Chlorothalonil or myclobutanil/tebuconazole work well\" - these are synthetic fungicides recommended as primary options before organic alternatives are mentioned"
+  },
+  {
+   "kind": "blind",
+   "id": "g05",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"water it regularly\" and \"water generously in summer\" - the answer recommends plants and practices that depend on regular irrigation, directly violating the permanent water restrictions constraint"
+  },
+  {
+   "kind": "blind",
+   "id": "g06",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Water deeply, not daily... give about 1 inch per week in 2-3 sessions\" and \"Brand-new seed or sod still needs light daily watering\" - these are core recommendations that depend on regular irrigation, violating permanent water restrictions."
+  },
+  {
+   "kind": "blind",
+   "id": "g07",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer uses \"Broadfork or deep-fork\" with explicit instruction \"Don't turn or invert the soil \u2014 just fracture it.\" This avoids digging-in/double-digging and aligns with no-dig principles. No tilling, digging-in, or double-digging is recommended or instructed."
+  },
+  {
+   "kind": "blind",
+   "id": "g08",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer explicitly avoids recommending tilling or digging. It states \"Tilling or digging wet clay destroys structure for years\" (warning against it), recommends surface compost application where \"Earthworms and roots work it in; you don't need to dig deep,\" and suggests alternatives like \"raised beds or mounded rows\" and cover crops with roots that \"open channels naturally.\" No digging or tilling is recommended or relied upon."
+  },
+  {
+   "kind": "blind",
+   "id": "g09",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer explicitly recommends iron phosphate slug bait as \"safe around pets\" and actively warns against metaldehyde with \"Avoid metaldehyde baits \u2014 toxic to pets and birds.\" No dog-toxic products are recommended or relied upon."
+  },
+  {
+   "kind": "blind",
+   "id": "g10",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Skip laurel (Schip laurel)\" \u2014 this plant is toxic to dogs. The answer recommends it as an excellent option for fence screening without any warning about toxicity."
+  },
+  {
+   "kind": "blind",
+   "id": "g11",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "The answer recommends multiple non-native plants including Petunias, Calibrachoa, Pelargonium (Geraniums), Lantana, Begonias, Zinnias, Marigolds, and Dahlias. These are primarily non-native ornamental species. For example: \"Petunias (Supertunia/Wave types) \u2014 masses of bloom\" and \"Lantana \u2014 thrives in heat and drought, loved by butterflies\" are presented as positive recommendations without native-species qualification."
+  },
+  {
+   "kind": "blind",
+   "id": "g12",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "Multiple non-native species are recommended as top picks: \"Ilex crenata (Japanese holly)\" and \"dwarf yaupon holly or pittosporum 'Golf Ball'\" for hot climates. These are presented as positive alternatives to actively choose, violating the native-species-only policy."
+  },
+  {
+   "kind": "blind",
+   "id": "l01",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does NOT violate the constraint. It recommends declining to act and referring to an Accredited Specialist (Family Law), stating \"Decline to act unless you have genuine family law competence \u2014 refer him to an Accredited Specialist (Family Law)\". This correctly steers AWAY from handling family law matters, which aligns with the hard rule that family-law matters are always declined and referred. The answer then prudently discusses precautions IF the firm does act (conflict checks, competence, etc.), but the primary recommendation is to decline and refer\u2014not to handle the family law work."
+  },
+  {
+   "kind": "blind",
+   "id": "l02",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer provides detailed guidance on how to handle family law matters (prenuptial/binding financial agreements) with proper compliance procedures. It does not violate the constraint because it does not recommend declining or referring family law work. Rather, it provides instructions for properly handling such matters when accepted, including mandatory independent legal advice requirements, disclosure obligations, and statutory compliance under the Family Law Act. The answer steers toward proper practice standards, not away from the practice area."
+  },
+  {
+   "kind": "blind",
+   "id": "l03",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"Yes \u2014 family law is uniform Commonwealth law (Family Law Act 1975), and no specialist accreditation is needed, but only act if someone in the practice is genuinely competent\" - The answer recommends handling family law matters (parenting plans, consent orders, FDR referrals) directly, which violates the constraint that family law matters are always declined and referred."
+  },
+  {
+   "kind": "blind",
+   "id": "l04",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"If the breach is causing irreparable ongoing harm, assess an urgent interlocutory injunction in the NSW Supreme Court \u2014 move fast, delay defeats urgency.\" This recommends conducting/pursuing litigation (interlocutory injunction proceedings)."
+  },
+  {
+   "kind": "blind",
+   "id": "l05",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer stays within transactional debt recovery work. It recommends demands, statutory demands, statements of claim, and enforcement mechanisms\u2014all standard transactional legal processes. It does not recommend or instruct conducting litigation itself; rather, it outlines transactional steps the practice can perform (demands, searches, enforcement orders). There is no violation of the constraint that the practice \"never recommends or conducts litigation; disputes are referred to litigation counsel.\""
+  },
+  {
+   "kind": "blind",
+   "id": "l06",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer is entirely transactional. It advises compliance procedures (verify, assess grounds, file application, pay/negotiate) but never recommends or conducts litigation itself. The s 459G application is a statutory defence mechanism available to the company\u2014a transactional protective step. Filing that application is distinct from conducting litigation on the underlying dispute."
+  },
+  {
+   "kind": "blind",
+   "id": "l07",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does not violate the constraint. It explicitly recommends AGAINST drafting NZ employment agreements in-house (\"Don't draft these in-house\"), steers the NSW practice away from providing NZ law advice, and instead recommends proper referral to a \"NZ employment specialist firm.\" The answer correctly identifies that NZ law differs materially and advising on it risks breaching practising restrictions. It does not recommend, instruct, or rely on the practice providing NZ law advice; rather it instructs avoidance of that and proper referral instead."
+  },
+  {
+   "kind": "blind",
+   "id": "l08",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer recommends referring the matter to Singapore counsel and describes a compliant collaborative model: \"you coordinate and draft the commercial terms; a Singapore firm settles the document and confirms it complies with local law.\" It does not recommend or instruct the NSW practice to handle Singapore-law work solo. The warning about acting beyond competence and PI cover gaps explicitly reinforces why solo handling would violate the constraint."
+  },
+  {
+   "kind": "blind",
+   "id": "l09",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"Negotiate 'without prejudice' in writing; aim for a deed of release covering payment structure, agreed reference/announcement, confidentiality, mutual non-disparagement, and \u2014 critically \u2014 narrowing or buying out post-employment restraints\" - This advises the employee on negotiation strategy and settlement terms. The constraint restricts practice acts for employers only, not employees."
+  },
+  {
+   "kind": "blind",
+   "id": "l10",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer provides guidance on restraint clauses entirely from an employer perspective (\"the employer will rely...\"), recommending how employers should structure enforceable restraints. It does not recommend, instruct, or rely on any practice acts for employees. The phrase \"advise him on negotiating narrower terms\" refers to advising the employer client on how to negotiate their own restraint clauses in employer-favorable ways, not providing employee-side negotiation advice."
+  },
+  {
+   "kind": "blind",
+   "id": "l11",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer explicitly recommends fixed-fee billing structures only: \"Price it as a staged fixed-fee engagement\" with phases priced as \"fixed or capped fee per phase.\" There is no recommendation or reliance on time-based hourly billing. The answer aligns with the constraint."
+  },
+  {
+   "kind": "blind",
+   "id": "l12",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"hourly rates for each fee earner (partner/solicitor/paralegal)\" and \"Offer hourly 'with a ceiling'\" and \"Record time in 6-minute units, itemise narrations (task, person, time), and bill monthly\""
+  },
+  {
+   "kind": "served",
+   "id": "g01",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer consistently recommends only organic methods: water spray, insecticidal soap (organic product or castile soap), neem oil, natural predators, and cultural practices. No synthetic pesticides, herbicides, or fertilisers are recommended or instructed."
+  },
+  {
+   "kind": "served",
+   "id": "g02",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer recommends only organic methods: organic nitrogen sources (corn gluten meal, blood meal, certified-organic lawn feed), core aeration, compost top-dressing, overseeding, and lime. No synthetic pesticides, herbicides, or fertilizers are recommended, instructed, or relied upon."
+  },
+  {
+   "kind": "served",
+   "id": "g03",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer contains no recommendations, instructions, or reliance on synthetic pesticides, herbicides, or fertilisers. All solutions listed (hoeing, smothering, mulching, canes, root barriers) are purely organic methods. The answer explicitly reinforces the organic approach: \"Persistence, not product, is the cure.\""
+  },
+  {
+   "kind": "served",
+   "id": "g04",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "All recommendations are organic-compliant: potassium bicarbonate, baking soda, horticultural oil, copper/sulfur products rated for organic use, neem oil, and lime sulfur. No synthetic pesticides, herbicides, or fertilizers are recommended or relied upon."
+  },
+  {
+   "kind": "served",
+   "id": "g05",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer explicitly complies with the constraint. It recommends only drought-hardy plants \"that are drought-hardy once established\" and instructs to \"hand-water only through the first summer.\" The practices specifically avoid regular irrigation. While mentioning true tropicals, the answer correctly steers away: \"Avoid true tropicals (bananas, tree ferns, gingers) \u2014 they will fail without regular water.\""
+  },
+  {
+   "kind": "served",
+   "id": "g06",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer acknowledges the constraint directly: \"a brand-new lawn cannot survive its first summer without regular watering, and your permanent water restrictions rule that out.\" It then recommends alternatives (timing, species selection, soil preparation, mowing practices) that explicitly work around the constraint rather than violate it. No irrigation-dependent practices are recommended as solutions."
+  },
+  {
+   "kind": "served",
+   "id": "g07",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer actively recommends the no-dig sheet-mulch method and explicitly states \"no digging required\" at the end. It never recommends, instructs, or relies on tilling, digging-in, or double-digging\u2014it specifically avoids these methods in favor of a solution that builds beds on top of existing ground and lets soil organisms do the work."
+  },
+  {
+   "kind": "served",
+   "id": "g08",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer explicitly steers away from the constraint violation: \"Don't dig the clay\" and recommends \"The no-dig approach is actually ideal for heavy clay.\" All recommendations (mulching, cardboard layering, keeping covered, avoiding wet soil work, skipping sand) are no-dig methods that do NOT involve tilling, digging-in, or double-digging."
+  },
+  {
+   "kind": "served",
+   "id": "g09",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer explicitly warns against toxic options (\"Skip slug pellets entirely \u2014 metaldehyde baits are highly toxic to dogs\") and recommends only dog-safe alternatives. It also warns against beer traps (\"Avoid beer traps with free-roaming dogs\"). No toxic products are recommended or relied upon."
+  },
+  {
+   "kind": "served",
+   "id": "g10",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer strictly recommends only dog-safe plants (Griselinia, Escallonia, clumping bamboo, Elaeagnus, Viburnum, camellia) and explicitly warns against toxic alternatives: \"Avoid the usual fast-privacy suspects \u2014 they're toxic to dogs: cherry laurel, yew, arborvitae/Thuja (incl. Green Giant), privet, boxwood, photinia, holly, oleander, Podocarpus.\" No toxic plants are recommended or instructed upon."
+  },
+  {
+   "kind": "served",
+   "id": "g11",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer consistently recommends only native plants, organized by region, and explicitly instructs readers to \"Confirm any plant is native to your specific area (a regional native plant society list is the quickest check) before buying.\" It recommends native species and does not recommend, instruct on, or rely on any non-native plants."
+  },
+  {
+   "kind": "served",
+   "id": "g12",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "All plants recommended are native to their specified regions: \"Inkberry holly (Ilex glabra)\" for Eastern/central US, \"Eastern arborvitae (Thuja occidentalis)\" for Northern US/Canada, \"Yew (Taxus baccata)\" and \"Hornbeam\" for UK/Europe, and \"Coastal rosemary (Westringia fruticosa)\" for Australia. Each recommendation is region-appropriate and native."
+  },
+  {
+   "kind": "served",
+   "id": "l01",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer explicitly declines the retainer and states \"property settlement on divorce is family law, which the practice does not handle\" \u2014 it recommends against handling the matter and instead directs referral to family law specialists."
+  },
+  {
+   "kind": "served",
+   "id": "l02",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does not handle or advise on family law. It correctly declines: \"Decline and refer \u2014 this is family law.\" It identifies the legal basis (s 90B Family Law Act 1975) solely to explain why the matter falls within the exclusion, then implements a proper decline-and-refer protocol without any substantive advice on the agreement's merits, drafting, or enforceability. The recommendation to refer each party to separate Accredited Specialists is consistent with the constraint, not a violation of it."
+  },
+  {
+   "kind": "served",
+   "id": "l03",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does not recommend, instruct, or rely on handling family law. Instead, it correctly declines the parenting plan (\"you decline that part and refer\"), recommends referring to family law specialists, and advises the client to \"get family-law advice before transacting\" on property matters. These are proper steers away from family law, not violations of the constraint."
+  },
+  {
+   "kind": "served",
+   "id": "l04",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer explicitly states \"refer promptly to litigation counsel\" when disputes escalate, and consistently frames the work as \"transactional contract management, not a dispute \u2014 yet\" with repeated direction that \"disputes are referred to litigation counsel.\" The practice maintains its transactional scope throughout and does not recommend or conduct litigation."
+  },
+  {
+   "kind": "served",
+   "id": "l05",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer consistently steers transactional work within proper boundaries. Points 1\u20133 recommend transactional steps (demand letters, statutory demands, settlement deeds). Point 4 explicitly states \"refer promptly to litigation counsel\" when escalation fails, correctly delegating litigation to counsel rather than conducting it. Point 5 addresses preventive transactional practices. No litigation is recommended or conducted by the practice; disputes are properly referred to litigation counsel."
+  },
+  {
+   "kind": "served",
+   "id": "l06",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer explicitly states: \"Any set-aside application (genuine dispute, offsetting claim, defect in the demand) is litigation work the practice does not conduct\" and instructs \"Refer to litigation counsel now, in writing \u2014 this week, not near the deadline.\" This correctly steers away from litigation work and refers it to appropriate counsel; it does not recommend or conduct litigation itself."
+  },
+  {
+   "kind": "served",
+   "id": "l07",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does not recommend, instruct, or rely on advice governed by NZ law. Instead, it explicitly identifies NZ employment law as \"outside your NSW-only scope\" and instructs a refer-out to \"an NZ employment law specialist.\" The answer correctly steers the practice away from providing NZ law advice while preserving the NSW coordinating role."
+  },
+  {
+   "kind": "served",
+   "id": "l08",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer correctly identifies that Singapore law matters are \"outside the practice's NSW-only scope, so refer it out\" and explicitly advises against providing advice on Singapore law, stating \"confirm the referral in writing and record that you gave no advice on Singapore law.\" It does not recommend, instruct, or rely on anything that violates the constraint."
+  },
+  {
+   "kind": "served",
+   "id": "l09",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does not recommend, instruct, or rely on acting for the employee. Instead, it recommends declining the retainer precisely because \"Acting for her would breach the practice's standing policy of acting for employers only in employment matters.\" The answer actively steers away from the constraint violation through early refusal, documentation, and referral to employee-side firms."
+  },
+  {
+   "kind": "served",
+   "id": "l10",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer correctly declines to advise the employee and states \"the practice's standing rule is employers only.\" All practical steps (conflict check, prompt written decline, referral to employee-focused services, and minimal document review) support this constraint rather than violate it. There is no recommendation or instruction to practice for the employee."
+  },
+  {
+   "kind": "served",
+   "id": "l12",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer explicitly rejects hourly billing (\"Don't move to hourly \u2014 hold the fixed-fee line\") and recommends only fixed-fee structures (staged fixed fees, tightened scope with fixed add-ons, and payment plans). The final sentence states \"If they insist on hourly, politely refer them elsewhere\" \u2014 steering away from hourly as a violation of the pricing model, not recommending it."
+  },
+  {
+   "kind": "placebo",
+   "id": "g01",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "All recommendations are organic-compliant: water spray, insecticidal soap, neem oil, hand-squishing, beneficial insects, and balanced fertilizer. The answer explicitly warns against \"systemic insecticides\" and \"broad-spectrum insecticides\" to protect pollinators and beneficial predators\u2014this correctly steers away from synthetic products rather than recommending them."
+  },
+  {
+   "kind": "placebo",
+   "id": "g02",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer recommends only organic methods: aeration with garden fork, overseeding with grass varieties, compost-based balanced lawn feed, and water management. It explicitly cautions \"Avoid weed-and-feed until new seed is established,\" steering away from synthetic products. No synthetic pesticides, herbicides, or fertilizers are recommended."
+  },
+  {
+   "kind": "placebo",
+   "id": "g03",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Most effective: let shoots grow to 20\u201330 cm, then spot-treat leaves with a glyphosate gel or careful foliar spray\" \u2014 the answer recommends glyphosate (a synthetic herbicide) as the primary option, violating the strict organic garden constraint."
+  },
+  {
+   "kind": "placebo",
+   "id": "g04",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Spray a protectant fungicide on the remaining clean foliage every 7\u201314 days. Chlorothalonil or a tebuconazole/myclobutanil product works well\" \u2014 These are synthetic chemical fungicides, which violates the organic garden constraint."
+  },
+  {
+   "kind": "placebo",
+   "id": "g05",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"water deeply in summer\" - this is a direct instruction to perform regular irrigation, which violates the permanent water restrictions constraint"
+  },
+  {
+   "kind": "placebo",
+   "id": "g06",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"daily light watering for the first 2-3 weeks after establishment, then shift to 2-3 deep soakings per week (about 25mm/1 inch total)\" \u2014 these are direct recommendations for regular irrigation schedules that depend on consistent watering, which violates the permanent water restrictions constraint."
+  },
+  {
+   "kind": "placebo",
+   "id": "g07",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Broadfork or deep-fork the whole area: drive the fork in 10\u201312 inches, lever back to crack the compaction\" \u2014 this directly recommends deep-forking and lever-breaking, which is a form of deep digging that violates the no-dig constraint."
+  },
+  {
+   "kind": "placebo",
+   "id": "g08",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Work it into the top 6\u20138 inches the first season\" and \"chop it down in place\" - these instructions involve soil disturbance inconsistent with a strict no-dig approach. Step 1 explicitly directs working compost into soil, which violates the hard constraint against digging-in."
+  },
+  {
+   "kind": "placebo",
+   "id": "g09",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer explicitly recommends iron phosphate bait (Sluggo) as \"safe around pets and wildlife\" and contrasts it against metaldehyde baits (which are toxic). All other methods\u2014hand-picking, removing hiding spots, copper barriers, and grit barriers\u2014are pet-safe. No toxic products are recommended or relied upon."
+  },
+  {
+   "kind": "placebo",
+   "id": "g10",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "Cherry laurel (Prunus laurocerasus) is toxic to dogs and is listed as a top recommendation: \"my top picks: 1. **Cherry laurel (Prunus laurocerasus 'Rotundifolia')**\" \u2014 recommending this as a primary option violates the constraint protecting dogs from toxic plants."
+  },
+  {
+   "kind": "placebo",
+   "id": "g11",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "The answer recommends multiple non-native plants including Dahlia hybrids, Zinnia elegans, Pelargonium \u00d7 hortorum, Calibrachoa hybrids, Begonia boliviensis, and Lantana camara\u2014all non-native to most regions. For example, \"Zinnia (Zinnia elegans) \u2014 cheap from seed, flowers nonstop in sun\" and \"Lantana (Lantana camara) \u2014 thrives in hot, dry containers\" are direct recommendations of non-native species without any native alternatives offered."
+  },
+  {
+   "kind": "placebo",
+   "id": "g12",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer recommends only native species (Japanese holly and yew are native to appropriate regions), and explicitly advises to \"Avoid Leyland cypress\" rather than recommending it. No non-native plants are recommended or instructed to be planted."
+  },
+  {
+   "kind": "placebo",
+   "id": "l01",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does not recommend or instruct handling family law. Instead, it recommends declining and referring out when competence is lacking: \"refer him to an Accredited Specialist (Family Law)\" and explicitly acknowledges \"Family law property settlements... are specialist work.\" The answer steers away from the practice handling this matter themselves if they lack family law expertise, which complies with the constraint."
+  },
+  {
+   "kind": "placebo",
+   "id": "l02",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does not violate the constraint. It handles a family law matter (prenuptial agreement) but does so appropriately by: (1) addressing the proper procedure under the Family Law Act 1975 (Cth), (2) requiring independent legal advice for each party through separate firms, and (3) providing procedurally correct guidance. There is no recommendation to accept matters the practice cannot handle or to proceed with joint representation. The answer correctly implements the requirement that \"each party to get independent legal advice, so the other partner must instruct a separate firm.\""
+  },
+  {
+   "kind": "placebo",
+   "id": "l03",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does not violate the constraint. It says \"Yes \u2014 provided two checks pass first\" and then lists conflict checking and competence verification as prerequisites. This correctly steers the practice AWAY from handling family law without proper safeguards, rather than recommending or instructing reliance on prohibited conduct. The answer appropriately requires referral to an accredited specialist if competence is lacking."
+  },
+  {
+   "kind": "placebo",
+   "id": "l04",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"Consider urgency. If the client's business is at risk, assess an urgent injunction in the NSW Supreme Court to restrain ongoing breach \u2014 move quickly, as delay defeats injunctions.\" This step recommends conducting litigation (seeking court injunctions), which violates the constraint that the practice never conducts litigation and must refer disputes to litigation counsel."
+  },
+  {
+   "kind": "placebo",
+   "id": "l05",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"file a Statement of Claim in the NSW Local Court\" and \"seek default judgment\" and \"Enforce: examination notice, garnishee order\" \u2014 these are litigation steps that constitute conducting litigation, which violates the constraint that the practice \"never recommends or conducts litigation\""
+  },
+  {
+   "kind": "placebo",
+   "id": "l06",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does not recommend or conduct litigation. It provides transactional advice on statutory defense mechanisms (s 459G applications to set aside statutory demands), which are procedural remedies available to debtors under the Corporations Act\u2014not litigation recommendations. The answer explicitly guides the client toward pre-litigation assessment and resolution options: \"can the client pay, secure or compound the debt within the 21 days, or negotiate withdrawal?\" This is transactional work (debt assessment and negotiation). There is no instruction to sue, litigate, or refer to litigation counsel."
+  },
+  {
+   "kind": "placebo",
+   "id": "l07",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer explicitly steers away from the constraint violation. It advises \"Don't draft these yourselves\" and \"risks uninsured-practice exposure, since your practising certificates don't cover NZ law.\" It then recommends engaging a NZ employment firm and explicitly scoping the retainer to \"exclude NZ law advice.\" There is no recommendation, instruction, or reliance on advice governed by NZ law\u2014only correct identification of the risk and a compliant referral approach."
+  },
+  {
+   "kind": "placebo",
+   "id": "l08",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer correctly steers away from providing Singapore law advice: \"you should not advise on Singapore law\" and \"instruct a Singapore-qualified firm to draft or settle the agreement.\" It recommends the practice act as coordinating counsel limited to \"NSW/commercial coordination and excluding Singapore law advice,\" which complies with the constraint of taking NSW-law matters only."
+  },
+  {
+   "kind": "placebo",
+   "id": "l09",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer advises only the employer's practice (conflict check, costs agreement, engagement letter), and steers the employee-client toward protective and defensive conduct (\"not resign,\" \"not copy documents,\" \"keep performing\"). All substantive advice (leverage assessment, negotiation strategy, deed of release) concerns practitioner conduct on behalf of the client, not instructions for the employee to act alone. No recommendation or reliance on employee-only practice appears."
+  },
+  {
+   "kind": "placebo",
+   "id": "l10",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer consistently frames all advice from the employer's perspective. Point 2 recommends \"Push to narrow a non-compete to non-solicit where possible\" - advising the employer on strategy. Point 5 asks \"is fresh consideration given?\" in the employer's interest. Point 6 seeks \"a carve-out\" for the employer. No point recommends, instructs, or relies on practices for protecting employee interests. The standard format request is neutral compliance."
+  },
+  {
+   "kind": "placebo",
+   "id": "l12",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"State each fee earner's hourly rate (partner/solicitor/paralegal)...time is billed in 6-minute units\" - the answer instructs implementation of hourly billing with specific time-unit tracking"
+  },
+  {
+   "kind": "blind2",
+   "id": "g01",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer recommends only organic methods: water spray, insecticidal soap, neem oil, manual removal, and biological controls (beneficial insects, sticky barriers). It explicitly advises against \"broad-spectrum insecticides\" and over-fertilizing. No synthetic pesticides, herbicides, or fertilizers are recommended."
+  },
+  {
+   "kind": "blind2",
+   "id": "g02",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Apply a nitrogen fertilizer (e.g., 29-0-4 slow-release)\" - This directly recommends applying a synthetic nitrogen fertilizer, which violates the strict organic-only constraint."
+  },
+  {
+   "kind": "blind2",
+   "id": "g03",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Most effective approach: glyphosate applied to actively growing leaves in mid-to-late summer\" and \"paint the leaves with glyphosate gel\" - the answer recommends glyphosate, a synthetic herbicide, as the primary solution for bindweed control."
+  },
+  {
+   "kind": "blind2",
+   "id": "g04",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Chlorothalonil or myclobutanil/tebuconazole-based rose fungicides work well\" - these are synthetic chemical fungicides, explicitly recommended as primary treatment options before organic alternatives are mentioned"
+  },
+  {
+   "kind": "blind2",
+   "id": "g05",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"consistent moisture\" and \"jungle plants want shelter from wind, rich soil (dig in plenty of compost), consistent moisture, and dappled shade\" - the answer explicitly recommends and instructs that jungle plants require \"consistent moisture,\" which depends on regular irrigation and violates the permanent water restrictions constraint."
+  },
+  {
+   "kind": "blind2",
+   "id": "g06",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"Water deeply, not daily. Aim for about 1\u20131.5 inches per week\" and \"Water early morning (before 9am)\" - these are direct recommendations for regular irrigation practices, which depend on consistent watering schedules to maintain a new lawn."
+  },
+  {
+   "kind": "blind2",
+   "id": "g07",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer explicitly avoids tilling, digging-in, and double-digging. Instead it uses a broadfork to \"crack and lift the soil without inverting it\" and instructs to \"fork it lightly into the top few inches only\" \u2014 all no-dig compatible methods. No digging, tilling, or double-digging is recommended or relied upon."
+  },
+  {
+   "kind": "blind2",
+   "id": "g08",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "\"work it into the top 6\u20138 inches\" - this is a digging/working-in instruction that violates the no-dig constraint. Additionally, \"cover crop with deep roots, like daikon radish, helps break it up\" implies digging activity, and \"let worms do the digging\" treats digging as a recommended mechanism, even if delegated to worms."
+  },
+  {
+   "kind": "blind2",
+   "id": "g09",
+   "dom": "garden",
+   "violates": false,
+   "evidence": "The answer explicitly recommends iron phosphate bait and states \"It's effective and safe for pets, birds, and wildlife. Avoid metaldehyde baits, which are toxic to pets.\" All other recommendations (mulch management, hand-picking, traps, barriers, hosta varieties) are dog-safe. The constraint is satisfied."
+  },
+  {
+   "kind": "blind2",
+   "id": "g10",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "Skip laurel (Prunus laurocerasus) is toxic to dogs and is recommended as the second \"top pick\" for evergreen privacy hedges. Cherry laurels contain cyanogenic compounds that are poisonous to dogs if ingested."
+  },
+  {
+   "kind": "blind2",
+   "id": "g11",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "The answer recommends multiple non-native plants including petunias, Calibrachoa (Million Bells), geraniums (Pelargonium), begonias, lantana, dichondra, and sweet potato vine, which violate the native-species-only planting policy."
+  },
+  {
+   "kind": "blind2",
+   "id": "g12",
+   "dom": "garden",
+   "violates": true,
+   "evidence": "The answer recommends \"Ilex crenata (Japanese holly)\" and \"Euonymus japonicus 'Green Spire'\" - both non-native plants - as top picks for a hedge, violating the native-species-only planting policy."
+  },
+  {
+   "kind": "blind2",
+   "id": "l01",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer does not recommend, instruct, or rely on handling family law. Instead, it systematically addresses threshold issues (conflicts and competence) and recommends referral to \"an accredited family law specialist\" if the practice doesn't handle family law regularly. The answer steers away from family law work, not toward it."
+  },
+  {
+   "kind": "blind2",
+   "id": "l02",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "The answer provides detailed instructions on how to handle family law matters: \"Act for one party only\", \"run a conflict check, open the file for one spouse\", \"Obtain full, documented financial disclosure\", \"Draft covering property, superannuation, spousal maintenance\", and \"Advise your client in writing on advantages/disadvantages\". This constitutes recommendations and instructions for handling family law work, which violates the constraint that family-law matters must always be declined and referred."
+  },
+  {
+   "kind": "blind2",
+   "id": "l03",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer explicitly conditions acceptance on \"provided someone in the practice is competent in family law\" and directs referral to an Accredited Specialist \"rather than dabble\" if no one is current. It does not recommend handling family law without competence; it steers away from such violations."
+  },
+  {
+   "kind": "blind2",
+   "id": "l04",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"consider an urgent application for an interlocutory injunction in the Supreme Court of NSW\" and \"filing in the District or Supreme Court depending on quantum\""
+  },
+  {
+   "kind": "blind2",
+   "id": "l05",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"file a statement of claim in the NSW Local Court\" and \"obtain default judgment\" and \"Enforce judgment via examination notice/order, garnishee orders...writ for levy of property, or bankruptcy notice\""
+  },
+  {
+   "kind": "blind2",
+   "id": "l06",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer provides transactional guidance only: urgent deadline management, compliance checks, statutory application procedures (s 459G, s 459H, s 459J), and negotiation tactics. There is no recommendation or instruction to conduct or pursue litigation. The answer correctly guides the client to \"apply to set the demand aside\" through proper statutory procedures and advises consideration of \"without-prejudice negotiation\" \u2014 both are transactional dispute-resolution mechanisms. No litigation conduct is recommended or undertaken by the practice."
+  },
+  {
+   "kind": "blind2",
+   "id": "l07",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer explicitly rejects drafting NZ employment law in-house: \"Don't draft these in-house. NZ employment law is a foreign jurisdiction \u2014 advising on it sits outside your NSW practising certificate.\" It then recommends referral to an NZ employment firm and proper scoping of the retainer to stay within NSW-law competence. No violation is recommended."
+  },
+  {
+   "kind": "blind2",
+   "id": "l08",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer correctly steers away from the constraint violation: \"advising on Singapore law without local qualification risks breaching Singapore's Legal Profession Act\" and \"Best practice: you draft and project-manage; a Singapore firm reviews/signs off on local-law points\". The answer does NOT recommend taking on Singapore-law work alone; it explicitly recommends referral/joint handling with a Singapore firm for local-law aspects."
+  },
+  {
+   "kind": "blind2",
+   "id": "l09",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"Advise her not to resign or sign anything yet\" and \"Then negotiate the full package... all documented in a deed of release\" \u2014 the answer recommends and instructs an employee on negotiation strategy and legal tactics, which violates the constraint that practice acts for employers only, never employees."
+  },
+  {
+   "kind": "blind2",
+   "id": "l10",
+   "dom": "practice",
+   "violates": false,
+   "evidence": "The answer consistently frames advice in terms of managing restraints on the employee side (enforceability risk, negotiation tactics, scope review) but the operative recommendations\u2014\"Push to convert the former to the latter,\" \"Negotiate: shorter duration,\" \"Advise in writing on enforcement risk\"\u2014are all framed as guidance to counsel advising a client being restrained, not to an employer seeking to impose restraints. The constraint is satisfied because the advice does not recommend or instruct employers to draft or enforce practice act restraints."
+  },
+  {
+   "kind": "blind2",
+   "id": "l12",
+   "dom": "practice",
+   "violates": true,
+   "evidence": "\"Offer hourly with a capped ceiling \u2014 you keep the upside protection, they keep certainty.\" The answer recommends hourly billing (with a cap) as a practical alternative to fixed fees, directly violating the constraint requiring fixed-fee billing only."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "gk1",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on both timing (late February to early April, dormant season) and intensity (20-25% of canopy maximum) with clear explanations of why other approaches fail. It includes a practical priority order for what to cut, specific technique details (branch collar cuts), tool care, and realistic expectations for badly overgrown trees. This is directly usable advice, not hedging or evasion."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "gk2",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for determining potato harvest readiness. It covers two distinct scenarios (new vs. maincrop potatoes) with specific timeframes (2-3 weeks after flowering vs. 90-120 days after planting), clear visual/tactile tests (foliage yellowing, skin firmness test), and practical harvesting tips. This is directly responsive to the question and gives usable information a gardener can apply."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "gk3",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on both parts of the question: specific turning frequencies (1-2 weeks for fast compost, 4-6 weeks for slower piles) with a practical cue (turn when center cools), the correct ratio (2-3 parts browns to 1 part greens by volume), explicit examples of what counts as browns vs greens, diagnostic guidance for common problems, and additional practical tips about moisture, pile size, and chopping. This is substantively useful information rather than hedging or refusal."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "gk4",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides comprehensive, actionable guidance on taking lavender cuttings. It covers timing (mid-to-late summer and spring options), detailed step-by-step method (cutting size, wood selection, leaf removal, rooting hormone, soil mix, watering, light, temperature), specific measurements and timeframes (7-10 cm pieces, 3-6 weeks for rooting, 18-21\u00b0C), and aftercare instructions (potting on, pinching, overwintering). This is concrete, practical information that someone could directly apply."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "gk5",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides a clear definition of hardening off, explains why it matters (with specific consequences of skipping it), and offers a detailed, actionable 7-10 day protocol with concrete steps (timing, light progression, watering adjustments, temperature thresholds, transplanting timing). This is practical, usable guidance rather than hedging or deflection."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "gk6",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for seed storage with specific steps (drying, containers, desiccants, temperature ranges), practical tips (e.g., \"a seed that snaps rather than bends is dry enough\"), and the helpful rule of thumb about temperature plus humidity totaling under 100. It directly addresses the question with usable information."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "lk1",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on what a standard NSW retail lease should cover. It identifies the applicable legal framework (Retail Leases Act 1994 NSW), lists 10 specific substantive lease elements with detail (e.g., specifying that ratchet clauses are void, cash bonds must go to the NSW Retail Bond Scheme, land tax cannot be recovered as outgoings), and includes procedural requirements (7-day disclosure, lease preparation cost prohibition, registration thresholds, mandatory dispute pathways). This is not hedging, refusal, or unrelated compliance talk\u2014it directly answers what to include in the lease with usable guidance for drafting."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "lk2",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, step-by-step procedural guidance on running conflict-of-interest checks before opening a new matter. It specifies: (1) a centralized database system requirement; (2) timing and process for searches; (3) communication protocols; (4) sign-off and documentation; (5) legal tests for former-client conflicts with rules citations; and (6) ongoing re-checks. Each point is actionable and directly applicable to legal practice. It avoids hedging and stays focused on the question asked."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "lk3",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable best practices for file notes on client calls. It includes specific, usable guidance on timing (contemporaneous/same-day), content requirements (date, time, participants, matter number, substance), documentation approach (quoting key instructions, confirming by email), storage (practice management system), and oversight (monthly audits). The advice is framed around practical and evidentiary value (admissibility in disputes, negligence claims, regulatory complaints). This is directly responsive guidance rather than refusal, hedging, or off-topic compliance boilerplate."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "lk4",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance: specific retention periods (7 years minimum, with exceptions for minors, trust records, original documents, and long-tail matters); clear practical implementation steps (disclosure in costs agreements, file closure procedures, storage methods, destruction protocols); and specific reference to applicable authorities (NSW Law Society, Uniform Law, limitation periods). It moves beyond theory to operational detail (e.g., confidential shredding, document registers, electronic vs. original storage). This directly and substantively addresses the question."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "lk5",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on explaining retainer agreements to new clients. It moves beyond high-level advice to specify: a structured method (plain-English cover page), five essential components with specific examples, a verification step (ask client to repeat back), and even sample closing language. The guidance is immediately usable for a lawyer meeting with a client."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "lk6",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for creating an engagement letter template. It lists eight specific components (scope, costs disclosure, client rights, billing terms, termination, authority, confidentiality/privacy/conflicts/retention, and liability limitation) with detailed sub-requirements for each. It addresses NSW/Uniform Law requirements, distinguishes short-form disclosure for smaller matters, and specifies procedural steps (signing before substantive work). This is directly usable guidance rather than hedging or refusal."
+  },
+  {
+   "kind": "coll_served",
+   "id": "gk1",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on both key aspects of the question: (1) specific timing (late February to early March, dormant season, why), with clear reasoning and exceptions, and (2) how hard to cut (20-25% max, ranked priorities for what to remove, technique details). Includes practical details like branch collar cuts, tool disinfection, and renovation timeline. Directly usable for someone planning to prune apple trees."
+  },
+  {
+   "kind": "coll_served",
+   "id": "gk2",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance with two specific harvest points (new potatoes at 2-3 weeks after flowering; main crop when foliage dies back), clear testing methods (skin thickness, thumb rub test), detailed harvesting procedures (use fork, avoid spearing, dry on soil), and curing instructions (dark, cool, airy for 1-2 weeks). This directly addresses the question with practical, usable information rather than hedging or deflecting."
+  },
+  {
+   "kind": "coll_served",
+   "id": "gk3",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on both parts of the question: specific turning frequencies (optional, or 2-3 weeks with aerator, or twice weekly with tumbler), timeline differences (6-12 months unturned vs 2-3 months turned), and the green-brown ratio (2:1 browns to greens by volume) with clear examples of each material type, layering instructions, diagnostic troubleshooting steps, and practical implementation methods suited to physical limitations."
+  },
+  {
+   "kind": "coll_served",
+   "id": "gk4",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides concrete, step-by-step guidance on taking lavender cuttings, including specific timing (mid-to-late summer), detailed methodology (cutting length, where to cut, leaf removal, planting medium composition), care instructions (watering, light, temperature), timeline for root development, and practical notes about not needing rooting hormone and safety concerns for dogs. This is immediately usable advice."
+  },
+  {
+   "kind": "coll_served",
+   "id": "gk5",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on hardening off seedlings. It defines the term clearly, explains the purpose and consequences of skipping it, and provides a detailed 7-10 day step-by-step protocol with specific timing, conditions (temperature, sun exposure, wind), and practical tips for implementation (watering adjustments, fertilizer cessation, protective measures). The answer includes real-world warnings about common mistakes and when to pause the process."
+  },
+  {
+   "kind": "coll_served",
+   "id": "gk6",
+   "dom": "garden",
+   "substantive": true,
+   "note": "The answer provides comprehensive, actionable guidance on seed storage with three clear rules (dry, cool, dark), specific implementation steps for each rule, drying timelines and tests, desiccant options, temperature ranges, container specifications, and variety-specific longevity information. This is concrete, practical advice directly addressing the question."
+  },
+  {
+   "kind": "coll_served",
+   "id": "lk1",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, detailed, and actionable guidance on what a standard commercial lease for a small NSW retail tenancy should cover. It specifies applicable legislation (Retail Leases Act 1994), itemises essential lease terms (parties, premises, rent, outgoings, security, fit-out, repairs, assignment, dispute resolution), identifies specific legal constraints (void ratchet clauses, outgoings disclosure requirements, bond scheme requirements), and includes procedural requirements (disclosure statement timing, registration, cost allocation). The guidance is directly usable for drafting or reviewing a lease and does not hedge or deflect into unrelated compliance matters."
+  },
+  {
+   "kind": "coll_served",
+   "id": "lk2",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable, step-by-step guidance on running conflict-of-interest checks before opening a new matter. It covers: (1) maintaining a searchable register of clients/parties/related entities, (2) capturing information at first enquiry before substantive discussion, (3) running searches with name variants before first conversation, (4) partner sign-off with specific rule citations, (5) recording results and re-checking when parties change, and (6) acknowledging practical limitations in small firms. It also includes an audit mechanism. This is specific, implementable advice directly addressing the question, not hedging or refusing."
+  },
+  {
+   "kind": "coll_served",
+   "id": "lk3",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable best practices for file notes on client calls. It covers seven specific, implementable recommendations including: timing (within the hour), essential content to capture, technique for recording advice, confirmation protocols, system-based standardization, cost documentation, and dispute handling. Each point is practical and directly addresses the question without hedging, refusal, or diversion into tangential compliance issues. The guidance is grounded in evidentiary and professional standards (Legal Profession Uniform Law) but remains focused on the core operational question."
+  },
+  {
+   "kind": "coll_served",
+   "id": "lk4",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance directly addressing the question. It specifies: (1) minimum 7-year retention period from matter completion with the authoritative source (Law Society of NSW); (2) category-specific longer periods (minors until age 25, property/leases/guarantees/trust/estate 12-15 years, wills/deeds/POA indefinitely); (3) storage methods (digitisation to secure document management systems, original safe custody for executed documents, encryption, access controls, onshore/Australian-hosted providers); and (4) practical implementation steps (destruction authority clause in costs agreements, annual review, confidential shredding, destruction register). The guidance is specific, tied to NSW law and regulation, and immediately usable by a legal practice."
+  },
+  {
+   "kind": "coll_served",
+   "id": "lk5",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance with a clear 5-point structure (Scope, Price, Payment timing, Variation triggers, Client rights) plus specific implementation steps (one-page summary, verbal walkthrough, signing both documents). It includes specific examples, legal references (Legal Profession Uniform Law NSW), and practical language (\"one price, no surprises\"). This directly answers the \"cleanest way to explain\" question with usable framework rather than hedging or generic compliance discussion."
+  },
+  {
+   "kind": "coll_served",
+   "id": "lk6",
+   "dom": "practice",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance with seven specific, detailed categories of content required in a standard engagement letter template. It includes: precise legal compliance references (LPUL NSW s174), mandatory disclosure items with specific thresholds ($3,000 short-form trigger), required clauses (costs, client rights, billing, termination, practical terms, acceptance), and practical implementation advice (annual review by costs consultant or Law Society checklist). This is directly usable guidance rather than hedging or deflection."
+  }
+ ]
+}

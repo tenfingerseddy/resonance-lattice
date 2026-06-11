@@ -1,0 +1,127 @@
+{
+  "sessions": [
+    {
+      "id": "s01", "domain": "software",
+      "text": "Can you help me plan the semantic model refresh schedule? Context first: our capacity is an F8 and that's fixed for the year, no budget for more. Also remember we're EU-only for data residency - nothing leaves the EU, that's compliance, not preference. I'm only a Viewer on this workspace myself so a colleague will deploy. Oh interesting - the diagnostics page just showed the gateway is on 3002.190. Anyway, right now the nightly refresh is failing, that's tonight's problem.",
+      "ground_truth": [
+        {"fact": "capacity is fixed at F8", "terms": ["f8"]},
+        {"fact": "tenant is EU-only for data residency", "terms": ["eu"]}
+      ],
+      "traps": [
+        {"class": "person", "text": "user is only a Viewer", "terms": ["viewer"]},
+        {"class": "discovered", "text": "gateway version seen this session", "terms": ["3002"]},
+        {"class": "transient", "text": "nightly refresh failing now", "terms": ["nightly"]}
+      ]
+    },
+    {
+      "id": "s02", "domain": "software",
+      "text": "Next question is about deployment pipelines. Standing rule here: all automation authenticates as a service principal, no user-delegated flows, our security team is firm on that. The prod workspace is named WS-FIN-PROD if you need to reference it. You suggested Fabric SQL DB last time but let's park that. If we ever upgrade to F64 we might revisit the big options. Also FYI I usually work from the Brisbane office on Tuesdays so meetings are awkward then.",
+      "ground_truth": [
+        {"fact": "automation is service-principal only", "terms": ["service principal"]},
+        {"fact": "prod workspace is WS-FIN-PROD", "terms": ["ws-fin-prod"]}
+      ],
+      "traps": [
+        {"class": "quoted_assistant", "text": "assistant suggested Fabric SQL DB", "terms": ["fabric sql"]},
+        {"class": "hypothetical", "text": "possible F64 upgrade", "terms": ["f64"]},
+        {"class": "person", "text": "user works from Brisbane on Tuesdays", "terms": ["brisbane"]}
+      ]
+    },
+    {
+      "id": "s03", "domain": "software",
+      "text": "Let's fix the build matrix. For context this project pins Python 3.11 as the minimum, that's settled. And the CI runs on both Ubuntu and Windows for every push - both must stay green. Huh, pip just resolved numpy 2.3.1 in that log, newer than I expected. The encoder cache is corrupted at the moment which is why tests are slow today. Keep explanations simple please, I'm not an ML engineer.",
+      "ground_truth": [
+        {"fact": "Python 3.11 is the minimum", "terms": ["3.11"]},
+        {"fact": "CI runs on Ubuntu and Windows", "terms": ["ubuntu", "windows"]}
+      ],
+      "traps": [
+        {"class": "discovered", "text": "numpy version seen this session", "terms": ["numpy"]},
+        {"class": "transient", "text": "encoder cache corrupted right now", "terms": ["corrupt"]},
+        {"class": "person", "text": "user is not an ML engineer", "terms": ["ml engineer"]}
+      ]
+    },
+    {
+      "id": "s04", "domain": "software",
+      "text": "We need a plan for the enrichment feature. Hard context: we're on the air-gapped tenant - no public internet calls from anything, ever, that's the whole point of the environment. Also every report has to use the corporate theme palette, company policy. The Microsoft docs say UDFs cap out around a 200MB payload so plan chunking accordingly. My laptop only has 16GB so I avoid running local Spark myself.",
+      "ground_truth": [
+        {"fact": "the tenant is air-gapped, no external calls", "terms": ["air-gapped"]},
+        {"fact": "reports must use the corporate theme palette", "terms": ["palette"]}
+      ],
+      "traps": [
+        {"class": "corpus_fact", "text": "docs say UDF payload cap 200MB", "terms": ["200"]},
+        {"class": "person", "text": "user's laptop has 16GB", "terms": ["16gb", "laptop"]}
+      ]
+    },
+    {
+      "id": "s05", "domain": "garden",
+      "text": "I want a plan for the spring beds. Two things about this garden before you start: it's strictly organic, we never spray anything synthetic, and we're on permanent water restrictions out here so nothing thirsty. The hose timer is broken at the moment so ignore irrigation timing for now. I just noticed the soil pH tester reads 6.2 today, first time I've checked it.",
+      "ground_truth": [
+        {"fact": "the garden is strictly organic", "terms": ["organic"]},
+        {"fact": "permanent water restrictions apply", "terms": ["water restriction"]}
+      ],
+      "traps": [
+        {"class": "transient", "text": "hose timer broken now", "terms": ["timer"]},
+        {"class": "discovered", "text": "pH reading taken this session", "terms": ["6.2"]}
+      ]
+    },
+    {
+      "id": "s06", "domain": "garden",
+      "text": "Help me pick some new shrubs. The dogs have free run of the garden so everything has to be dog-safe, no exceptions. We also only plant natives - it's a firm rule for the whole plot, my partner insists. You recommended neem oil before for the aphids, that's on the list. If we ever put in a greenhouse the choices would open right up but that's a someday thing.",
+      "ground_truth": [
+        {"fact": "dogs roam, plants must be dog-safe", "terms": ["dog"]},
+        {"fact": "natives-only planting rule", "terms": ["native"]}
+      ],
+      "traps": [
+        {"class": "quoted_assistant", "text": "assistant recommended neem oil", "terms": ["neem"]},
+        {"class": "hypothetical", "text": "possible future greenhouse", "terms": ["greenhouse"]}
+      ]
+    },
+    {
+      "id": "s07", "domain": "garden",
+      "text": "What should I do about the back border? Relevant facts: the soil here is heavy clay across the whole block, and we're in zone 8b. The compost heap is far too wet right now after all that rain so it's out of action this week. I prefer pottering in the morning before work, if timing matters for any of this.",
+      "ground_truth": [
+        {"fact": "soil is heavy clay across the block", "terms": ["clay"]},
+        {"fact": "the garden is in zone 8b", "terms": ["8b"]}
+      ],
+      "traps": [
+        {"class": "transient", "text": "compost too wet right now", "terms": ["compost"]},
+        {"class": "person", "text": "user prefers gardening in the morning", "terms": ["morning"]}
+      ]
+    },
+    {
+      "id": "s08", "domain": "legal",
+      "text": "I need to think through our intake process. For context: the practice only takes NSW matters, everything else is referred out, no exceptions. And we bill fixed-fee only, never hourly - it's our whole positioning. I'm the junior partner here so the final call isn't mine alone. Our practice management system is down this morning which is why I can't pull the numbers.",
+      "ground_truth": [
+        {"fact": "the practice takes NSW matters only", "terms": ["nsw"]},
+        {"fact": "billing is fixed-fee only", "terms": ["fixed"]}
+      ],
+      "traps": [
+        {"class": "person", "text": "user is the junior partner", "terms": ["junior"]},
+        {"class": "transient", "text": "practice management system down this morning", "terms": ["management system"]}
+      ]
+    },
+    {
+      "id": "s09", "domain": "legal",
+      "text": "Draft me a referral letter template. Background that matters: we don't touch family law, ever - straight referral, and in employment matters we act for employers only. You mentioned a precedent database last time, we still haven't bought it. If we opened a Melbourne office one day the jurisdiction question would change, but that's years away if ever.",
+      "ground_truth": [
+        {"fact": "the practice does not handle family law", "terms": ["family law"]},
+        {"fact": "employment matters: employers only", "terms": ["employer"]}
+      ],
+      "traps": [
+        {"class": "quoted_assistant", "text": "assistant mentioned a precedent database", "terms": ["precedent"]},
+        {"class": "hypothetical", "text": "possible Melbourne office", "terms": ["melbourne"]}
+      ]
+    },
+    {
+      "id": "s10", "domain": "legal",
+      "text": "Let's plan the quarter. Standing fact: we do transactional work only - any dispute goes straight out to litigation counsel, we never run them ourselves. I see the trust account reconciliation just flagged two entries, I'll deal with that separately. The Law Society guide says closed files must be kept seven years, so storage is what it is. I take Fridays off, so schedule nothing then for me personally.",
+      "ground_truth": [
+        {"fact": "transactional work only, disputes referred out", "terms": ["transactional"]}
+      ],
+      "traps": [
+        {"class": "discovered", "text": "reconciliation flag seen this session", "terms": ["reconcil"]},
+        {"class": "corpus_fact", "text": "Law Society file retention guidance", "terms": ["seven year", "7 year"]},
+        {"class": "person", "text": "user takes Fridays off", "terms": ["friday"]}
+      ]
+    }
+  ]
+}

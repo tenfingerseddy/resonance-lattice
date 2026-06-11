@@ -36,13 +36,27 @@ without `time.sleep`).
 
 from __future__ import annotations
 
+import datetime
 import sys
 import tempfile
 from pathlib import Path
 
+
+def _days_ago_iso(days: int) -> str:
+    """An ISO `last_corroborated_at` `days` before now — relative so the
+    fixture never crosses the gc age horizon as wall-clock advances (a
+    hardcoded date here is a time-bomb)."""
+    return (
+        datetime.datetime.now(datetime.timezone.utc)
+        - datetime.timedelta(days=days)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 import numpy as np
 
 from ._testutil import patch_zero_encoder, run_cli
+
+
+_SEED_COUNTER = [0]
 
 
 def _seed_row(memory, *, text: str, primary: str = "factual",
@@ -51,35 +65,42 @@ def _seed_row(memory, *, text: str, primary: str = "factual",
               last_corroborated_at: str | None = None,
               is_bad: bool = False,
               transcript_hash: str = "manual") -> str:
-    """Add one row, then update its mutable fields to the specified
-    state. Used by every D.4 case to plant rows at hand-picked age +
-    recurrence + is_bad configurations.
+    """Build one experience `Claim` at a hand-picked age + recurrence +
+    is_bad configuration and write it. Used by every D.4 case.
+
+    `created_at` is set directly at construction — it's immutable on
+    `claim.evolve`, so there is no post-write mutation to fast-forward
+    the clock (the old sidecar-rewrite hack is gone).
     """
-    row_id = memory.add_row(
-        text=text,
-        polarity=[primary, "workspace:abc123"],
-        transcript_hash=transcript_hash,
-        embedding=np.zeros(768, dtype=np.float32),
+    from resonance_lattice.memory.store import seed_tallies_for_rung
+    from resonance_lattice.state.claim import Claim, ExperienceFacts, derive_origin
+
+    _SEED_COUNTER[0] += 1
+    corr, fals = seed_tallies_for_rung("low" if is_bad else "medium")
+    claim = Claim(
+        claim_id=f"01HZRETENTIONFIXTURE{_SEED_COUNTER[0]:06d}",
+        source="experience",
+        kind="event",
+        content=text,
+        created_at=created_at,
+        corroboration=corr,
+        falsification=fals,
+        trust_as_of="",
+        state="active",
+        parent_ids=(),
+        facts=ExperienceFacts(
+            polarity=(primary, "workspace:abc123"),
+            recurrence_count=recurrence,
+            criticality="normal",
+            created_under_intent_kind="none",
+            transcript_hash=transcript_hash,
+            origin=derive_origin(transcript_hash),
+            last_corroborated_at=last_corroborated_at or created_at,
+            is_bad=is_bad,
+        ),
     )
-    fields: dict = {
-        "recurrence_count": recurrence,
-        "is_bad": is_bad,
-        "last_corroborated_at": last_corroborated_at or created_at,
-    }
-    memory.update_row(row_id, **fields)
-    # `created_at` is immutable on `update_row`; rewrite via direct
-    # sidecar mutation since the test needs to fast-forward the clock.
-    import json as _json
-    sidecar = memory.root / "sidecar.jsonl"
-    lines = sidecar.read_text(encoding="utf-8").splitlines()
-    out: list[str] = []
-    for line in lines:
-        obj = _json.loads(line)
-        if obj["row_id"] == row_id:
-            obj["created_at"] = created_at
-        out.append(_json.dumps(obj, sort_keys=True))
-    sidecar.write_text("\n".join(out), encoding="utf-8")
-    return row_id
+    memory.write(claim, embedding=np.zeros(768, dtype=np.float32))
+    return claim.claim_id
 
 
 # ---------------------------------------------------------------------------
@@ -89,35 +110,41 @@ def _seed_row(memory, *, text: str, primary: str = "factual",
 
 def _check_recurrence_gate() -> int:
     from resonance_lattice.memory._common import workspace_hash
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
     from resonance_lattice.memory.recall import recall
-    from resonance_lattice.memory.store import Memory
     from ._testutil import FixedEncoder
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "u"
         query_vec = np.zeros(768, dtype=np.float32)
         query_vec[0] = 1.0
-        memory = Memory(root=root, encoder=FixedEncoder(query_vec))
+        memory = ExperienceClaimStore(root=root, encoder=FixedEncoder(query_vec))
 
-        # Two rows with cosine well above floor + adequate gap; one with
-        # recurrence below M, one above. Only the high-recurrence row
+        # Two claims with cosine well above floor + adequate gap; one with
+        # recurrence below M, one above. Only the high-recurrence claim
         # should survive the §0.6 gates.
         for i, recurrence in enumerate([1, 5]):
             emb = np.zeros(768, dtype=np.float32)
             emb[0] = 0.9 - 0.1 * i  # cosines: 0.9, 0.8 → gap ≥ 0.05
             emb[1] = float(np.sqrt(max(0.0, 1.0 - emb[0] * emb[0])))
-            row_id = memory.add_row(
-                text=f"row {i} recurrence={recurrence}",
-                polarity=["factual", "workspace:abc123"],
-                transcript_hash=f"manual-{i}",
-                embedding=emb,
+            _seed_row(
+                memory, text=f"row {i} recurrence={recurrence}",
+                recurrence=recurrence, transcript_hash=f"manual-{i}",
             )
-            memory.update_row(row_id, recurrence_count=recurrence)
+        # Re-write the band vectors so the planted cosines hold — the
+        # _seed_row default embedding is a zero vector.
+        claims = memory.read_all()
+        embs = np.zeros((2, 768), dtype=np.float32)
+        for i in range(2):
+            embs[i, 0] = 0.9 - 0.1 * i
+            embs[i, 1] = float(np.sqrt(max(0.0, 1.0 - embs[i, 0] ** 2)))
+        memory.write_many(claims, embeddings=embs)
 
         hits = recall("anything", store=memory, cwd_hash="abc123", top_k=10)
-    if len(hits) != 1 or hits[0].row.recurrence_count != 5:
+    if len(hits) != 1 or hits[0].claim.facts.recurrence_count != 5:
         print(f"[memory_v21_retention] FAIL (a): expected 1 hit with "
-              f"recurrence=5; got {[(h.row.recurrence_count, h.cosine) for h in hits]}",
+              f"recurrence=5; got "
+              f"{[(h.claim.facts.recurrence_count, h.cosine) for h in hits]}",
               file=sys.stderr)
         return 1
     print("[memory_v21_retention] (a) §0.6 recurrence gate drops below-M "
@@ -131,20 +158,21 @@ def _check_recurrence_gate() -> int:
 
 
 def _check_gc_max_age() -> int:
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     with tempfile.TemporaryDirectory() as td:
         base = Path(td) / "base"
-        memory = Memory(root=base / "u")
+        memory = ExperienceClaimStore(root=base / "u", encoder=None)
         old_id = _seed_row(
             memory, text="stale row",
             created_at="2025-01-01T00:00:00Z",
             last_corroborated_at="2025-01-01T00:00:00Z",
         )
+        recent = _days_ago_iso(5)
         recent_id = _seed_row(
             memory, text="recent row",
-            created_at="2026-05-01T00:00:00Z",
-            last_corroborated_at="2026-05-01T00:00:00Z",
+            created_at=recent,
+            last_corroborated_at=recent,
         )
 
         rc, out, err = run_cli([
@@ -155,8 +183,8 @@ def _check_gc_max_age() -> int:
             print(f"[memory_v21_retention] FAIL (b): gc rc={rc}\n"
                   f"out:{out}\nerr:{err}", file=sys.stderr)
             return 1
-        rows, _ = memory.read_all()
-        ids_left = {r.row_id for r in rows}
+        claims = memory.read_all()
+        ids_left = {c.claim_id for c in claims}
     if old_id in ids_left:
         print(f"[memory_v21_retention] FAIL (b): old row {old_id} should "
               f"have been deleted by --max-age-days 30", file=sys.stderr)
@@ -176,11 +204,11 @@ def _check_gc_max_age() -> int:
 
 
 def _check_gc_isbad_preservation() -> int:
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     with tempfile.TemporaryDirectory() as td:
         base = Path(td) / "base"
-        memory = Memory(root=base / "u")
+        memory = ExperienceClaimStore(root=base / "u", encoder=None)
         # Both rows are old + low-recurrence + same polarity, but one
         # is_bad. A `--max-age-days 30 --polarity factual` sweep should
         # delete the not-bad row and PRESERVE the is_bad row.
@@ -203,8 +231,8 @@ def _check_gc_isbad_preservation() -> int:
             print(f"[memory_v21_retention] FAIL (c): default gc rc={rc}\n"
                   f"out:{out}\nerr:{err}", file=sys.stderr)
             return 1
-        rows, _ = memory.read_all()
-        ids_after_default = {r.row_id for r in rows}
+        claims = memory.read_all()
+        ids_after_default = {c.claim_id for c in claims}
         if bad_id not in ids_after_default:
             print(f"[memory_v21_retention] FAIL (c): default gc removed "
                   f"is_bad row {bad_id}; bad rows must be preserved unless "
@@ -224,8 +252,8 @@ def _check_gc_isbad_preservation() -> int:
             print(f"[memory_v21_retention] FAIL (c): --is-bad gc rc={rc}\n"
                   f"out:{out}\nerr:{err}", file=sys.stderr)
             return 1
-        rows, _ = memory.read_all()
-        ids_after_isbad = {r.row_id for r in rows}
+        claims = memory.read_all()
+        ids_after_isbad = {c.claim_id for c in claims}
         if bad_id in ids_after_isbad:
             print(f"[memory_v21_retention] FAIL (c): --is-bad gc failed to "
                   f"remove is_bad row {bad_id}", file=sys.stderr)
@@ -241,11 +269,11 @@ def _check_gc_isbad_preservation() -> int:
 
 
 def _check_gc_corroboration_resets_clock() -> int:
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     with tempfile.TemporaryDirectory() as td:
         base = Path(td) / "base"
-        memory = Memory(root=base / "u")
+        memory = ExperienceClaimStore(root=base / "u", encoder=None)
         # Created long ago BUT corroborated yesterday — gc must not
         # remove this row even though `created_at` is well past the
         # horizon. The clock is `last_corroborated_at` per §15.2.
@@ -253,7 +281,7 @@ def _check_gc_corroboration_resets_clock() -> int:
             memory, text="old but recently corroborated",
             recurrence=4,
             created_at="2025-01-01T00:00:00Z",
-            last_corroborated_at="2026-05-01T00:00:00Z",
+            last_corroborated_at=_days_ago_iso(5),
         )
 
         rc, _, _ = run_cli([
@@ -263,8 +291,8 @@ def _check_gc_corroboration_resets_clock() -> int:
         if rc != 0:
             print(f"[memory_v21_retention] FAIL (d): gc rc={rc}", file=sys.stderr)
             return 1
-        rows, _ = memory.read_all()
-        if kept_id not in {r.row_id for r in rows}:
+        claims = memory.read_all()
+        if kept_id not in {c.claim_id for c in claims}:
             print(f"[memory_v21_retention] FAIL (d): row {kept_id} with "
                   f"recent last_corroborated_at was deleted by --max-age-days; "
                   f"corroboration must reset the clock", file=sys.stderr)

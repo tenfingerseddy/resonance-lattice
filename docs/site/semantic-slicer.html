@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A slicer that filters by meaning, not by value — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="tagline">Resonance Lattice · Write-up</div>
+  <h1>A slicer that filters by meaning, not by value</h1>
+
+  <p>
+    Every slicer you've ever built in Power BI filters on a value. You pick a
+    region, a category, a date range. The slicer is bound to a column, and it
+    can only ever hand you back what is literally sitting in that column. Most
+    of the time that's exactly what you want.
+  </p>
+  <p>
+    But think about what you can't do. You can't type <em>"somewhere peaceful
+    and quiet, away from the traffic"</em> and have the model answer. You
+    can't filter by what something <strong>means</strong>. The semantic model
+    is brilliant at maths over structured data, but it has no idea what your
+    words mean, and DAX was never going to give it that.
+  </p>
+  <p>
+    Fabric Data Apps change this. In my opinion it's one of the more
+    interesting things they unlock — something you genuinely couldn't do over
+    a semantic model in Power BI before.
+  </p>
+  <p>
+    To illustrate, I built a thing I've been calling a semantic slicer. The
+    data is the Inside Airbnb dump for London — around 96,000 listings, each
+    with a free-text description the host wrote. The average price across the
+    lot is about £230 a night. It's a standard star schema with standard
+    measures: average price, average rating, listing count.
+  </p>
+  <p>
+    Now the trick. Instead of a dropdown, there's a search box. You type what
+    you're after in plain language, and the <em>entire model</em> recomputes
+    over the listings that match your meaning.
+  </p>
+  <ul>
+    <li>Type <strong>"luxury high-end upscale apartment"</strong> and the
+      average price jumps to £289 — up 26%.</li>
+    <li>Type <strong>"budget-friendly, basic, no frills"</strong> and it drops
+      to £156 — down 32%.</li>
+    <li>Type <strong>"peaceful and quiet, away from traffic noise"</strong>
+      and it falls to £103 — less than half the average.</li>
+  </ul>
+  <p>
+    The thing that got me most excited is that the model never changed. It's
+    the same clean star schema you'd build for any report. The
+    meaning-matching happens outside the model, and the result is fed back in.
+  </p>
+  <p>
+    Here's the shape of it. Each description is turned into a vector — a list
+    of numbers that captures meaning, so "tranquil" and "away from the bustle"
+    sit close to "quiet" even though they share no words. When you type a
+    query it's turned into a vector too, and you find the listings whose
+    vectors are nearest. That gives you a set of listing IDs.
+  </p>
+  <p>
+    Then the part you already know: <code>TREATAS</code>. You take that set of
+    IDs and inject it as filter context —
+    <code>TREATAS({the matched ids}, 'Listings'[id])</code>, no relationship
+    required — and every measure recomputes over just those rows. The semantic
+    search owns the selection; the model owns the numbers.
+  </p>
+  <p>
+    And because the matched text comes back with the result, you can show the
+    receipt — the listing's own words that explain <em>why</em> it matched.
+    Search "peaceful" and you'll see descriptions like <em>"a quiet haven away
+    from the city"</em> and <em>"peaceful environment away from busy
+    roads"</em>, including plenty that never use the word "quiet" at all.
+    That's the difference between this and a keyword filter, and it's the part
+    that makes people lean in.
+  </p>
+
+  <section id="why-rlat">
+    <h2>Why an rlat and not vectors in SQL</h2>
+    <p>
+      You can build the vector half of this in Fabric directly. Fabric SQL
+      Database has <code>VECTOR_DISTANCE</code> now — store the embeddings in
+      a <code>VECTOR</code> column, rank by distance, return the keys. It
+      works, and I prototyped it that way first.
+    </p>
+    <p>
+      I ended up doing it differently. The vectors, the text and the keys all
+      live in a single file — an <code>.rlat</code> knowledge model, from a
+      project I've been building — that a User Data Function reads. A few
+      reasons I preferred it:
+    </p>
+    <ul>
+      <li><strong>It's one self-contained thing.</strong> No SQL Database to
+        provision, no vector column to load, no second copy of the data to
+        keep in sync with the model. One file in OneLake.</li>
+      <li><strong>It carries the words.</strong> The matched descriptions come
+        back alongside the keys, so the "why it matched" receipt is free. With
+        a bare vector column you'd be joining back for the text.</li>
+      <li><strong>Nothing's running when nobody's asking.</strong> There's no
+        database sitting there to bill or pause — the function reads the file
+        on demand and answers a warm query in under a second.</li>
+    </ul>
+    <p>
+      None of that makes the SQL approach wrong. If your vectors already live
+      in SQL it's a perfectly good path — it just wasn't the lightest one for
+      me.
+    </p>
+  </section>
+
+  <section id="honest-boundary">
+    <h2>The honest boundary</h2>
+    <p>
+      A fair warning, because I think the honest boundary always matters: this
+      is a <em>suggester</em>, not a hard filter. It gives you a ranked soft
+      set, not an exact answer. If you need "2 bedrooms under £150", a normal
+      column filter is the right tool and always will be. Semantic search
+      earns its keep when the thing you want to filter on lives in prose, not
+      in a column.
+    </p>
+    <p>
+      It's also early — Data Apps are in preview and there are rough edges.
+      But the capability underneath is real, and it's new. For years I've
+      described good Power BI work as building a tool, not a report — reports
+      are for viewing, tools are for using. A slicer you can talk to in plain
+      English is about the most tool-like thing I've ever put in front of a
+      semantic model, and the reaction when I show it is the one I always
+      chase: people can't quite believe it's doing what it's doing.
+    </p>
+    <p>
+      Give it a go. The moment a slicer stops being a list and starts being a
+      sentence, you start seeing uses for it everywhere.
+    </p>
+  </section>
+
+</main>
+
+</body>
+</html>

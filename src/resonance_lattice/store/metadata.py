@@ -28,20 +28,15 @@ class BackboneInfo:
     max_seq_length: int = 8192
 
 
-BandRole = Literal["retrieval_default", "in_corpus_retrieval", "insight_layer"]
+BandRole = Literal["retrieval_default", "insight_layer"]
 
 
 @dataclass
 class BandInfo:
     role: BandRole
-    dim: int                        # 768 for base, 512 for optimised
+    dim: int                        # 768 for the base band
     l2_norm: bool = True
     passage_count: int = 0
-    # Optimised-only:
-    dim_native: int | None = None
-    w_shape: tuple[int, int] | None = None
-    nested_mrl_dims: list[int] | None = None
-    trained_from: str | None = None
     # Unknown per-band keys captured by `from_json` for round-trip preservation
     # (forward-compat: future band slots like quantisation / lexical metadata
     # that older readers shouldn't drop or fail on). Not part of the public
@@ -62,6 +57,12 @@ class Metadata:
     build_config: dict[str, Any] = field(default_factory=dict)
     created_utc: str = ""
     rlat_version: str = "2.0.0a1"
+    # Last-success timestamp of the insight-layer reverification pass —
+    # the freshness heartbeat surfaced by `rlat profile` so users can
+    # see how long since the corpus's earned insights were last
+    # re-checked against current sources. Empty until the first
+    # `rlat reverify` pass writes through.
+    insight_layer_last_reverify_utc: str = ""
     # Unknown top-level keys captured by `from_json` for round-trip preservation
     # (forward-compat for newer rlat versions). Not part of the public schema.
     _extras: dict[str, Any] = field(default_factory=dict)
@@ -70,11 +71,11 @@ class Metadata:
 _KNOWN_TOP_LEVEL = frozenset({
     "format_version", "kind", "backbone", "bands", "store_mode",
     "ann", "build_config", "created_utc", "rlat_version",
+    "insight_layer_last_reverify_utc",
 })
 
 _KNOWN_BAND_KEYS = frozenset({
     "role", "dim", "l2_norm", "passage_count",
-    "dim_native", "w_shape", "nested_mrl_dims", "trained_from",
 })
 
 
@@ -82,11 +83,9 @@ def to_json(meta: Metadata) -> str:
     """Serialise to a stable, human-readable JSON string.
 
     `sort_keys=True` keeps diffs reviewable across rebuilds; `indent=2` is the
-    on-disk format inside the .rlat ZIP. Tuples (w_shape) serialise as JSON
-    arrays via dataclasses.asdict + the default JSONEncoder. Unknown keys
-    captured by `from_json` under `_extras` (top-level and per-band) are
-    merged back at their respective levels so a future-format file round-trips
-    without losing data.
+    on-disk format inside the .rlat ZIP. Unknown keys captured by `from_json`
+    under `_extras` (top-level and per-band) are merged back at their
+    respective levels so a future-format file round-trips without losing data.
     """
     payload = asdict(meta)
     extras = payload.pop("_extras", None) or {}
@@ -117,10 +116,6 @@ def from_json(text: str) -> Metadata:
     for name, b_raw in bands_raw.items():
         b_known = {k: v for k, v in b_raw.items() if k in _KNOWN_BAND_KEYS}
         b_extras = {k: v for k, v in b_raw.items() if k not in _KNOWN_BAND_KEYS}
-        # JSON arrays come back as lists; restore the tuple invariant for
-        # w_shape so callers can rely on its shape contract.
-        if b_known.get("w_shape") is not None:
-            b_known["w_shape"] = tuple(b_known["w_shape"])
         bands[name] = BandInfo(**b_known, _extras=b_extras)
 
     extras = {k: v for k, v in raw.items() if k not in _KNOWN_TOP_LEVEL}
@@ -135,5 +130,8 @@ def from_json(text: str) -> Metadata:
         build_config=raw.get("build_config", {}) or {},
         created_utc=raw.get("created_utc", ""),
         rlat_version=raw.get("rlat_version", "2.0.0a1"),
+        insight_layer_last_reverify_utc=raw.get(
+            "insight_layer_last_reverify_utc", ""
+        ),
         _extras=extras,
     )

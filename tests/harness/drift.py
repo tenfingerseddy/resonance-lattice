@@ -14,4 +14,4 @@ import sys
 def run() -> int:
     print("[drift] SKIP — drift fixture + mutation harness not built",
           file=sys.stderr)
-    return 0
+    return 2  # harness SKIP sentinel — runner reports as skipped, not passed

@@ -3,7 +3,59 @@
 All notable changes to Resonance Lattice. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.0] — 2026-06-12
+
+**A knowledge model that knows its own world.** One portable `.rlat` carries the corpus, what's been learned about the world that corpus covers — stable facts, standing constraints, what was tried and failed — and the receipts for all of it. The three content classes are serve-proven on pre-registered benchmarks (constraints: violations 62% → 7%, generalised to a garden and a law practice; falsified findings: 0/7 repeat recommendations vs 6/7 on a topical control), capture is validated behind a privacy gate (precision 0.86, recall 1.00, zero person-fact leaks), and the honest boundary is published with the same prominence: automatic suppression of disproven facts was tested three ways and falsified — corrections stay explicit. Every claim links its design, verdict, and raw run artifacts under `benchmarks/` ("no claim without a public receipt").
+
+Last published build was `2.1.0a13`; this entry also covers the a14–a20 pre-release work.
+
+### Added — the world-knowledge layer (three content classes: capture → review → serve)
+
+- **`constraint` claim kind + `negation` (tried-and-falsified) adopted** alongside `attribute` world facts — the three serve-proven content classes, all living in the archive's insight band with full provenance.
+- **Explicit capture**: `rlat capture-attribute <km> "..." --kind attribute|constraint|falsified [--attribute-key K] [--criticality ...]` (the falsified convention: evidence pointer in the text); `rlat capture-env <km>` auto-probes machine-readable environment attributes — zero confabulation, a read value can't be invented.
+- **Passive capture, opt-in**: `rlat memory install-hooks [--user|--project-dir] [--mine]` wires the session hooks idempotently (foreign hooks preserved); `--mine` sets `RLAT_MINE_ATTRIBUTES=1`, turning on the 4-gate world-fact miner over what *you* said in a session. GATE 4 drops facts about the person — only facts true of the shared world land (validated: precision 0.86, recall 1.00, 0 person-fact leaks across every trap; `benchmarks/attribute_gate_e2c/`). Fails open without an LLM key. A visible receipt prints per session: `[rlat] Learned N world fact(s) into <km> (review: rlat lens / rlat profile)`.
+- **Serve-all standing constraints + falsified findings** — no cosine floor, no top-k (the measured zero-over-blocking design, `benchmarks/constraint_band/`): served into agent-session injection and `rlat search --format context` with the measured kind framings ("Standing constraints for this environment:" / "Tried and falsified in this environment:", `store/serve_framing.py`).
+- **World claims visible to `rlat search`** — experience-band claims render as `[INSIGHT]` hits in text/json/context output; a superseded keyed value (newest-wins per subject, per kind) never serves through any path, while older values stay on disk.
+- **`rlat lens`** — `create | show | compose | set-trust`: the portable per-person perspective + the review surface over landed claims.
+
+### Added — `rlat grow` (opt-in corpus self-improvement pass)
+
+- **`rlat grow <km> [--max-fills N] [--dry-run]`** — fills the most-demanded, worst-covered gaps from the archive's own telemetry: demand-ranked gap selection, LLM-authored grounded fills, landing gated by faithfulness + compression + regression checks. Needs an API key; `--dry-run` is free.
+
+### Added — per-user memory + session hooks (the experience loop)
+
+- **Flat `ExperienceClaimStore`** — per-user, polarity-tagged, confidence-graded claims (no tier hierarchy); capture / recall / distil / confidence / forget / redactor, with privacy scrubbing and an append-only audit log.
+- **Recall daemon + prompt injection** — a per-user daemon ranks the store and the workspace's corpus insight band on every prompt (`UserPromptSubmit` hook): experience lessons inject as `<rlat-memory>`, world facts and constraints as `<rlat-context>` blocks, all delimiter-spoof-safe and budgeted; `SessionEnd` captures the transcript. Fail-open everywhere — a daemon failure never blocks the prompt.
+- **Intent + workspace state** (`rlat intent`, `rlat workspace`, `rlat expertise`) — outcome attribution moves claim confidence from real task outcomes; `rlat trace` / `rlat audit` expose the trail; `rlat reverify` re-checks stale claims; `rlat consolidate-insights` re-derives confidence idempotently.
+
+### Added — row-mode knowledge models (semantic slicing for tabular worlds)
+
+- **Row-mode builds** — one passage per business row with the caller's key pinned as passage identity (`key` carried on verified hits and the Fabric UDF surface), powering the rlat-native semantic-slicer Data App for Microsoft Fabric (`fabric/slicer/`): semantic slice → business keys + snippet receipts, OOM-safe streaming over OneLake, no SQL database required.
+
+### Removed — experimental RQL ops
+
+- The experimental `contradictions` / `audit` RQL ops are removed (2026-06) — superseded by the shipped corpus self-audit (`store/self_audit.py`) and the no-key skills. The curated 12-op suite (Foundation / Comparison / Composition / Evidence) stands.
+
+### Changed — release engineering
+
+- CLI surface is now **28 commands** (see the [CLI reference](https://tenfingerseddy.github.io/resonance-lattice/cli.html)).
+- The v3 world-knowledge evidence dirs (`benchmarks/constraint_band*`, `falsification_ledger`, `attribute_gate_e2c`, `r4_continuous_credit`) ship in the public repo so every doc claim's receipt link resolves publicly — including the R4 honest-failure record.
+- `tests/harness/cli_smoke.py` K6 enforces pyproject ↔ `__version__` parity (pyproject is the source of truth).
+
+### Added — corpus self-audit + external-fact freshness (the insight-band loop)
+
+A `.rlat` now **audits its own shape** and can **grow from outside facts**, all self-contained and (via the skills) with no API key.
+
+- **Corpus self-audit, stored in the archive.** Every `build`/`refresh` computes an LLM-free shape report (`insight/self_audit.json`): **demand gaps** (under-served intents from telemetry) and **same-topic cross-document contradiction candidates** (high-cosine pairs, bounded `per_row_cap` + heap so it stays cheap on a redundant corpus). Folded into the single build write — no second archive rewrite. See `store/self_audit.py`.
+- **`rlat audit --shape`** surfaces the report; `--min-cosine <f>` / `--with-text` recompute the contradiction candidates live at a chosen cosine floor with resolved text (judge-ready), **demand-ranked** so conflicts in the path of real query traffic come first. `rlat audit --external` enumerates web-fetched claims + their source URLs (the input to a world-freshness re-check).
+- **Contradiction act layer** (`curator/reconcile.py`): a stance judge confirms which same-topic candidates genuinely contradict; `reconcile_contradiction` records a non-destructive, policy-gated resolution claim that cites both sides (never edits corpus source files).
+- **External-fact freshness** (`store/external_freshness.py`): re-fetch a web-fetched claim's cited URLs and re-judge whether the live world still supports it (`fresh`/`stale`/`unknown`) — the staleness `rlat refresh` cannot catch. Surfaces only; a failed fetch is `unknown`, never `stale`.
+- **External-fill landing + provenance trust tiers.** A verified external fact (≥2 independent agreeing sources) can land in the band with `source_url` provenance, durable across the corpus drift cascade. Trust is now tiered at the seed: **user ≥ verified-external ≥ single-external ≥ corpus** (`store/insight.py::seed_confidence(provenance=…)`). A caller-verified landing path (`promote_if_faithful(client=None, faithfulness=…)` + `curator/agent_fill.py::land_external_fact`) lets the free agent/human path land an already-verified fact without a metered judge — every other guard (compression test, ≥2-citation, trust floor) still applies.
+- **Four no-API-key skills** drive the loop on subscription agents: `rlat-contradictions` (cross-doc conflicts), `rlat-gap-scan` (corpus gaps), `rlat-refresh-facts` (re-check web-fetched facts), `rlat-curate` (human-in-the-loop approval, hand-provide an authoritative source at the user trust tier).
+
+### Removed — MRL optimise path
+
+- **`rlat optimise` and the MRL optimised-band trainer are retired.** Deleted `cli/optimise.py`, the whole `src/resonance_lattice/optimise/` package (synth-query generation, hard-negative mining, InfoNCE training, in-place band write), `docs/internal/OPTIMISE.md`, and `docs/site/optimise.html`. The `[optimise]` install extra is renamed `[llm]` (just the Anthropic SDK — no torch, which only the trainer needed). The shipping recipe is the single `gte-modernbert-base` 768d base band; an opt-in specialist projection is no longer part of the CLI.
 
 ### Added — Microsoft Fabric UDF integration
 

@@ -16,16 +16,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 from pathlib import Path
 
 from ..config import MaterialiserConfig
 from ..field import ann, retrieve, retrieve_insight
 from ..field.encoder import Encoder
+from ..store import telemetry
 from ..rql.types import ConfidenceMetrics
 from ..store.verified import (
-    InsightHit,
-    VerifiedHit,
     filter_verified,
     verify_hits,
     verify_insight_hits,
@@ -33,6 +31,11 @@ from ..store.verified import (
 from . import _grounding, _namecheck
 from ._grounding import Mode
 from ._load import load_or_exit, open_store_or_exit
+
+# Row-boundary char valve for the serve-ALL world block in `--format
+# context` — a transport safety cap (a band would need hundreds of
+# constraints to reach it), same size as the hook's injection cap.
+_WORLD_BLOCK_MAX_CHARS = 6000
 
 
 def _layer_tag(hit) -> str:
@@ -47,7 +50,7 @@ def _hit_origin(hit) -> str:
     Lets the rendered output stay informative while distinguishing the
     layer semantics."""
     if hit.layer == "insight":
-        return f"insight:{hit.insight_id} ({hit.kind})"
+        return f"insight:{hit.claim_id} ({hit.kind})"
     return f"{hit.source_file}:{hit.char_offset}+{hit.char_length}"
 
 
@@ -66,7 +69,7 @@ def _format_text(hits: list, max_preview_chars: int = 100) -> str:
         if len(body) > max_preview_chars:
             body = body[:max_preview_chars - 1] + "…"
         # `drift_status` is uniform across both layers (InsightHit's is
-        # derived from verdict_state via _INSIGHT_STATE_TO_DRIFT).
+        # derived from its `state` via _INSIGHT_STATE_TO_DRIFT).
         lines.append(
             f"{_layer_tag(h)} {h.score:.3f}  {_hit_origin(h)}  "
             f"[{h.drift_status}]  {body}"
@@ -81,9 +84,10 @@ def _format_json(hits: list) -> str:
             out.append({
                 "layer": "insight",
                 "insight_idx": h.insight_idx,
-                "insight_id": h.insight_id,
+                "claim_id": h.claim_id,
+                "content_fingerprint": h.content_fingerprint,
                 "kind": h.kind,
-                "verdict_state": h.verdict_state,
+                "state": h.state,
                 "confidence": h.confidence,
                 "drift_status": h.drift_status,
                 "score": h.score,
@@ -97,7 +101,7 @@ def _format_json(hits: list) -> str:
                     for c in h.citations
                 ],
                 "source_passage_hashes": list(h.source_passage_hashes),
-                "generated_at": h.generated_at,
+                "created_at": h.created_at,
                 "intent_context": h.intent_context,
             })
         else:
@@ -117,16 +121,22 @@ def _format_json(hits: list) -> str:
 
 def _format_context(
     hits: list, config: MaterialiserConfig, mode: Mode, band_name: str,
-    query: str,
+    query: str, world_block: str = "",
 ) -> tuple[str, list[str]]:
     """Concatenate verified hits up to the token budget. Higher-scored hits
     win when the budget runs out.
 
     Insight hits are rendered with an [INSIGHT] header showing kind,
-    verdict_state, and confidence so the consumer LLM treats them
+    state, and confidence so the consumer LLM treats them
     appropriately. Source hits keep the v2.0 source-file:offset header.
     Both layers count against the same token budget; mixed lists are
     sorted by score descending before budgeting.
+
+    `world_block` is the serve-ALL constraints/falsified section (already
+    framed by `store.serve_framing`). It renders right after the grounding
+    header, outside the passage budget and outside suppression — a standing
+    rule of the world applies even when the corpus evidence is too thin to
+    answer from.
 
     Confidence metrics for grounding-mode gating are computed against the
     source hits only — insights are derived, so they don't carry the same
@@ -135,6 +145,8 @@ def _format_context(
     source_hits = [h for h in hits if h.layer == "source"]
     metrics = ConfidenceMetrics.from_verified(source_hits, band_name)
     header = _grounding.format_header(mode)
+    if world_block:
+        header = f"{header}\n\n{world_block}"
 
     if _grounding.should_suppress(metrics, mode):
         return f"{header}\n\n{_grounding.suppression_marker(metrics, mode)}\n", []
@@ -148,8 +160,8 @@ def _format_context(
             continue
         if h.layer == "insight":
             block = (
-                f"<!-- INSIGHT id={h.insight_id} kind={h.kind} "
-                f"verdict={h.verdict_state} confidence={h.confidence:.2f} "
+                f"<!-- INSIGHT id={h.claim_id} kind={h.kind} "
+                f"state={h.state} confidence={h.confidence:.2f} "
                 f"score={h.score:.3f} -->\n"
                 f"{h.content}\n"
             )
@@ -189,7 +201,6 @@ def cmd_search(args: argparse.Namespace) -> int:
         )
         return 2
 
-    t0 = time.monotonic()
     km_path = Path(args.knowledge_model)
     contents = load_or_exit(km_path)
 
@@ -221,6 +232,7 @@ def cmd_search(args: argparse.Namespace) -> int:
         )
         raw = retrieve_insight(
             query_emb, insight_handle.band, insight_ann_index, args.top_k,
+            km_id=insight_handle.km_id,
         )
         insight_hits = list(verify_insight_hits(
             raw, contents.insights, include_stale=args.include_stale,
@@ -242,8 +254,12 @@ def cmd_search(args: argparse.Namespace) -> int:
             replace(h, score=h.score * lens.trust_for_source(h.source_file))
             for h in source_hits
         ]
+        # Experience hits carry an empty fingerprint — never lens-keyed (a
+        # lens row keyed "" must not re-weight every experience hit at once).
         insight_hits = [
-            replace(h, score=h.score * lens.preference_for_insight(h.insight_id))
+            replace(h, score=h.score
+                    * lens.preference_for_insight(h.content_fingerprint))
+            if h.content_fingerprint else h
             for h in insight_hits
         ]
 
@@ -262,9 +278,39 @@ def cmd_search(args: argparse.Namespace) -> int:
     elif args.format == "json":
         print(_format_json(all_hits))
     elif args.format == "context":
+        # Serve-ALL world rules (standing constraints + falsified findings) —
+        # query-independent by design (R1: no selection, zero over-blocking),
+        # so they never compete with passages for retrieval rank or budget.
+        # Lines are flattened (the serve_framing contract — a multi-line
+        # claim must not forge its own framed section) and capped at a
+        # row-boundary char valve, mirroring the hook channel.
+        world_block = ""
+        body_hits = all_hits
+        if not args.source_only and contents.insights:
+            from ..store.serve_framing import frame_claim_lines
+            from ..store.verified import serve_band_constraints
+            rows: list[tuple[str, str]] = []
+            world_budget = _WORLD_BLOCK_MAX_CHARS
+            for c in serve_band_constraints(contents.insights):
+                text = c.content.replace("\n", " ").strip()
+                if not text:
+                    continue
+                if world_budget - len(text) - 3 < 0:
+                    break
+                rows.append((c.kind, text))
+                world_budget -= len(text) + 3
+            world_block = frame_claim_lines(rows)
+            if world_block:
+                # Already served in full above — don't serve the same rows
+                # again through the ranked, budgeted body.
+                body_hits = [
+                    h for h in all_hits
+                    if not (h.layer == "insight"
+                            and h.kind in ("constraint", "negation"))
+                ]
         rendered, missing_names = _format_context(
-            all_hits, MaterialiserConfig(), Mode(args.mode), source_handle.name,
-            args.query,
+            body_hits, MaterialiserConfig(), Mode(args.mode),
+            source_handle.name, args.query, world_block,
         )
         print(rendered)
 
@@ -279,7 +325,7 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     n_source = sum(1 for h in all_hits if h.layer == "source")
     # Rank-ordered (all_hits is score-sorted) — list position is the rank.
-    insight_ids = [h.insight_id for h in all_hits if h.layer == "insight"]
+    insight_ids = [h.claim_id for h in all_hits if h.layer == "insight"]
     n_insight = len(insight_ids)
 
     if not args.quiet:
@@ -294,19 +340,14 @@ def cmd_search(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    lens_id_for_event: str | None = None
-    if args.lens and not args.source_only:
-        # Cheap re-read of just the manifest is unnecessary — we just
-        # surface the file basename for the event.
-        lens_id_for_event = Path(args.lens).stem
-    from . import _dogfood
-    _dogfood.record_event(
-        km_path, args.query, duration_ms=duration_ms, n_source=n_source,
-        insight_ids=insight_ids,
-        faithfulness=None,   # single-shot search runs no faithfulness gate
-        intent_context=None, lens_id=lens_id_for_event,
-    )
+    # The retrieval is already observed at the heart (field.retrieve /
+    # retrieve_insight) — fingerprint + per-rank scores, keyed to the corpus.
+    # Fold this process's observations INTO the .rlat itself (capture.md §3
+    # persistence / CRITICAL_PATH step 1): the telemetry travels with the
+    # portable file, no sidecar. Session-boundary cadence, gated + best-effort
+    # (a no-op for a bare one-shot search; never raises). Runs after the hits
+    # are already printed, so it never delays the user's results.
+    telemetry.flush(str(contents.source_path) if contents.source_path else None)
     return 0
 
 
@@ -335,7 +376,7 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--include-stale", action="store_true",
-        help="Include insight rows whose source has drifted (verdict_state=stale). "
+        help="Include insight rows whose source has drifted (state=stale). "
              "Default: excluded from retrieval until re-verification passes.",
     )
     p.add_argument(

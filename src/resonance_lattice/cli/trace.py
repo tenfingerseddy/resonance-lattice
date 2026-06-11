@@ -23,7 +23,8 @@ def cmd_trace(args: argparse.Namespace) -> int:
 
     target_id: str = args.id
 
-    # Try as insight_id first; fall back to source-passage reverse trace.
+    # Try as a corpus claim_id first; fall back to source-passage reverse
+    # trace.
     try:
         trace = trace_insight(contents, target_id)
     except KeyError:
@@ -34,43 +35,43 @@ def cmd_trace(args: argparse.Namespace) -> int:
             return 1
         if args.format == "json":
             print(json.dumps([
-                {"insight_id": r.insight_id, "kind": r.kind,
-                 "verdict_state": r.verdict_state, "content": r.content}
+                {"claim_id": r.claim_id, "kind": r.kind,
+                 "state": r.state, "content": r.content}
                 for r in reverse
             ], indent=2))
         else:
             print(f"[trace] {target_id} cited by {len(reverse)} insight(s):")
             for ins in reverse:
                 preview = ins.content[:80].replace("\n", " ")
-                print(f"  {ins.insight_id}  state={ins.verdict_state}  {preview}...")
+                print(f"  {ins.claim_id}  state={ins.state}  {preview}...")
         return 0
 
     if args.format == "json":
         print(json.dumps({
             "insight": {
-                "id": trace.insight.insight_id,
+                "id": trace.insight.claim_id,
                 "kind": trace.insight.kind,
                 "content": trace.insight.content,
-                "verdict_state": trace.insight.verdict_state,
-                "confidence": trace.insight.confidence,
-                "generated_at": trace.insight.generated_at,
-                "source_model_hash": trace.insight.source_model_hash,
+                "state": trace.insight.state,
+                "confidence": trace.insight.trust,
+                "created_at": trace.insight.created_at,
+                "source_model_hash": trace.insight.facts.source_model_hash,
             },
             "source_passages": trace.source_passages,
             "source_orphans": trace.source_orphans,
             "lineage": [
-                {"insight_id": li.insight_id, "kind": li.kind}
+                {"claim_id": li.claim_id, "kind": li.kind}
                 for li in trace.lineage_chain
             ],
         }, indent=2))
     else:
         ins = trace.insight
-        print(f"[trace] insight {ins.insight_id}")
+        print(f"[trace] insight {ins.claim_id}")
         print(f"  kind:        {ins.kind}")
-        print(f"  verdict:     {ins.verdict_state}")
-        print(f"  confidence:  {ins.confidence:.2f}")
-        print(f"  generated:   {ins.generated_at}")
-        print(f"  content:")
+        print(f"  state:       {ins.state}")
+        print(f"  confidence:  {ins.trust:.2f}")
+        print(f"  created:     {ins.created_at}")
+        print("  content:")
         print(f"    {ins.content}")
         if trace.source_passages:
             print(f"  cites {len(trace.source_passages)} source passage(s):")
@@ -85,7 +86,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
         if trace.lineage_chain:
             print(f"  lineage chain ({len(trace.lineage_chain)} parents):")
             for parent in trace.lineage_chain:
-                print(f"    {parent.insight_id}  kind={parent.kind}")
+                print(f"    {parent.claim_id}  kind={parent.kind}")
 
     return 0
 

@@ -19,7 +19,7 @@ from pathlib import Path
 import portalocker
 
 from ..memory._common import make_ulid, utcnow_iso
-from .ledger import LEDGER_DIR
+from ._jsonl_log import LEDGER_DIR
 
 SESSIONS_FILE = "sessions.jsonl"
 

@@ -1,6 +1,6 @@
 """memory_v22_api_key — API key discovery contracts.
 
-Pins `optimise.synth_queries.discover_api_key` against the active env-var
+Pins `_anthropic.discover_api_key` against the active env-var
 chain. Four contracts:
 
   (a) `CLAUDE_API_2` is honoured when set (Kane's active slot).
@@ -49,7 +49,7 @@ def _isolated_env(**overrides):
 
 
 def _check_claude_api_2_honoured() -> int:
-    from resonance_lattice.optimise.synth_queries import discover_api_key
+    from resonance_lattice._anthropic import discover_api_key
 
     with _isolated_env(CLAUDE_API_2="sk-ant-claude-api-2-key"):
         key = discover_api_key()
@@ -62,7 +62,7 @@ def _check_claude_api_2_honoured() -> int:
 
 
 def _check_claude_api_2_outranks_claude_api() -> int:
-    from resonance_lattice.optimise.synth_queries import discover_api_key
+    from resonance_lattice._anthropic import discover_api_key
 
     with _isolated_env(
         CLAUDE_API_2="sk-claude-api-2",
@@ -78,7 +78,7 @@ def _check_claude_api_2_outranks_claude_api() -> int:
 
 
 def _check_claude_api_legacy_still_works() -> int:
-    from resonance_lattice.optimise.synth_queries import discover_api_key
+    from resonance_lattice._anthropic import discover_api_key
 
     with _isolated_env(CLAUDE_API="sk-claude-api-legacy"):
         key = discover_api_key()
@@ -91,7 +91,7 @@ def _check_claude_api_legacy_still_works() -> int:
 
 
 def _check_indirection_wins() -> int:
-    from resonance_lattice.optimise.synth_queries import discover_api_key
+    from resonance_lattice._anthropic import discover_api_key
 
     # Set both named slots and an indirection target; the indirected
     # value should win even though CLAUDE_API_2 also has a value.

@@ -101,10 +101,7 @@ def near_duplicates(
     cluster has ≥ 2 members. `mean_cosine` is the arithmetic mean of all
     distinct pair cosines within the cluster (NOT just the seed row).
 
-    Band selection: in-corpus op, so by default `prefer=None` picks optimised
-    when present (the in-corpus-trained band gives tighter dedup) else base.
-    Pass `prefer="base"` to force base — only relevant when comparing dedup
-    behaviour across optimised vs. unoptimised builds.
+    Band selection: `prefer=None` resolves to the base band.
 
     `threshold=0.95` is the conservative default: real near-paraphrases
     typically clear 0.95 with the gte-mb encoder. Below 0.92 the algorithm

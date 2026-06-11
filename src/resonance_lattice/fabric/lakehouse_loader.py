@@ -43,13 +43,23 @@ def get_rlat_mtime(lakehouse: Any, km_name: str) -> str:
 
 
 def fetch_rlat(lakehouse: Any, km_name: str, dst_root: Path) -> Path:
-    """Download `Files/<km-dir>/<km>.rlat` to `<dst_root>/<km>.rlat` if missing."""
+    """Download `Files/<km-dir>/<km>.rlat` to `<dst_root>/<km>.rlat` if missing.
+
+    Streams the download to disk in chunks rather than `readall()` — a 617 MB
+    `.rlat` `readall()`'d into a `bytes` is a ~617 MB transient that, stacked on
+    a warm encoder (~542 MB), spikes the worker toward the OOM the streaming
+    serve exists to avoid. Chunked download keeps the cold-start peak at one
+    block. Disk-bound either way; only the RAM transient changes.
+    """
     dst_root.mkdir(parents=True, exist_ok=True)
     dst = dst_root / f"{km_name}{_RLAT_SUFFIX}"
     if dst.exists():
         return dst
     fc = _file_client(lakehouse, km_name)
-    dst.write_bytes(fc.download_file().readall())
+    downloader = fc.download_file()
+    with open(dst, "wb") as f:
+        for chunk in downloader.chunks():  # StorageStreamDownloader.chunks() — block at a time
+            f.write(chunk)
     return dst
 
 

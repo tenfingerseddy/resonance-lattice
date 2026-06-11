@@ -34,16 +34,12 @@ Never a graph. Never enums. The user always sees a direct answer.
 from __future__ import annotations
 
 import datetime as _dt
-import json
-from dataclasses import dataclass, field
-from typing import Callable
+from dataclasses import dataclass
 
-from ..state.intent import LiveIntent
-from ..state.ledger import OutcomeRecord
+from ..state.intent import Intent
+from ..state.claim_outcome import ClaimOutcomeRecord
 from ._common import parse_iso_utc
-from .distil import LLMResponse  # reuse the canonical client shape
-
-LLMClient = Callable[[str, list[dict], int], LLMResponse]
+from ._llm import LLMClient
 
 # Bounded by architecture §"LLM context is intent-path-scoped". At most
 # ~20 nodes from the graph reach the LLM; what-next surfaces a tighter
@@ -52,7 +48,7 @@ DEFAULT_TOP_K_CANDIDATES = 5
 _MAX_LLM_CONTEXT_NODES = 20
 
 # Status priority — architecture's "in_progress > ready > blocked" mapped
-# onto LiveIntent statuses. Live intents track {active, blocked, satisfied,
+# onto Intent statuses. Live intents track {active, blocked, satisfied,
 # abandoned, superseded}; we infer in_progress vs ready from updated_at
 # recency on top of `active`.
 _STATUS_PRIORITY = {"in_progress": 3, "ready": 2, "blocked": 1}
@@ -69,7 +65,7 @@ _IN_PROGRESS_WINDOW_HOURS = 24
 class Candidate:
     """One scored what-next candidate."""
 
-    intent: LiveIntent
+    intent: Intent
     derived_status: str  # in_progress | ready | blocked
     score: tuple[int, int, int, str]  # for stable sort
 
@@ -83,7 +79,7 @@ def _hours_since(ts: str, now: _dt.datetime) -> float:
 
 
 def _derive_status(
-    intent: LiveIntent,
+    intent: Intent,
     blocking_active_ids: set[str],
     now: _dt.datetime,
 ) -> str:
@@ -101,7 +97,7 @@ def _derive_status(
 
 
 def _candidate_score(
-    intent: LiveIntent,
+    intent: Intent,
     derived_status: str,
     now: _dt.datetime,
 ) -> tuple[int, int, int, str]:
@@ -130,9 +126,9 @@ def _candidate_score(
 
 
 def pick_candidates(
-    live_intents: list[LiveIntent],
+    live_intents: list[Intent],
     *,
-    recent_outcomes: list[OutcomeRecord] | None = None,
+    recent_outcomes: list[ClaimOutcomeRecord] | None = None,
     top_k: int = DEFAULT_TOP_K_CANDIDATES,
     now: _dt.datetime | None = None,
 ) -> list[Candidate]:

@@ -50,6 +50,23 @@ def compute_id(source_file: str, char_offset: int, char_length: int) -> str:
     return h.hexdigest()[:16]
 
 
+def compute_key_id(key: str) -> str:
+    """Stable passage id pinned to a business KEY (row-mode builds).
+
+    Unlike `compute_id`, which hashes source coordinates, this hashes the
+    business key alone. A row whose TEXT changes shifts its char_length and
+    so its coordinate-derived id; pinning the id to the key instead keeps
+    the passage identity stable across edits, so a row-mode rebuild/refresh
+    re-keys only by the row's own identity (the semantic-slicer surface,
+    where one passage == one dimension row). Distinct namespace prefix
+    (`key\\x1f`) so a key id can never collide with a coordinate id.
+    """
+    h = hashlib.sha256()
+    h.update(b"key\x1f")
+    h.update(key.encode("utf-8", errors="replace"))
+    return h.hexdigest()[:16]
+
+
 @dataclass(frozen=True)
 class PassageCoord:
     passage_idx: int
@@ -58,6 +75,12 @@ class PassageCoord:
     char_length: int
     content_hash: str
     passage_id: str
+    # Optional per-row business key — set only by row-mode builds (the
+    # semantic-slicer surface), None for ordinary chunked corpora. The
+    # caller's domain identity (e.g. an Airbnb listing id) that downstream
+    # consumers filter on (a TREATAS key set in Fabric). When set,
+    # `passage_id` is pinned to it via `compute_key_id`.
+    key: str | None = None
 
 
 def load_jsonl(text_lines: Iterable[str]) -> list[PassageCoord]:
@@ -91,6 +114,7 @@ def load_jsonl(text_lines: Iterable[str]) -> list[PassageCoord]:
             char_length=char_length,
             content_hash=obj["content_hash"],
             passage_id=passage_id,
+            key=obj.get("key"),
         ))
     return coords
 
@@ -116,5 +140,11 @@ def write_jsonl(coords: list[PassageCoord]) -> str:
         # Re-key passage_id → "id" for compactness on disk; round-trips
         # through load_jsonl's `obj.get("id")` lookup.
         d["id"] = d.pop("passage_id")
+        # Omit the key slot entirely for ordinary (chunked) corpora so their
+        # passages.jsonl bytes are unchanged by this field's addition — only
+        # row-mode builds carry a key. load_jsonl reads `obj.get("key")` →
+        # None when absent, so the round-trip is exact either way.
+        if d.get("key") is None:
+            d.pop("key", None)
         parts.append(json.dumps(d, sort_keys=True))
     return "\n".join(parts)

@@ -20,7 +20,7 @@ from ..field.dense import max_cosines_against, topk_indices
 from ..store.archive import ArchiveContents
 from ..store.base import Store
 from ..store.verified import verify_hits
-from .compare import _require_base_pair, _require_compatible_pair
+from .compare import _require_compatible_pair
 from .types import (
     Citation,
     CitationHit,
@@ -42,8 +42,7 @@ def neighbors(
 ) -> list[NeighborHit]:
     """Top-K nearest neighbours of `passage_idx` by cosine, excludes self.
 
-    Within-corpus op — defaults to `prefer=None` so optimised-when-present
-    is used (in-corpus retrieval gets the trained-on-this-corpus lift).
+    Within-corpus op — `prefer=None` resolves to the base band.
     Cross-knowledge-model navigation is not supported here; that's
     `compose` + `search` territory.
 
@@ -101,20 +100,17 @@ def evidence(
     with `--verified-only` post-filter (or `filter_verified()`) when
     drift must be excluded.
 
-    `query_embedding` is expected L2-normalised in the same dim as the
-    band (for the optimised band: 768d; the projection matrix is applied
-    inside `dense.search`).
+    `query_embedding` is expected L2-normalised in the base band's dim
+    (768d).
 
-    `prefer=None` picks optimised when present (in-corpus retrieval
-    benefit); pass `prefer="base"` to force base — useful when comparing
-    evidence against another knowledge model's base-band output.
+    `prefer=None` resolves to the base band; `prefer="base"` is the same
+    explicit request, kept for API symmetry with the cross-model ops.
     """
     handle = contents.select_band(prefer)
     raw_hits = dense.search(
         query_embedding,
         handle.band,
         contents.registry,
-        handle.projection,
         top_k=top_k,
     )
     if not raw_hits:

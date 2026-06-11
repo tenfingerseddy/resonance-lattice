@@ -15,9 +15,7 @@ The pipeline:
   2. Bucketise candidates against the existing registry on stable
      `passage_id`. Unchanged passages keep their band rows untouched.
   3. Re-encode updated + added passages once, batched.
-  4. Re-project the optimised band (if present) from the new base —
-     free, no LLM call, no GPU.
-  5. Atomic in-place write of the full archive.
+  4. Atomic in-place write of the full archive.
 
 Bundled archives are immutable post-build (source bytes baked in); `rlat
 refresh` rejects them and points at `rlat build`. Audit 07 is the
@@ -53,6 +51,33 @@ from .build import _print_skipped
 from ._load import load_build_spec, load_or_exit
 
 
+def _self_audit_gap_rows(km_path) -> list[dict]:
+    """The decide demand×coverage gap signal (undercovered recurring intents), as compact rows for the stored
+    self-audit. Assembled at the CLI because curator.decide sits above the store layer."""
+    from ..curator.decide import decide
+    return [{"cluster_id": g.cluster_id, "occurrences": g.occurrences,
+             "distinct_sessions": g.distinct_sessions, "mean_top_score": g.mean_top_score}
+            for g in decide(str(km_path))]
+
+
+def _refresh_gap_signal_only(km_path) -> None:
+    """No-op-path audit touch-up shared by refresh + sync: the corpus is
+    identical (contradictions + drift unchanged), but DEMAND-gaps change
+    with use — refresh JUST the gap signal in the stored audit. Best-effort;
+    keeps the gap signal fresh in the steady state (stable corpus, accruing
+    usage) where it matters most."""
+    try:
+        from ..store import archive
+        rep = archive.read_self_audit(km_path)
+        if rep:
+            gaps = _self_audit_gap_rows(km_path)
+            rep["gaps"] = gaps
+            rep.setdefault("counts", {})["gaps"] = len(gaps)
+            archive.write_self_audit_in_place(km_path, rep)
+    except Exception:
+        pass
+
+
 def cmd_refresh(args: argparse.Namespace) -> int:
     km_path = Path(args.knowledge_model)
     # Pre-flight: read once for mode check + spec; refresh_rlat re-opens the
@@ -85,7 +110,6 @@ def cmd_refresh(args: argparse.Namespace) -> int:
             batch_size=args.batch_size,
             min_chars=spec.min_chars,
             max_chars=spec.max_chars,
-            discard_optimised=args.discard_optimised,
             dry_run=args.dry_run,
         )
     except RefreshError as exc:
@@ -99,17 +123,15 @@ def cmd_refresh(args: argparse.Namespace) -> int:
           f"removed={result.n_deleted}")
 
     if args.dry_run:
-        print(f"[refresh] --dry-run: no changes written")
+        print("[refresh] --dry-run: no changes written")
         return 0
     if result.is_noop:
-        print(f"[refresh] no source changes; nothing to do")
+        print("[refresh] no source changes; nothing to do")
+        _refresh_gap_signal_only(km_path)
         return 0
 
     print(f"[refresh] wrote {result.output_path} "
           f"({result.n_passages} passages)")
-    if result.re_projected_optimised:
-        print(f"[refresh] optimised band re-projected from new base "
-              f"(no LLM cost, no GPU)")
 
     # Drift cascade: any insight whose cited source's content_hash changed
     # flips to stale. Foundation 5 of the trust contract — derived layer
@@ -122,6 +144,20 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                   f"row(s) flagged stale (cited source content_hash changed)")
         else:
             print(f"[refresh] insight: {n_total} row(s) checked, no drift")
+
+    # Foundational, LLM-free: recompute + store the corpus self-audit. After a refresh the contradictions + drift
+    # reflect the refreshed corpus, and gaps reflect accumulated demand (the decide coverage signal over the
+    # persisted telemetry). Best-effort — never breaks a refresh.
+    try:
+        from ..store.self_audit import attach_self_audit
+        gap_rows = _self_audit_gap_rows(result.output_path)
+        report = attach_self_audit(result.output_path, gaps=gap_rows, source_root=str(spec.source_root))
+        if report:
+            c = report.get("counts", {})
+            print(f"[refresh] self-audit: {c.get('high_cosine_pairs', 0)} same-topic pair(s) to judge, "
+                  f"{c.get('gaps', 0)} demand gap(s)")
+    except Exception:
+        pass
     return 0
 
 
@@ -154,8 +190,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
         index = HttpManifestIndex.from_existing(
             existing_manifest=contents.remote_manifest,
         )
-        print(f"[sync] poll mode (no upstream catalog) — modified + removed "
-              f"detection only")
+        print("[sync] poll mode (no upstream catalog) — modified + removed "
+              "detection only")
 
     pinned_ref = contents.metadata.build_config.get("pinned_ref", "")
     print(f"[sync] discovering deltas vs pinned_ref={pinned_ref[:12] or '(unset)'} …")
@@ -165,7 +201,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
           f"unavailable={len(file_delta.unavailable)}")
 
     if args.dry_run:
-        print(f"[sync] --dry-run: no changes written")
+        print("[sync] --dry-run: no changes written")
         for path in file_delta.added:
             print(f"  + {path}")
         for path in file_delta.modified:
@@ -210,9 +246,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
             return 2
 
     if file_delta.is_empty:
-        print(f"[sync] no upstream changes; archive already up to date")
-        # Still bump the pinned_ref so future polls compare against the
-        # latest checkpoint — cheap, no archive rewrite needed.
+        print("[sync] no upstream changes; archive already up to date")
+        # No archive rewrite (so no pinned_ref bump — the next poll compares
+        # from the same ref, which is correct, just re-does the comparison).
+        _refresh_gap_signal_only(km_path)
         return 0
 
     # Fetch added + modified file bodies (unchanged files are not re-fetched
@@ -291,12 +328,6 @@ def cmd_sync(args: argparse.Namespace) -> int:
     contents.remote_manifest.update(new_manifest)
     contents.metadata.build_config["pinned_ref"] = file_delta.head_ref
 
-    if "optimised" in contents.bands and args.discard_optimised:
-        contents.bands.pop("optimised", None)
-        contents.projections.pop("optimised", None)
-        contents.metadata.bands.pop("optimised", None)
-        contents.metadata.ann.pop("optimised", None)
-
     encoder = Encoder(runtime=getattr(args, "runtime", "auto"))
     if delta.n_re_encode:
         print(f"[sync] re-encoding {delta.n_re_encode} passage(s) "
@@ -309,9 +340,35 @@ def cmd_sync(args: argparse.Namespace) -> int:
     print(f"[sync] wrote {result.archive_path} "
           f"({result.n_passages} passages, manifest pinned at "
           f"{file_delta.head_ref[:12]})")
-    if result.re_projected_optimised:
-        print(f"[sync] optimised band re-projected from new base "
-              f"(no LLM cost, no GPU)")
+
+    # Parity with refresh (2026-06 review: sync returned here, silently
+    # dropping the stored self-audit and skipping the drift cascade — on
+    # remote archives a changed source never flipped its citing insights
+    # to stale, breaking the trust contract).
+    from ..store.insight_lifecycle import apply_drift_cascade_to_archive
+    n_drifted, n_total = apply_drift_cascade_to_archive(result.archive_path)
+    if n_total > 0:
+        if n_drifted:
+            print(f"[sync] insight drift: {n_drifted}/{n_total} insight "
+                  f"row(s) flagged stale (cited source content_hash changed)")
+        else:
+            print(f"[sync] insight: {n_total} row(s) checked, no drift")
+
+    # Recompute + store the corpus self-audit over the synced corpus.
+    # source_root=None: remote archives have no local source tree; the
+    # audit's contradiction pass reads passages from the archive itself.
+    # Best-effort — never breaks a sync.
+    try:
+        from ..store.self_audit import attach_self_audit
+        gap_rows = _self_audit_gap_rows(result.archive_path)
+        report = attach_self_audit(result.archive_path, gaps=gap_rows,
+                                   source_root=None, check_drift=False)
+        if report:
+            c = report.get("counts", {})
+            print(f"[sync] self-audit: {c.get('high_cosine_pairs', 0)} "
+                  f"same-topic pair(s) to judge, {c.get('gaps', 0)} demand gap(s)")
+    except Exception:
+        pass
     return 0
 
 
@@ -376,12 +433,6 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
              "default: use recorded `extensions` from build_config)",
     )
     p_refresh.add_argument(
-        "--discard-optimised", action="store_true",
-        help="Drop the optimised band on refresh instead of re-projecting "
-             "it from the new base. Rare — re-projection is free (no LLM, "
-             "no GPU) and preserves the trained corpus-specific projection.",
-    )
-    p_refresh.add_argument(
         "--dry-run", action="store_true",
         help="Walk sources + bucketise + report counts; do not write.",
     )
@@ -400,11 +451,6 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     p_sync.add_argument(
         "--batch-size", type=int, default=32,
         help="Encoder batch size (default: 32)",
-    )
-    p_sync.add_argument(
-        "--discard-optimised", action="store_true",
-        help="Drop the optimised band on sync instead of re-projecting "
-             "it from the new base. Rare — re-projection is free.",
     )
     p_sync.add_argument(
         "--dry-run", action="store_true",

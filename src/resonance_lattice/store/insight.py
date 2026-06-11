@@ -1,72 +1,32 @@
-"""Insight layer — earned, cited derived passages.
+"""Corpus-claim primitives — citations, verdict signals, trust math.
 
-The second of the three user-facing layers in a knowledge model (source / insight /
-lens). Insight passages are LLM-synthesised compressions of the source layer,
-written back to the .rlat after passing the compression-test promotion gate.
-Every insight passage carries:
+The corpus insight layer of a knowledge model is a set of earned, cited
+`Claim`s (`source="corpus"`); the record itself is the unified
+`state.claim.Claim`, serialised by `store.corpus_claim_io`. This module
+owns the small shared primitives both the record and its serialiser
+depend on:
 
-  - A citation chain back to source passages (by passage_id + content_hash)
-  - A verdict-state machine (candidate → accepted → stale → retired)
-  - Provenance: source_model_hash, generated_at, intent_context, lineage
-  - Drift sensitivity: source_passage_hashes for cascade detection
-
-On disk: `insight.jsonl` alongside `passages.jsonl`, one row per insight,
-`insight_idx` implied by line position. Band: `bands/insight.npz` with the
-same encoder + dim + L2-normalisation as the source band, so retrieval uses
-one substrate.
-
-See `.claude/plans/lensed-knowledge-architecture.md` §4 for the full
-specification. This module owns the schema + JSONL I/O; the archive module
-owns the ZIP-layout side; the compression-test module (Day 4) owns
-promotion gating.
+  - `InsightCitation` / `VerdictSignal` — the nested-tuple fields a
+    `CorpusFacts` carries.
+  - `compute_insight_id` — the stable content-derived fingerprint.
+  - `seed_confidence` / `beta_mean` / `confidence_band` — the Beta trust
+    math shared by experience and corpus claims.
+  - the citation / verdict (de)serialisers `corpus_claim_io` uses for
+    the nested `CorpusFacts` fields.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from typing import Any, Iterable, Literal
 
 # ----------------------------------------------------------------------------
 # Enums (Literal-typed so they cross JSON boundaries as strings)
 # ----------------------------------------------------------------------------
 
-InsightKind = Literal[
-    "synthesis",   # earned compression from a deep-search answer
-    "faq",         # promoted from a repeated query
-    "pattern",     # cross-event regularity
-    "principle",   # cross-context generalisation
-    "mechanism",   # causal claim ("X → Y under Z")
-    "boundary",    # domain-of-validity annotation
-    "negation",    # what is reliably not true
-    "gap",         # known coverage gap (failed grounding)
-]
-
-VerdictState = Literal[
-    "candidate",            # synthesised, awaiting compression test + verdict
-    "accepted",             # passed test + verdict-positive; live in retrieval
-    "rejected",             # /reject or failed compression test
-    "rejected_corrected",   # /correct provided replacement; this row retiring
-    "stale",                # source drift detected; awaiting re-verification
-    "retired",              # final state; excluded from retrieval permanently
-]
-
 VerdictSource = Literal["user", "llm", "mechanical"]
 VerdictPolarity = Literal["accept", "reject", "neutral"]
-
-# State-set constants — single source of truth for membership checks
-# across retrieval, lifecycle, and verdict routing.
-RETRIEVABLE_STATES: frozenset[VerdictState] = frozenset({"accepted"})
-# Final / absorbing states: rejected, rejected_corrected, retired never
-# leave their state regardless of subsequent signals, and never surface
-# in retrieval.
-FINAL_STATES: frozenset[VerdictState] = frozenset({
-    "rejected", "rejected_corrected", "retired",
-})
-# Pending states: surface only with --include-stale; on the path to
-# accepted or retired but not yet authoritative.
-PENDING_STATES: frozenset[VerdictState] = frozenset({"candidate", "stale"})
 
 
 # ----------------------------------------------------------------------------
@@ -75,86 +35,50 @@ PENDING_STATES: frozenset[VerdictState] = frozenset({"candidate", "stale"})
 
 @dataclass(frozen=True)
 class InsightCitation:
-    """Back-reference from an insight passage to a source passage.
+    """Back-reference from a corpus claim to its source.
 
-    `passage_id` matches the stable id in `passages.jsonl` (see
-    `store.registry.compute_id`). `char_span` is optional; when present it
-    narrows the citation to a sub-range within the source passage's
-    char_offset..char_offset+char_length window. `confidence` is the LLM's
-    judgement of how strongly this source supports the insight (0..1).
+    For a CORPUS source, `passage_id` matches the stable id in `passages.jsonl`
+    (see `store.registry.compute_id`) and `source_url` is None. For an EXTERNAL
+    source (a verified web/credible-source fill — `external_fill`), `passage_id`
+    is a synthetic `external:<hash>` id (not in the corpus registry) and
+    `source_url` carries the citable URL. An external claim SERVES via its claim
+    STATE like any insight row (`verified.InsightHit.drift_status` derives from
+    `active`/`stale`/… — there is no citation-level drift check at retrieval). The
+    CORPUS-drift machinery skips external citations (`claim_lifecycle.detect_drift`
+    + `reverification`) so a missing registry lookup is not mistaken for a vanished
+    source — otherwise every external fill would be falsely staled on the next
+    `rlat refresh`. `char_span` optionally narrows a corpus citation to a sub-range.
+    `confidence` is how strongly this source supports the claim (0..1).
+
+    `source_url` is optional + defaulted + last so existing claims (corpus-only)
+    deserialise unchanged and re-serialise byte-identically (it is omitted from the
+    dict when None).
     """
     passage_id: str
     char_span: tuple[int, int] | None
     confidence: float
+    source_url: str | None = None
+
+    @property
+    def is_external(self) -> bool:
+        """A non-corpus citation — carries a URL / synthetic external passage id."""
+        return self.source_url is not None or self.passage_id.startswith("external:")
 
 
 @dataclass(frozen=True)
 class VerdictSignal:
-    """One verdict event tied to an insight passage.
+    """One verdict event tied to a corpus claim.
 
-    Appended to `InsightPassage.verdict_signals` whenever `/accept`,
+    Appended to `CorpusFacts.verdict_signals` whenever `/accept`,
     `/reject`, `/correct`, or a mechanical PostToolUse signal references
-    this insight. `lens_id` records which lens emitted the verdict —
+    this claim. `lens_id` records which lens emitted the verdict —
     cross-lens verdict consensus is what gates promotion from lens-private
-    to shared insight.
+    to shared.
     """
     source: VerdictSource
     polarity: VerdictPolarity
     timestamp: str          # ISO 8601 UTC
     lens_id: str | None     # None = workspace-default scope
-
-
-# ----------------------------------------------------------------------------
-# Main insight passage
-# ----------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class InsightPassage:
-    """One insight passage — earned, cited derived content.
-
-    `insight_idx` is implied by line position in `insight.jsonl`; not stored.
-    `insight_id` is a stable content-derived id that survives
-    refresh/sync deltas (mirrors source `passage_id` semantics).
-    """
-    insight_idx: int
-    insight_id: str
-    kind: InsightKind
-    content: str
-    citations: tuple[InsightCitation, ...]
-    query: str | None
-    generated_at: str
-    source_model_hash: str
-    source_passage_hashes: tuple[str, ...]
-    verdict_state: VerdictState
-    verdict_signals: tuple[VerdictSignal, ...]
-    lineage: tuple[str, ...]
-    intent_context: str | None
-    stale_if_sources_drift: bool
-    encoder_version: str
-    # Beta-accumulation tallies. `confidence` is derived from them, never
-    # stored — see the `confidence` property. Defaulted so bare fixtures
-    # still build; the JSONL loader seeds legacy rows from stored confidence.
-    corroboration: float = 0.0
-    falsification: float = 0.0
-
-    @property
-    def confidence(self) -> float:
-        """Beta-mean confidence: corroboration / (corroboration + falsification).
-
-        Derived, single source of truth — the tallies are the state, this
-        is the read. An unseeded row (both tallies 0 — only a bare fixture
-        built without `seed_confidence`) reads as a neutral 0.5.
-        """
-        total = self.corroboration + self.falsification
-        if total <= 0.0:
-            return 0.5
-        return self.corroboration / total
-
-    def is_retrievable(self) -> bool:
-        """Whether this insight surfaces in default retrieval. `stale`
-        rows opt in via `--include-stale`; `retired` and `rejected*` never
-        surface."""
-        return self.verdict_state in RETRIEVABLE_STATES
 
 
 # ----------------------------------------------------------------------------
@@ -166,7 +90,8 @@ def compute_insight_id(
     source_passage_hashes: Iterable[str],
     source_model_hash: str,
 ) -> str:
-    """Stable insight id derived from content + provenance.
+    """Stable content-derived id for a corpus claim — its
+    `content_fingerprint`, and the `claim_id` of a freshly-minted one.
 
     Mirrors `store.registry.compute_id` — a 16-char hex slice of SHA-256
     over the canonicalised inputs. Two synthesis runs that produce
@@ -194,35 +119,129 @@ def compute_insight_id(
 # ----------------------------------------------------------------------------
 
 # Prior pseudocounts: a neutral Beta(1, 1) base, plus the faithfulness score
-# entering as `_PRIOR_SEED_WEIGHT` of pseudo-evidence — so a faithful insight
+# entering as `_PRIOR_SEED_WEIGHT` of pseudo-evidence — so a faithful claim
 # starts modestly positive, not pinned high. Outcome reducers add weight to
 # the tallies from there; see insight_lifecycle.accumulate_outcome.
 _PRIOR_BASE = 1.0
 _PRIOR_SEED_WEIGHT = 2.0
 
 
-def seed_confidence(faithfulness: float | None) -> tuple[float, float]:
-    """Prior `(corroboration, falsification)` pseudocounts for a new insight.
+# Provenance-tier prior — a higher-trust SOURCE seeds a higher starting confidence: a user-vouched fact > a
+# cross-source-verified external fact > a single web source ≈ a corpus-synthesised claim. Added as extra
+# corroboration pseudo-evidence on top of the faithfulness seed. "corpus" (the default) adds nothing, so every
+# existing caller is byte-identical. The OUTCOME side already weights provenance (`insight_attribution`); this is
+# the missing SEED side — the keystone of the explicit, auditable trust model (user ≥ verified-external ≥
+# single-external ≥ corpus). Tuned against the bands (medium 0.40 / high 0.70 / verified 0.76): at faithfulness
+# 0.8, corpus seeds ~0.65 (medium), verified-external ~0.72 (high), user ~0.77 (verified) — the ordering the model
+# requires, while a fresh fill still earns its final rank by outcomes.
+PROVENANCE_TIERS = ("user", "verified_external", "single_external", "corpus")
+_PROVENANCE_SEED_BOOST = {
+    "user": 2.0,
+    "verified_external": 1.0,
+    "single_external": 0.0,
+    "corpus": 0.0,
+}
 
-    `faithfulness` is the gate score that admitted the insight (0..1), or
+
+def seed_confidence(
+    faithfulness: float | None, *, provenance: str = "corpus",
+) -> tuple[float, float]:
+    """Prior `(corroboration, falsification)` pseudocounts for a new corpus
+    claim.
+
+    `faithfulness` is the gate score that admitted the claim (0..1), or
     None when promoted by a path that didn't run the gate (→ neutral).
+    `provenance` lifts the corroboration prior by source tier (see
+    `_PROVENANCE_SEED_BOOST`); the default "corpus" adds nothing, so an
+    unset caller is unchanged. An unknown tier is treated as no boost.
     """
     f = 0.5 if faithfulness is None else max(0.0, min(1.0, faithfulness))
-    corroboration = _PRIOR_BASE + _PRIOR_SEED_WEIGHT * f
+    boost = _PROVENANCE_SEED_BOOST.get(provenance, 0.0)
+    corroboration = _PRIOR_BASE + _PRIOR_SEED_WEIGHT * f + boost
     falsification = _PRIOR_BASE + _PRIOR_SEED_WEIGHT * (1.0 - f)
     return corroboration, falsification
 
 
+def all_external(citations) -> bool:
+    """True iff `citations` is non-empty and EVERY citation is external (a web/source fill, not a corpus passage).
+
+    The one definition of "this claim is an external fill", shared by provenance, the compression gate, drift
+    re-verification, and the world-freshness enumerator (so the predicate can't drift between them)."""
+    cits = tuple(citations or ())
+    return bool(cits) and all(c.is_external for c in cits)
+
+
+def provenance_tier(citations) -> str:
+    """Derive a claim's default provenance tier from its citations (when not set explicitly).
+
+    All-external citations with ≥ 2 DISTINCT sources → "verified_external" (the cross-source-agreement an external
+    fill enforces); a single external source → "single_external"; anything corpus-anchored → "corpus". The "user"
+    tier is NEVER inferred — only the user vouching makes a fact user-sourced, so a caller must set it explicitly."""
+    cits = tuple(citations or ())
+    if all_external(cits):
+        distinct = {(c.source_url or c.passage_id) for c in cits}
+        return "verified_external" if len(distinct) >= 2 else "single_external"
+    return "corpus"
+
+
+def beta_mean(corroboration: float, falsification: float) -> float:
+    """The Beta-distribution mean — `corroboration / (corroboration +
+    falsification)`. The single definition of a confidence value; an
+    unweighted pair (both 0) reads as the neutral 0.5."""
+    total = corroboration + falsification
+    return corroboration / total if total > 0.0 else 0.5
+
+
+# Beta-mean confidence bands — the 4-rung label over `beta_mean`. Tuned so
+# the observable calibration holds: 2 clean wins → medium, 3 → high,
+# 5 → verified (the significance benchmark's restraint test).
+CONFIDENCE_MEDIUM_BAND = 0.40
+CONFIDENCE_HIGH_BAND = 0.70
+CONFIDENCE_VERIFIED_BAND = 0.76
+
+
+def confidence_band(trust: float) -> str:
+    """Label a Beta-mean `trust` value with its 4-rung confidence — the
+    one derived view of trust shared by experience and corpus claims."""
+    if trust >= CONFIDENCE_VERIFIED_BAND:
+        return "verified"
+    if trust >= CONFIDENCE_HIGH_BAND:
+        return "high"
+    if trust >= CONFIDENCE_MEDIUM_BAND:
+        return "medium"
+    return "low"
+
+
+def confidence_factor(trust: float) -> float:
+    """Trust → retrieval-score multiplier, centred on the neutral Beta mean.
+
+    A claim with no net evidence (`trust` 0.5) leaves the cosine unchanged;
+    corroboration lifts it, falsification sinks it. Centred (`0.5 + trust`)
+    rather than a raw `× trust` so a corpus claim stays cross-comparable
+    with a source hit in a merged ranking — a raw multiply by [0, 1] would
+    sink every claim below every source. Gentle (≈0.8..1.5 across the live
+    confidence range) so relevance leads and confidence only breaks
+    near-ties. Shared by `store.verified` and the corpus branch of
+    `memory.rerank`."""
+    return 0.5 + trust
+
+
 # ----------------------------------------------------------------------------
-# JSONL I/O
+# Citation / verdict (de)serialisers — used by `corpus_claim_io` for the
+# nested-tuple `CorpusFacts` fields.
 # ----------------------------------------------------------------------------
 
 def _citation_to_dict(c: InsightCitation) -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "passage_id": c.passage_id,
         "char_span": list(c.char_span) if c.char_span is not None else None,
         "confidence": c.confidence,
     }
+    # Omit when None so corpus-only claims re-serialise byte-identically (forward-
+    # compatible: an older reader ignores the key; a newer one reads it back).
+    if c.source_url is not None:
+        row["source_url"] = c.source_url
+    return row
 
 
 def _citation_from_dict(d: dict[str, Any]) -> InsightCitation:
@@ -234,6 +253,7 @@ def _citation_from_dict(d: dict[str, Any]) -> InsightCitation:
         passage_id=d["passage_id"],
         char_span=span,
         confidence=float(d.get("confidence", 1.0)),
+        source_url=d.get("source_url"),  # None for legacy / corpus-only citations
     )
 
 
@@ -253,119 +273,3 @@ def _verdict_from_dict(d: dict[str, Any]) -> VerdictSignal:
         timestamp=d["timestamp"],
         lens_id=d.get("lens_id"),
     )
-
-
-def load_jsonl(text_lines: Iterable[str]) -> list[InsightPassage]:
-    """Parse insight.jsonl lines into InsightPassage rows.
-
-    `insight_idx` is assigned from line position (matches
-    `store.registry.load_jsonl`'s convention). Blank lines are rejected
-    rather than skipped because that would renumber later rows and break
-    the `(insight_idx ↔ insight band row)` join.
-
-    Raises `json.JSONDecodeError` on malformed input. Missing optional
-    fields fall back to safe defaults; missing required fields raise
-    `KeyError`.
-    """
-    rows: list[InsightPassage] = []
-    for line in text_lines:
-        obj = json.loads(line)
-        citations = tuple(
-            _citation_from_dict(c) for c in obj.get("citations", [])
-        )
-        verdict_signals = tuple(
-            _verdict_from_dict(v) for v in obj.get("verdict_signals", [])
-        )
-        corroboration = obj.get("corroboration")
-        falsification = obj.get("falsification")
-        if corroboration is None or falsification is None:
-            # Legacy row predating the Beta model — reconstruct the tallies
-            # from the stored confidence so every loaded row has a valid
-            # Beta state. The `confidence` property derives from them.
-            corroboration, falsification = seed_confidence(
-                float(obj.get("confidence", 0.5))
-            )
-        rows.append(InsightPassage(
-            insight_idx=len(rows),
-            insight_id=obj["id"],
-            kind=obj["kind"],
-            content=obj["content"],
-            citations=citations,
-            query=obj.get("query"),
-            generated_at=obj["generated_at"],
-            source_model_hash=obj["source_model_hash"],
-            source_passage_hashes=tuple(obj.get("source_passage_hashes", [])),
-            verdict_state=obj.get("verdict_state", "candidate"),
-            verdict_signals=verdict_signals,
-            lineage=tuple(obj.get("lineage", [])),
-            intent_context=obj.get("intent_context"),
-            stale_if_sources_drift=bool(obj.get("stale_if_sources_drift", True)),
-            encoder_version=obj.get("encoder_version", ""),
-            corroboration=float(corroboration),
-            falsification=float(falsification),
-        ))
-    return rows
-
-
-def write_jsonl(rows: list[InsightPassage]) -> str:
-    """Serialise to JSONL in `insight_idx` order, one row per line.
-
-    `insight_idx` is omitted (recoverable from line position); `insight_id`
-    is emitted under key `id` for diff-stable compactness, mirroring
-    `store.registry.write_jsonl`. Raises if the list isn't in contiguous
-    0..N order — the band row join depends on it.
-    """
-    for i, r in enumerate(rows):
-        if r.insight_idx != i:
-            raise ValueError(
-                f"InsightPassage list must be in contiguous insight_idx order; "
-                f"position {i} has insight_idx={r.insight_idx}"
-            )
-    parts: list[str] = []
-    for r in rows:
-        d: dict[str, Any] = {
-            "id": r.insight_id,
-            "kind": r.kind,
-            "content": r.content,
-            "citations": [_citation_to_dict(c) for c in r.citations],
-            "query": r.query,
-            "generated_at": r.generated_at,
-            "source_model_hash": r.source_model_hash,
-            "source_passage_hashes": list(r.source_passage_hashes),
-            "verdict_state": r.verdict_state,
-            "verdict_signals": [_verdict_to_dict(v) for v in r.verdict_signals],
-            "confidence": r.confidence,
-            "corroboration": r.corroboration,
-            "falsification": r.falsification,
-            "lineage": list(r.lineage),
-            "intent_context": r.intent_context,
-            "stale_if_sources_drift": r.stale_if_sources_drift,
-            "encoder_version": r.encoder_version,
-        }
-        parts.append(json.dumps(d, sort_keys=True))
-    return "\n".join(parts)
-
-
-# ----------------------------------------------------------------------------
-# Verdict / state-transition helpers
-# ----------------------------------------------------------------------------
-
-def append_verdict(
-    insight: InsightPassage, signal: VerdictSignal,
-) -> InsightPassage:
-    """Return a new InsightPassage with `signal` appended to verdict_signals.
-
-    Pure — does not mutate the input. State transitions are NOT computed
-    here (state machine lives in the verdict-lifecycle module, Day 2). This
-    helper exists so the verdict-routing path can stay one-liner clear:
-    `insight = append_verdict(insight, signal)`.
-    """
-    from dataclasses import replace
-    return replace(insight, verdict_signals=insight.verdict_signals + (signal,))
-
-
-def mark_stale(insight: InsightPassage) -> InsightPassage:
-    """Flip verdict_state to 'stale'. Used by the drift-cascade pass when
-    any cited source passage's content_hash changes (Day 2 wiring)."""
-    from dataclasses import replace
-    return replace(insight, verdict_state="stale")

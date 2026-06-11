@@ -19,8 +19,8 @@ Usage:
       --format json > result.json
 
 Anthropic API key resolved via `RLAT_LLM_API_KEY_ENV` indirection,
-then `CLAUDE_API`, then `ANTHROPIC_API_KEY` (matches the `optimise`
-discovery order). Anthropic-only for v2.0; OpenAI / local-LLM
+then `CLAUDE_API_2`, `CLAUDE_API`, `ANTHROPIC_API_KEY` (the shared
+`_anthropic` discovery order). Anthropic-only for v2.0; OpenAI / local-LLM
 adapters land post-launch if there's demand.
 
 Phase 7 deliverable. Spec: docs/internal/SKILL_INTEGRATION.md +
@@ -121,7 +121,7 @@ def _format_markdown(result: DeepSearchResult) -> str:
         f"<!-- rlat deep-search question={result.question!r} "
         f"hops={len(result.hops)} cost_usd={result.cost_usd:.4f} "
         f"missing_names={','.join(result.name_check_missing) or '-'} -->",
-        f"# Answer",
+        "# Answer",
         "",
         result.answer.rstrip(),
         "",
@@ -190,28 +190,36 @@ def _maybe_promote_faithful(km_path, result, client):
 
 
 def cmd_deep_search(args: argparse.Namespace) -> int:
-    import time
-    _dogfood_t0 = time.monotonic()
     try:
         import anthropic
     except ImportError:
         print(
             "error: rlat deep-search requires the `anthropic` package. "
-            "Install with `pip install rlat[optimise]` (which already "
+            "Install with `pip install rlat[llm]` (which already "
             "pulls anthropic) or `pip install anthropic` standalone.",
             file=sys.stderr,
         )
         return 1
 
-    from ..optimise.synth_queries import api_key_or_error
+    from .._anthropic import api_key_or_error
     try:
         api_key = api_key_or_error()
     except RuntimeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
+    if args.cost_cap_usd is not None and args.cost_cap_usd <= 0:
+        print(
+            f"error: --cost-cap-usd must be positive (got {args.cost_cap_usd})",
+            file=sys.stderr,
+        )
+        return 1
+
     client = anthropic.Anthropic(api_key=api_key)
     km_path = Path(args.knowledge_model)
+
+    from .._pricing import CostMeter
+    meter = CostMeter(cap_usd=args.cost_cap_usd)
 
     try:
         result = deep_search(
@@ -221,6 +229,7 @@ def cmd_deep_search(args: argparse.Namespace) -> int:
             top_k=args.top_k,
             source_root=args.source_root,
             strict_names=args.strict_names,
+            meter=meter,
         )
     except FileNotFoundError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -236,21 +245,11 @@ def cmd_deep_search(args: argparse.Namespace) -> int:
     elif args.format == "markdown":
         print(_format_markdown(result))
 
-    duration_ms = int((time.monotonic() - _dogfood_t0) * 1000)
-    n_source = sum(h.n_passages or 0 for h in result.hops)
     failed = _has_failure_hop(result)
-    # Promote first — the faithfulness gate runs here, and its score is
-    # the dogfood quality axis.
-    report = _maybe_promote_faithful(km_path, result, client)
-    succeeded = bool(result.answer) and not failed
-    from . import _dogfood
-    _dogfood.record_event(
-        km_path, args.question, duration_ms=duration_ms, n_source=n_source,
-        insight_ids=result.insight_ids,
-        faithfulness=(report.score if report is not None else None),
-        intent_context=("deep-search" if succeeded else "deep-search-failed"),
-        lens_id=None,
-    )
+    # Faithfulness-gate the answer and promote it into the corpus insight layer
+    # if it passes (the autonomous half of the confidence lifecycle). The
+    # retrieval itself is already observed at the heart.
+    _maybe_promote_faithful(km_path, result, client)
 
     if args.strict_names and result.strict_names_aborted:
         return 3
@@ -293,5 +292,13 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
         "--strict-names", action="store_true",
         help=_namecheck.STRICT_NAMES_HELP + " For deep-search, the answer "
              "is also replaced by the name-mismatch refusal text.",
+    )
+    p.add_argument(
+        "--cost-cap-usd", type=float, default=None,
+        help="Cap cumulative LLM spend in USD across the loop "
+             "(planner + refiner + synthesizer). On cap-crossed, the "
+             "loop returns a partial answer from accumulated evidence "
+             "(if any hops completed) or a cap-reason refusal. Mirrors "
+             "`rlat reverify`, `rlat probe`, `rlat memory verify`.",
     )
     p.set_defaults(func=cmd_deep_search)

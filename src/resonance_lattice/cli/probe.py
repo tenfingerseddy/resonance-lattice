@@ -1,21 +1,22 @@
 """`rlat probe <km.rlat>` — idle-cycle self-probe.
 
 Architecture §14. The corpus-as-subject move: between active sessions,
-identify weak zones (queries that failed to ground, repeated queries
-without strong matches) and re-attempt deep-search against the current
-state of the corpus. Successful re-attempts write synthesis_candidates
-just like a normal deep-search; the next `bench_lensed_dogfood accept`
-promotes them.
+identify weak zones (intents whose success criteria went unmet — the
+keystone gap) and re-attempt deep-search against the current state of the
+corpus. Successful re-attempts write synthesis_candidates just like a
+normal deep-search, promoted on the next consolidation pass.
 
-v1 surface: a CLI command the user invokes on demand. v2 may wire a
-weekly schedule. The substrate is identical either way.
+Manual on-demand CLI today. A scheduled-cadence variant (cron, hook)
+would reuse the same substrate; that's a Phase E candidate gated on a
+measurement that on-demand misses queries the schedule would catch.
 
-Weak-zone signals:
+Weak-zone signal (the keystone gap — architecture §4):
 
-  - Past dogfood events with `intent_context` containing
-    "deep-search-failed" — queries that previously failed to ground.
-  - Repeated queries (same query in N+ events) without verdict-positive
-    signal — the corpus didn't answer well.
+  - An intent whose evaluated `success_criteria` are unmet: its most recent
+    resolution rolled up `not_satisfied` or `unknown`. That intent's text is
+    the query to re-attempt — the corpus did not let the agent meet what the
+    user intended. (This replaced the older dogfood-ledger heuristic of
+    failed/repeated queries; an unmet criterion is the principled gap.)
 
 For each weak-zone query, run `rlat deep-search` and capture the result.
 Successful re-runs produce synthesis_candidate rows automatically (via
@@ -29,70 +30,56 @@ import argparse
 import json
 import sys
 import time
-from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 def _weak_zone_queries(state_dir: Path, max_unique: int) -> list[str]:
-    """Scan the dogfood event ledger for queries that didn't ground well.
+    """Surface intents whose evaluated success criteria are unmet — the
+    keystone gap (architecture §4: a Gap is an Intent whose `criterion_checks`
+    show unmet criteria), the principled replacement for the old dogfood-ledger
+    heuristic.
 
-    Two signals:
-      1. Events with intent_context startswith 'deep-search-failed'.
-      2. Repeated queries (same query >= 2 events) that never received
-         an 'accept' verdict.
+    Reads the intent-kind outcome records and the live intent graph: an intent
+    whose **most recent** resolution rolled up `not_satisfied` or `unknown`
+    (its criteria were not all met) is a weak zone, and its text is the query
+    to re-attempt. An intent later resolved `satisfied` drops out. Returns up
+    to `max_unique` distinct intent texts, most-recently-unmet first.
 
-    Returns up to `max_unique` unique queries in order of weakness
-    (failures first, then repeated-no-accept).
+    `state_dir` is the ledger directory `<root>/ledger`; the outcome log and
+    the live intent store both hang off its parent state root.
     """
-    ledger = state_dir / "dogfood_events.jsonl"
-    if not ledger.exists():
+    from ..state import LiveIntentStore
+    from ..state.claim_outcome import ClaimOutcomeLog
+
+    state_root = state_dir.parent
+    records = ClaimOutcomeLog(state_root).read(kind="intent")
+    if not records:
         return []
-    events: list[dict] = []
-    for line in ledger.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+    # Most-recent outcome per intent, by `resolved_at` (robust to a record
+    # appended out of resolution order); ties keep the later-appended one.
+    latest: dict = {}
+    for r in records:
+        prev = latest.get(r.intent_id)
+        if prev is None or r.resolved_at >= prev.resolved_at:
+            latest[r.intent_id] = r
+    intents = {i.intent_id: i for i in LiveIntentStore(state_root).list_all()}
 
-    failed = [
-        e["query"] for e in events
-        if isinstance(e.get("intent_context"), str)
-        and e["intent_context"].startswith("deep-search-failed")
+    unmet = [
+        (r.resolved_at, intents[iid].text)
+        for iid, r in latest.items()
+        if r.roll_up_verdict in ("not_satisfied", "unknown")
+        and iid in intents and intents[iid].text.strip()
     ]
-
-    accepts_by_q: dict[str, int] = {}
-    counts_by_q: Counter = Counter()
-    for e in events:
-        q = e.get("query")
-        if not q:
-            continue
-        counts_by_q[q] += 1
-        if e.get("verdict") == "accept":
-            accepts_by_q[q] = accepts_by_q.get(q, 0) + 1
-
-    repeated_no_accept = [
-        q for q, c in counts_by_q.most_common()
-        if c >= 2 and accepts_by_q.get(q, 0) == 0
-    ]
-
-    # Probe-already-attempted bookkeeping — events with
-    # intent_context starting "probe-" should not be retried this cycle.
-    probed_before = {
-        e["query"] for e in events
-        if isinstance(e.get("intent_context"), str)
-        and e["intent_context"].startswith("probe-")
-    }
+    unmet.sort(key=lambda pair: pair[0], reverse=True)  # most recent first
 
     seen: set[str] = set()
     out: list[str] = []
-    for q in list(failed) + list(repeated_no_accept):
-        if q in seen or q in probed_before:
+    for _resolved_at, text in unmet:
+        if text in seen:
             continue
-        seen.add(q)
-        out.append(q)
+        seen.add(text)
+        out.append(text)
         if len(out) >= max_unique:
             break
     return out
@@ -128,8 +115,9 @@ def cmd_probe(args: argparse.Namespace) -> int:
     if not state_dir.exists():
         print(
             "error: no .rlat-state/ledger/ in current directory — "
-            "rlat probe needs accumulated event history to find weak "
-            "zones. Run from your workspace root after some rlat usage.",
+            "rlat probe finds weak zones from resolved intents whose "
+            "success criteria went unmet. Run from your workspace root "
+            "after some intent activity.",
             file=sys.stderr,
         )
         return 1
@@ -155,28 +143,50 @@ def cmd_probe(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
 
-    from ..optimise.synth_queries import api_key_or_error
+    from .._anthropic import api_key_or_error
     try:
         api_key = api_key_or_error()
     except RuntimeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
+    if args.cost_cap_usd is not None and args.cost_cap_usd <= 0:
+        print(
+            f"error: --cost-cap-usd must be positive (got {args.cost_cap_usd})",
+            file=sys.stderr,
+        )
+        return 1
+
     client = anthropic.Anthropic(api_key=api_key)
     km_path = Path(args.knowledge_model)
 
+    from .._pricing import CostMeter
     from ..deep_search.loop import deep_search
+
+    # One shared meter across every query in this probe pass. The cap is
+    # session-wide: once observed spend crosses it, subsequent
+    # `deep_search` calls short-circuit in their own pre-flight check.
+    meter = CostMeter(cap_usd=args.cost_cap_usd)
 
     n_grounded = 0
     n_failed = 0
     for i, query in enumerate(queries, start=1):
         print(f"[probe] {i}/{len(queries)}: {query[:60]}", file=sys.stderr)
+        if meter.has_exceeded_cap():
+            print(
+                f"[probe]   skipped: cost cap crossed "
+                f"(${meter.cost_so_far():.4f} of ${meter.cap_usd:.4f})",
+                file=sys.stderr,
+            )
+            n_failed += 1
+            continue
         t0 = time.monotonic()
         try:
             result = deep_search(
                 km_path, query, client=client,
                 max_hops=args.max_hops, top_k=args.top_k,
                 source_root=None, strict_names=False,
+                meter=meter,
             )
         except (FileNotFoundError, ValueError, RuntimeError) as e:
             print(f"[probe]   skipped: {e}", file=sys.stderr)
@@ -204,7 +214,8 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def add_subparser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "probe",
-        help="Idle-cycle self-probe: re-attempt failed / under-grounded queries",
+        help="Idle-cycle self-probe: re-attempt intents whose success "
+             "criteria went unmet",
     )
     p.add_argument("knowledge_model")
     p.add_argument("--limit", type=int, default=5,
@@ -214,4 +225,9 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--top-k", type=int, default=10)
     p.add_argument("--dry-run", action="store_true",
                    help="List weak-zone queries without running deep-search")
+    p.add_argument("--cost-cap-usd", type=float, default=None,
+                   help="Cap cumulative LLM spend in USD across all queries "
+                        "this pass. Once observed spend crosses the cap, "
+                        "remaining queries are skipped. Mirrors `rlat "
+                        "reverify` and `rlat memory verify`.")
     p.set_defaults(func=cmd_probe)

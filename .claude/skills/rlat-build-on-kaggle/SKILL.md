@@ -463,6 +463,7 @@ across versions.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `'charmap' codec can't decode byte ...` traceback on push | Windows CP1252 decode of server response | `setx PYTHONUTF8 1` once; new terminal; re-push. The server-side push almost certainly succeeded — re-push is idempotent. |
+| `subprocess-exited-with-error` / "Getting requirements to build wheel did not run successfully" when `pip install`-ing local source (Pattern B) | `/kaggle/input` is read-only; setuptools writes `.egg-info` into the source tree during the metadata hook | `shutil.copytree` the source to `/kaggle/working` first, then `pip install` from the copy. Also drop `pip --quiet` — it hides the real setuptools traceback. Include any file pyproject references (`license = {file=...}`, README) in the dataset. |
 | `409 Conflict for url: …KernelsApiService/SaveKernel` on re-push | `id` ≠ `slugify(title)` after first push registered the title slug | Make `id` and `slugify(title)` match (lowercase + hyphens), then re-push |
 | `status` returns 403 right after push | Charmap crash silently ate the success record | `setx PYTHONUTF8 1`, re-push |
 | Encode finishes, `.rlat` build crashes with `RuntimeError: faiss is not installed` | `pip install rlat[build]` doesn't include `[ann]`; corpora >5000 passages need it | Use `pip install rlat[build,ann]` |

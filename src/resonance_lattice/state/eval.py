@@ -45,11 +45,16 @@ import datetime as _dt
 import statistics
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ..memory.store import Memory, Row
-from .ledger import OutcomeLedger, OutcomeRecord
+from .claim import Claim
+from .claim_outcome import ClaimOutcomeLog, ClaimOutcomeRecord
 from .recall_cache import RecallCache, RecallEntry
 from .recall_diagnostic import RecallDiagnosticEntry, RecallDiagnosticLog
+
+if TYPE_CHECKING:  # annotations only — `state` must not import `memory` at
+    # module load (memory.claim_store imports state.claim → import cycle).
+    from ..memory.claim_store import ExperienceClaimStore
 
 # Intent-level weights for the "useful" axis. Higher levels count more —
 # a satisfied direction is worth more than a satisfied step. Engineering
@@ -348,10 +353,10 @@ def _within_window(ts: str, window: WindowSpec) -> bool:
     return window.since <= ts < window.until
 
 
-def _row_count_by_level(rows: list[Row]) -> dict[str, int]:
+def _claim_count_by_level(claims: list[Claim]) -> dict[str, int]:
     counts: dict[str, int] = {}
-    for row in rows:
-        counts[row.level] = counts.get(row.level, 0) + 1
+    for claim in claims:
+        counts[claim.kind] = counts.get(claim.kind, 0) + 1
     return counts
 
 
@@ -381,7 +386,7 @@ def _dropped_at_distribution(
 
 
 def _verdict_confidence_distribution(
-    outcomes: list[OutcomeRecord], window: WindowSpec,
+    outcomes: list[ClaimOutcomeRecord], window: WindowSpec,
 ) -> dict[str, int]:
     """Count {high, medium, low} verdict confidences across criterion
     checks resolved in the window."""
@@ -389,7 +394,7 @@ def _verdict_confidence_distribution(
     for record in outcomes:
         if not _within_window(record.resolved_at, window):
             continue
-        for cc in record.criterion_checks:
+        for cc in record.details.criterion_checks:
             counts[cc.verdict_confidence] = (
                 counts.get(cc.verdict_confidence, 0) + 1
             )
@@ -399,9 +404,9 @@ def _verdict_confidence_distribution(
 def compute_session_scorecard(
     state_root: Path | str,
     *,
-    memory: Memory,
+    memory: ExperienceClaimStore,
     window: WindowSpec,
-    outcomes: list[OutcomeRecord] | None = None,
+    outcomes: list[ClaimOutcomeRecord] | None = None,
     recalls: list[RecallEntry] | None = None,
     diagnostics: list[RecallDiagnosticEntry] | None = None,
     memory_depth: dict[str, int] | None = None,
@@ -418,8 +423,16 @@ def compute_session_scorecard(
     loop already writes during normal operation.
     """
     state_root = Path(state_root)
+    # `intent`-kind only — the scorecard's useful/effortless axes count
+    # intents; a `session`-kind record would double-count the session
+    # alongside its constituent intents. Filter both the self-read and a
+    # caller-supplied list so the contract holds whatever the source.
     if outcomes is None:
-        outcomes = list(OutcomeLedger(state_root).iter_records())
+        outcomes = list(
+            ClaimOutcomeLog(state_root).iter_records(kind="intent")
+        )
+    else:
+        outcomes = [o for o in outcomes if o.kind == "intent"]
     if recalls is None:
         recalls = RecallCache(state_root).read_recent(limit=None)
     if diagnostics is None:
@@ -432,7 +445,7 @@ def compute_session_scorecard(
     for record in outcomes:
         if not _within_window(record.resolved_at, window):
             continue
-        weight = INTENT_LEVEL_WEIGHTS.get(record.intent_level, 1.0)
+        weight = INTENT_LEVEL_WEIGHTS.get(record.details.intent_level, 1.0)
         intents_total_count += 1
         intents_total_weight += weight
         if record.roll_up_verdict == "satisfied":
@@ -462,8 +475,7 @@ def compute_session_scorecard(
 
     # Memory depth — point-in-time snapshot, not window-bounded.
     if memory_depth is None:
-        rows, _ = memory.read_all()
-        memory_depth = _row_count_by_level(rows)
+        memory_depth = _claim_count_by_level(memory.read_all())
 
     return SessionScorecard(
         window=window,
@@ -516,9 +528,9 @@ def daily_windows(
 
     if state_root is not None:
         # Local import so eval.py doesn't depend on sessions at import time
-        # (sessions.py imports from .ledger; .ledger imports from memory —
-        # keeping this lazy avoids surprising import cycles for callers
-        # that only want the calendar-day path).
+        # (sessions.py imports from ..memory._common; keeping this lazy
+        # avoids pulling memory into state at module load — the same
+        # cycle the TYPE_CHECKING note above guards against).
         from .sessions import SessionMarkerLog
 
         markers = SessionMarkerLog(state_root).read_all()

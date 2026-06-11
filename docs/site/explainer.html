@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>What is Resonance Lattice? — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html" aria-current="page">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>What is Resonance Lattice?</h1>
+  <p class="lede">
+    In one line: it turns your own files into a single smart file an AI assistant
+    can search and quote from — and that file also <em>learns the world it
+    covers</em>. Answers come from your documents and from what's been learned
+    about your world, not from the assistant's imagination — and everything
+    carries a receipt you can check.
+  </p>
+  <p>
+    This page explains the whole idea in plain language. No setup, no jargon — if
+    you've never heard of the technology underneath, you're in the right place.
+    Want to try it instead of read about it? Jump to
+    <a href="getting-started.html">Getting started</a>.
+  </p>
+
+  <h2>The problem it solves</h2>
+  <p>
+    AI assistants are fluent and confident — but they have three habits that make
+    them hard to rely on:
+  </p>
+  <ul>
+    <li><strong>They make things up.</strong> When an assistant doesn't know
+      something, it often invents a plausible-sounding answer anyway.</li>
+    <li><strong>They forget.</strong> What you told it last week is usually gone.</li>
+    <li><strong>They can't reliably use <em>your</em> material.</strong> Your
+      documents, your team's docs, your codebase — the assistant can't dependably
+      look things up in them and cite what it finds.</li>
+  </ul>
+  <p>
+    Resonance Lattice — <code>rlat</code> for short — fixes the third problem, and
+    helps with the other two.
+  </p>
+
+  <h2>The idea, in everyday terms</h2>
+  <p>
+    Think of <code>rlat</code> as a way to give your assistant a
+    <strong>well-organised, searchable binder of your own material that it has to
+    cite</strong>. You point it at your files; it packs them into one searchable
+    file. When you ask a question, the assistant looks the answer up in that file
+    and tells you — showing exactly which document each fact came from, so you can
+    check it.
+  </p>
+  <p>
+    That one searchable file is called a <strong>knowledge model</strong> (it ends
+    in <code>.rlat</code>). It is just a normal file: you can copy it, share it, or
+    keep it on your laptop. It contains your text plus a built-in index that makes
+    searching by <em>meaning</em> — not just keywords — fast.
+  </p>
+
+  <h2>How it works, in three steps</h2>
+  <div class="toc">
+    <div class="toc-card">
+      <div class="toc-title">1 · Build</div>
+      <div class="toc-desc">Point <code>rlat</code> at a folder of documents. It
+        reads them and packs them into one knowledge model. One command, runs on
+        your machine.</div>
+    </div>
+    <div class="toc-card">
+      <div class="toc-title">2 · Ask</div>
+      <div class="toc-desc">You (or your assistant) ask a question in plain words.
+        <code>rlat</code> finds the handful of passages most likely to hold the
+        answer — by meaning, so wording doesn't have to match.</div>
+    </div>
+    <div class="toc-card">
+      <div class="toc-title">3 · Ground</div>
+      <div class="toc-desc">The assistant writes its answer <em>from those
+        passages</em>, with a citation on each fact — so every claim points back to
+        a real line in your documents.</div>
+    </div>
+  </div>
+
+  <h2>Why that's useful</h2>
+  <ul>
+    <li><strong>Answers you can trust.</strong> Every fact traces back to a real
+      passage you can open and read. No more guessing whether the assistant made
+      it up.</li>
+    <li><strong>Yours, and offline.</strong> It runs on your machine. No account,
+      no cloud upload, no dials to tune — one recipe that just works.</li>
+    <li><strong>It remembers.</strong> Across sessions it keeps a small, private
+      note of what's been useful, so it gets a little better at helping <em>you</em>
+      over time.</li>
+    <li><strong>It checks itself.</strong> A knowledge model can audit its own
+      shape and tell you where it's weak (see below).</li>
+  </ul>
+
+  <h2>It learns your world — with proof</h2>
+  <p>
+    A knowledge model holds more than your documents. Over time it can carry
+    three kinds of learned knowledge about the world those documents describe —
+    tested in three unrelated worlds: a garden, a law practice, a Microsoft
+    Fabric tenant. The results are published.
+  </p>
+  <ul>
+    <li><strong>Stable facts</strong> — things that are simply true of your
+      world: the garden's water restrictions, the practice's jurisdiction, the
+      tenant's capacity.</li>
+    <li><strong>Standing rules</strong> — constraints every answer must respect:
+      the garden is organic-only, the practice takes no family-law matters, the
+      tenant allows no preview features. Serving these cut rule-breaking answers
+      from 62% to 7% with no over-blocking
+      (<a href="benchmarks.html#r1-constraints">measured</a>), and the effect
+      held in the garden and the law practice, not just the software tenant
+      (<a href="benchmarks.html#r1x-cross-domain">measured</a>).</li>
+    <li><strong>What was tried and failed</strong> — recorded with its verdict,
+      so the assistant stops suggesting it: the pest treatment that didn't work,
+      the billing model the partners rejected, the integration that failed
+      testing. A served failure record stopped 7 of 7 repeat recommendations
+      (<a href="benchmarks.html#r2-falsification-ledger">measured</a>).</li>
+  </ul>
+  <p>
+    Each entry keeps a receipt — where it came from and when — so you can always
+    see why the assistant believes it. And corrections are explicit: when a
+    learned fact is later disproven, the record says so. Nothing is silently
+    deleted.
+  </p>
+
+  <h2>It can notice its own gaps and conflicts</h2>
+  <p>
+    This is the part that makes <code>rlat</code> more than a search box. Because
+    it can see the shape of everything it holds, a knowledge model can quietly flag:
+  </p>
+  <ul>
+    <li><strong>Gaps</strong> — questions people keep asking that your documents
+      can't actually answer.</li>
+    <li><strong>Contradictions</strong> — two documents that disagree about the
+      same thing (often an old page nobody deleted).</li>
+    <li><strong>Stale facts</strong> — something fetched from the web that the
+      world has since moved past.</li>
+  </ul>
+  <p>
+    Finding these is free and needs no AI service — it's done by the assistant you
+    already have. And nothing is changed behind your back: <code>rlat</code>
+    <em>surfaces</em> these for you to review. With your okay, it can fill a gap
+    from a trusted source (and show you where it got it), but it never edits your
+    documents on its own.
+  </p>
+  <p>
+    Want the full tour — the six-stage loop, the four skills, the options, and
+    whether you ever need an API key? See
+    <a href="self-improvement.html">How a knowledge model improves itself</a>.
+  </p>
+
+  <div class="callout callout-note">
+    <p><strong>What it is — and isn't.</strong> <code>rlat</code> faithfully
+      represents <em>what your documents — and the world facts it has captured —
+      say</em>. That is grounding, not universal truth. If a document or a
+      captured fact is wrong, the answer drawn from it will be too — but you'll
+      always see the source and can judge for yourself. It is not a chatbot, not a
+      replacement for web search, and it never changes your original files.</p>
+  </div>
+
+  <h2>Who it's for</h2>
+  <p>
+    Anyone who wants an assistant to answer reliably from a specific body of
+    material — a team's documentation, a codebase, a research library, a product
+    manual, a knowledge base — and to <em>show its work</em>. If "I need the
+    assistant to actually use these documents, and prove where each answer came
+    from" sounds like you, that's exactly what this is for.
+  </p>
+
+  <div class="group-label">Where to go next</div>
+  <div class="toc">
+    <a class="toc-card" href="getting-started.html">
+      <div class="toc-title">Getting started</div>
+      <div class="toc-desc">Install it, build your first knowledge model, and run
+        your first question — in about fifteen minutes.</div>
+    </a>
+    <a class="toc-card" href="core-features.html">
+      <div class="toc-title">Core features</div>
+      <div class="toc-desc">The handful of things <code>rlat</code> is for, and the
+        command that serves each one.</div>
+    </a>
+    <a class="toc-card" href="benchmarks.html">
+      <div class="toc-title">Benchmarks</div>
+      <div class="toc-desc">The measured numbers behind every claim on this
+        page, and how to reproduce them.</div>
+    </a>
+    <a class="toc-card" href="claim-system.html">
+      <div class="toc-title">Claims</div>
+      <div class="toc-desc">How learned knowledge is earned, trusted, and
+        retired — and how to trace any claim to its source.</div>
+    </a>
+    <a class="toc-card" href="glossary.html">
+      <div class="toc-title">Glossary</div>
+      <div class="toc-desc">Every term in one place, in plain words — knowledge
+        model, source and insight layers, drift, and the rest.</div>
+    </a>
+  </div>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11.</p>
+  </div>
+</footer>
+
+</body>
+</html>

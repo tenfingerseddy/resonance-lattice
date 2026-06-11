@@ -6,7 +6,7 @@ We believe the future of AI is not about replacing knowledge with large language
 
 Users should have fine-grained control over **what** knowledge an LLM can access, **when** it can access it, and **how** it is allowed to use it. Knowledge should not be passively absorbed into opaque systems or treated as a generic input to model behaviour. It should remain visible, intentional, permissioned, and owned by the people who create it.
 
-This is the core product philosophy. Everything in v2.0 — the single-recipe encoder, the absent reader layer, the verified-retrieval contract, the grounding-mode directive, the absence of a hosted vector store — flows from it.
+This is the core product philosophy. Everything rlat ships — the single-recipe encoder, the verified-retrieval contract, the grounding-mode directive, faithfully-grounded synthesis, the absence of a hosted vector store — flows from it.
 
 ---
 
@@ -46,12 +46,12 @@ Users should decide exactly what knowledge an LLM can use, how it can use it, an
 
 A new layer for knowledge: one that helps people encode, inspect, retrieve, govern, and share what they know without surrendering control to closed models, hidden infrastructure, or rented intelligence.
 
-The shape today (v2.0):
+The shape today:
 
 - **Encode**: `rlat build` packages a corpus into a single `.rlat` file. One encoder, no knobs, runs locally.
 - **Inspect**: `rlat profile`, `rlat compare`, RQL `evidence` / `locate` / `corpus_diff` / `near_duplicates` / `drift` / `contradictions` — every angle on what a knowledge model contains, what's drifted, what conflicts.
 - **Retrieve**: `rlat search` with verified citations and drift status on every hit. Cross-knowledge-model `compose` and `merge` for federated queries. `--verified-only` for hard-evidence workflows.
-- **Govern**: `--mode {augment|knowledge|constrain}` directs how the consumer LLM treats the evidence. `--strict` aborts on drift. `rlat freshness` is the read-only gate before sync. The user controls the contract.
+- **Govern**: `--mode {augment|knowledge|constrain}` directs how the consumer LLM treats the evidence. `--verified-only` filters out drifted evidence. `rlat freshness` is the read-only gate before sync. The user controls the contract.
 - **Share**: `rlat convert <km> --to {bundled|local|remote}` reshapes storage modes without rebuilding. Hand off a knowledge model as a single file, ship it via HTTP, or open it for editing — the choice is the user's, not the platform's.
 - **Refresh**: `rlat refresh` (local) and `rlat sync` (remote) apply incremental deltas. Edit your source; sync your knowledge model in seconds; the optimised band re-projects from the new base for free.
 
@@ -63,7 +63,7 @@ The shape after v2.0 is set out under [Post-v2 priorities](#post-v2-priorities) 
 
 After v2.0 launches, the focus shifts from a powerful retrieval concept to a deeply useful knowledge platform:
 
-1. **MCP server.** Make Resonance Lattice directly usable inside modern AI agent workflows. The current CLI-first surface ships first because it's simple, scriptable, and provider-agnostic; an MCP wrapper extends the same `rlat skill-context` and `rlat search --format context` primitives into the tool-use protocol every major LLM provider is converging on.
+1. **The agent harness.** Grow Resonance Lattice from a retrieval layer into the context infrastructure for an AI-assistant harness — memory that compounds across sessions, portable lenses, and intent-conditioned retrieval — so the assistant is measurably better at session N+1 than at session N.
 2. **More source material types.** Expand beyond text documents into richer forms of user and organisational knowledge — chat transcripts, structured records, audio, code with semantic structure, design files. The encoder is the bottleneck; the format is general.
 3. **Robust fundamentals.** Reliability, explainability, repeatability, and trust. Audit-driven engineering continues; every shipped feature pairs with a harness suite that locks the contract.
 4. **Deep workflow integration.** Embed Resonance Lattice where people already work, not as another isolated tool. IDE extensions, document-editing surfaces, ticketing systems, code review.

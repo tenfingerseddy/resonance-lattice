@@ -33,7 +33,7 @@ def _refresh(km: Path) -> int:
     return cmd_refresh(_Args(
         knowledge_model=str(km),
         source=None, source_root=None, batch_size=4, ext=None,
-        discard_optimised=False, dry_run=False,
+        dry_run=False,
     ))
 
 
@@ -169,6 +169,30 @@ def run() -> int:
                   f"final {a_ids_final}", file=sys.stderr)
             return 1
         print("[incremental_refresh] guarantee 6 (stable passage_id) OK",
+              file=sys.stderr)
+
+        # ---- Guarantee 7: telemetry survives refresh ----
+        # Regression: apply_delta (the refresh rewrite) must preserve the
+        # append-only insight/telemetry.jsonl member, not silently drop it —
+        # the cross-session self-improvement substrate would otherwise vanish
+        # on every drift refresh.
+        from resonance_lattice.store import archive as _archive
+        tele = [{"ts": "2026-06-07T00:00:00+00:00", "session": "s", "layer": "source",
+                 "is_user_query": True, "query_emb": [0.1, 0.2],
+                 "ranked": [{"rank": 0, "idx": 0, "score": 0.9}]}]
+        _archive.append_telemetry_in_place(km, tele)
+        (root / "a.md").write_text(  # force a real delta-apply rewrite
+            "# Alpha v3\n\nEdited once more to force a refresh rewrite.",
+            encoding="utf-8")
+        rc = _refresh(km)
+        if rc != 0:
+            print(f"[incremental_refresh] FAIL guarantee 7: rc={rc}", file=sys.stderr)
+            return 1
+        if _archive.read_telemetry(km) != tele:
+            print(f"[incremental_refresh] FAIL guarantee 7: telemetry dropped by "
+                  f"refresh (got {_archive.read_telemetry(km)})", file=sys.stderr)
+            return 1
+        print("[incremental_refresh] guarantee 7 (telemetry survives refresh) OK",
               file=sys.stderr)
 
     print("[incremental_refresh] PASS", file=sys.stderr)

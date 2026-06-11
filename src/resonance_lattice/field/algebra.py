@@ -1,26 +1,15 @@
-"""Field algebra — minimal operators used by RQL composition ops.
+"""Field geometry helpers — the band-level primitives production actually uses.
 
-Surface kept tight: `merge`, `intersect`, `diff`, `subtract`, `empty`. No PSD
-projection, no temporal derivatives, no symplectic ops, no reaction-diffusion
-heads. The v0.11 surface (~271 ops) collapses here; the rest were deleted
-because they're either NumPy wrappers or relics of the field-as-content
-thesis.
+Surface: `centroid` (cli/compare, cli/summary, rql/compare), `greedy_cluster`
+(rql/inspect, rql/compose dedup, benchmarks), `complete_linkage_cluster`
+(curator/signals intent clustering).
 
-All operators are **elementwise** and shape-agnostic — they work on a single
-`(D,)` concept vector or on an `(N, D)` band tensor as long as the operands
-share a shape. Operators are linear and intentionally do not L2-renormalise
-their output: callers that need a unit vector apply
-`_runtime_common.l2_normalize` themselves. This keeps `merge` strictly
-associative and commutative.
-
-Invariants (validated by `tests/harness/property.py`):
-- `merge(a, merge(b, c)) == merge(merge(a, b), c)`        (associativity)
-- `merge(a, empty(...)) == a`                              (identity)
-- `merge(a, b) == merge(b, a)`                             (commutativity)
-- `intersect(a, b) == intersect(b, a)`                     (commutativity)
-- `subtract(a, a) == empty(...)`
-
-Phase 1 deliverable. RQL audit (Phase 6) may add 1-2 more.
+The v0.11 algebra surface (~271 ops) collapsed here, and the 2026-06 review
+removed the last five elementwise ops (`merge`/`intersect`/`diff`/`subtract`/
+`empty`) — they had no production caller (RQL's merge/intersect use different
+machinery: physical archive merge + `dense.max_cosines_against`). The
+sign-aware `intersect` design is preserved in git history if a future RQL
+surface wants it.
 """
 
 from __future__ import annotations
@@ -28,11 +17,6 @@ from __future__ import annotations
 import numpy as np
 
 from ._runtime_common import l2_normalize
-
-
-def empty(shape: int | tuple[int, ...], dtype=np.float32) -> np.ndarray:
-    """Identity element for `merge`. Zero vector / zero band."""
-    return np.zeros(shape, dtype=dtype)
 
 
 def centroid(band: np.ndarray) -> np.ndarray:
@@ -52,52 +36,6 @@ def centroid(band: np.ndarray) -> np.ndarray:
     return out
 
 
-def merge(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Additive combination — `a + b`.
-
-    Strict-associative and strict-commutative additive union over concept
-    vectors. Callers L2-renormalise the output if a unit-vector is needed
-    downstream (skipped here so the algebra invariants are exact).
-    """
-    return a + b
-
-
-def intersect(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Sign-aware bottleneck overlap.
-
-    Same-sign components → smaller magnitude wins, preserving the sign:
-    `intersect([0.5], [0.3]) == [0.3]`, `intersect([-0.7], [-0.2]) == [-0.2]`.
-    Disagreeing signs → 0 (no shared signal). Plain `np.minimum` would
-    inflate negative coordinates (`min(-0.2, -0.7) == -0.7`), which is the
-    wrong reading for the L2-normalised mixed-sign cosine vectors this module
-    targets. Commutative and associative.
-    """
-    same_sign = np.sign(a) == np.sign(b)
-    magnitude = np.minimum(np.abs(a), np.abs(b))
-    out = np.where(same_sign, magnitude * np.sign(a), 0)
-    return out.astype(a.dtype, copy=False)
-
-
-def diff(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Asymmetric residual — `max(a - b, 0)`.
-
-    "What's in `a` that isn't already in `b`" — components where `a` exceeds
-    `b` survive at their excess magnitude; equal-or-lower components zero
-    out. Asymmetric on purpose: `diff(a, b) != diff(b, a)` in general.
-    """
-    return np.maximum(a - b, 0)
-
-
-def subtract(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Signed residual — `a - b`.
-
-    The strict additive inverse of `merge`. `subtract(a, a) == empty(...)`,
-    `merge(a, subtract(b, a)) == b`. Distinct from `diff`: `subtract`
-    preserves sign, so negative components are valid output.
-    """
-    return a - b
-
-
 def greedy_cluster(
     embeddings: np.ndarray, threshold: float,
 ) -> list[list[int]]:
@@ -114,18 +52,16 @@ def greedy_cluster(
     want pairs-only filter on `len(cluster) >= 2`.
 
     Assumes rows are L2-normalised (cosine == dot product). Used by
-    `memory.consolidation` (episodic→semantic promotion at threshold 0.92)
-    and `rql.inspect.near_duplicates` (within-corpus dedup at 0.95). Single
-    home for the algorithm so the threshold-tuning history doesn't fork.
+    `rql.inspect.near_duplicates` (within-corpus dedup at 0.95) and
+    `rql.compose` (semantic dedupe in set unions). Single home for the
+    algorithm so the threshold-tuning history doesn't fork.
 
     Implementation: union-find over the strict upper-triangle threshold
     graph. O(N²) for the cosine pass; the union-find amortises near-O(1)
     per edge so the total cost is dominated by the matmul + the np.where
     over the threshold mask. The full-precision (N, N) cosine matrix
     means the practical ceiling for a single call is ~50K rows (~10 GB
-    float32); callers at higher scale must pre-shard. Episodic-tier
-    consolidation (≤2000) and most knowledge-model dedup workflows fit
-    comfortably.
+    float32); callers at higher scale must pre-shard.
     """
     n = embeddings.shape[0]
     if n == 0:
@@ -161,3 +97,49 @@ def greedy_cluster(
         groups.setdefault(find(i), []).append(i)
     # Sort each cluster by index, then sort clusters by their lowest member.
     return [sorted(members) for _, members in sorted(groups.items())]
+
+
+def complete_linkage_cluster(
+    embeddings: np.ndarray, threshold: float,
+) -> list[list[int]]:
+    """Complete-linkage clustering by cosine ≥ threshold — the chaining-RESISTANT
+    counterpart to `greedy_cluster`.
+
+    Single-linkage (`greedy_cluster`) honours transitive chains: A↔B and B↔C merge
+    {A, B, C} even when A↔C is below threshold. That is right for near-duplicate
+    dedup (0.95) but WRONG for intent clustering (0.70), where same-frame queries on
+    DIFFERENT topics chain into one mega-cluster (measured: single @ 0.70 → 1 cluster
+    / pairwise-F1 0.13; complete @ 0.70 → the true clusters / F1 1.0 — see
+    `benchmarks/bench_intent_clustering.py`). Complete-linkage merges two clusters
+    only if EVERY cross pair clears the threshold (max intra-cluster cosine distance
+    ≤ 1 − threshold), so a cluster is a genuine clique of mutually-similar items —
+    no chaining.
+
+    Same return contract as `greedy_cluster`: row-index lists, members ascending,
+    clusters ordered by lowest member; singletons kept. Assumes L2-normalised rows.
+    O(N²) distances + O(N² log N) linkage — fine for the buffered query counts intent
+    clustering runs on (capped well under `greedy_cluster`'s ceiling)."""
+    n = embeddings.shape[0]
+    if n == 0:
+        return []
+    if n == 1:
+        return [[0]]
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from scipy.spatial.distance import squareform
+
+    # Cosine distance from the dot product (rows are L2-normalised by contract), NOT
+    # scipy's pdist(metric="cosine") — pdist divides by the norm and a sanitised
+    # ZERO row (a junk/non-finite embedding the caller zeroed) yields a non-finite
+    # distance that crashes linkage. From the dot, a zero row scores cosine 0 →
+    # distance 1.0 (finite), so it simply never merges — the intended "junk is its
+    # own singleton" behaviour.
+    sims = embeddings @ embeddings.T
+    dist = np.clip(1.0 - sims, 0.0, 2.0)
+    np.fill_diagonal(dist, 0.0)
+    z = linkage(squareform(dist, checks=False), method="complete")
+    labels = fcluster(z, t=1.0 - threshold, criterion="distance")
+    groups: dict[int, list[int]] = {}
+    for idx, lab in enumerate(labels.tolist()):
+        groups.setdefault(lab, []).append(idx)
+    # Members ascending, clusters ordered by lowest member (greedy_cluster's contract).
+    return sorted((sorted(members) for members in groups.values()), key=lambda m: m[0])

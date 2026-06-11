@@ -4,22 +4,15 @@ The lens travels. Its schema is designed-portable from day one — no field
 references a specific corpus by identifier. Trust weights are keyed by
 source-pattern globs (e.g. `docs/*`), not by passage IDs. Insight
 preferences are keyed by `insight_id` content hash, which is stable across
-archives. Private insights embed in the same 768d encoder space as any
-corpus the lens loads against.
+archives.
 
-On-disk format: a `.lens` ZIP archive (architecture §5.1 Option B):
+On-disk format: a `.lens` ZIP archive:
 
   my-engineering-lens.lens (ZIP)
   ├── manifest.json
   ├── stance.md                (optional editorial constitution)
-  ├── memory.jsonl             (lens-scoped memory rows)
-  ├── intent_history.jsonl
-  ├── verdict_log.jsonl
   ├── trust_weights.json
-  ├── insight_preferences.json
-  ├── private_insights.jsonl
-  └── bands/
-      └── private_insights.npz
+  └── insight_preferences.json
 
 Use `load(path)` / `save(lens, path)` for end-to-end round-trip.
 `compose(lenses)` merges multiple lenses into one (team / role
@@ -31,18 +24,13 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import secrets
 import zipfile
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields as _fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
-import numpy as np
-
-from ..store import bands as bands_io
-from ..store.insight import InsightPassage, VerdictSignal
-from ..store.insight import load_jsonl as insight_load_jsonl
-from ..store.insight import write_jsonl as insight_write_jsonl
 
 LensScope = Literal["user", "role", "team", "project"]
 
@@ -53,11 +41,6 @@ _MANIFEST = "manifest.json"
 _STANCE = "stance.md"
 _TRUST = "trust_weights.json"
 _PREFERENCES = "insight_preferences.json"
-_MEMORY = "memory.jsonl"
-_INTENT_HISTORY = "intent_history.jsonl"
-_VERDICT_LOG = "verdict_log.jsonl"
-_PRIVATE_INSIGHTS = "private_insights.jsonl"
-_PRIVATE_BAND = "bands/private_insights.npz"
 
 
 # ---------------------------------------------------------------------------
@@ -81,9 +64,12 @@ class TrustWeight:
 
 @dataclass(frozen=True)
 class InsightPreference:
-    """One per-insight preference. Keyed by insight content hash so the
-    preference re-resolves against any corpus that promoted the same
-    insight independently."""
+    """One per-insight preference. Keyed by the corpus claim's
+    `content_fingerprint` (a content hash) so the preference re-resolves
+    against any corpus that promoted the same insight independently.
+
+    The field is named `insight_id` for lens-file-format stability; the
+    value is a corpus claim's `content_fingerprint`."""
     insight_id: str
     weight: float
 
@@ -100,8 +86,10 @@ class LensManifest:
     created_at: str
     last_active: str
     schema_version: str
-    encoder_version: str | None      # populated if private_insights exist
     scope_metadata: dict[str, Any]   # user_id / role_name / team_id / project_id
+
+
+_MANIFEST_FIELDS: frozenset[str] = frozenset(f.name for f in _fields(LensManifest))
 
 
 @dataclass
@@ -117,11 +105,6 @@ class Lens:
     declared_stance: str | None = None
     trust_weights: list[TrustWeight] = field(default_factory=list)
     insight_preferences: list[InsightPreference] = field(default_factory=list)
-    memory: list[dict[str, Any]] = field(default_factory=list)
-    intent_history: list[dict[str, Any]] = field(default_factory=list)
-    verdict_log: list[VerdictSignal] = field(default_factory=list)
-    private_insights: list[InsightPassage] = field(default_factory=list)
-    private_insights_band: np.ndarray | None = None
 
     # ----- lookup helpers used at retrieval time -----------------------
 
@@ -137,10 +120,11 @@ class Lens:
                 return tw.weight
         return 1.0
 
-    def preference_for_insight(self, insight_id: str) -> float:
-        """Resolve per-insight preference. Returns 1.0 if not in preferences."""
+    def preference_for_insight(self, content_fingerprint: str) -> float:
+        """Resolve per-insight preference, keyed by a corpus claim's
+        `content_fingerprint`. Returns 1.0 if not in preferences."""
         for pref in self.insight_preferences:
-            if pref.insight_id == insight_id:
+            if pref.insight_id == content_fingerprint:
                 return pref.weight
         return 1.0
 
@@ -169,7 +153,6 @@ def new_lens(
             created_at=now,
             last_active=now,
             schema_version=SCHEMA_VERSION,
-            encoder_version=None,
             scope_metadata=scope_metadata or {},
         ),
         declared_stance=declared_stance,
@@ -177,47 +160,16 @@ def new_lens(
 
 
 # ---------------------------------------------------------------------------
-# Serialisation helpers
-# ---------------------------------------------------------------------------
-
-def _verdict_log_to_jsonl(signals: Iterable[VerdictSignal]) -> str:
-    return "\n".join(json.dumps({
-        "source": s.source, "polarity": s.polarity,
-        "timestamp": s.timestamp, "lens_id": s.lens_id,
-    }, sort_keys=True) for s in signals)
-
-
-def _verdict_log_from_jsonl(text: str) -> list[VerdictSignal]:
-    out: list[VerdictSignal] = []
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        d = json.loads(line)
-        out.append(VerdictSignal(
-            source=d["source"], polarity=d["polarity"],
-            timestamp=d["timestamp"], lens_id=d.get("lens_id"),
-        ))
-    return out
-
-
-def _row_jsonl_dump(rows: Iterable[dict[str, Any]]) -> str:
-    return "\n".join(json.dumps(r, sort_keys=True) for r in rows)
-
-
-def _row_jsonl_load(text: str) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
-
-
-# ---------------------------------------------------------------------------
 # save / load
 # ---------------------------------------------------------------------------
 
 def save(lens: Lens, path: str | Path) -> None:
-    """Serialise the lens to a `.lens` ZIP at `path`. Atomic write via
-    tmp file + `os.replace`."""
+    """Serialise the lens to a `.lens` ZIP at `path`. Atomic write via a
+    per-writer-unique tmp file (pid + random suffix) + `os.replace`, so
+    two processes saving the same lens don't collide on `{path}.tmp`."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = Path(str(p) + ".tmp")
+    tmp = Path(f"{p}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
 
     # Stamp last_active on every save so consumers can dedupe stale
     # copies on disk.
@@ -243,37 +195,21 @@ def save(lens: Lens, path: str | Path) -> None:
                     [asdict(p) for p in lens.insight_preferences],
                     indent=2, sort_keys=True,
                 ))
-            if lens.memory:
-                zf.writestr(_MEMORY, _row_jsonl_dump(lens.memory))
-            if lens.intent_history:
-                zf.writestr(_INTENT_HISTORY, _row_jsonl_dump(lens.intent_history))
-            if lens.verdict_log:
-                zf.writestr(_VERDICT_LOG, _verdict_log_to_jsonl(lens.verdict_log))
-            if lens.private_insights:
-                zf.writestr(_PRIVATE_INSIGHTS, insight_write_jsonl(lens.private_insights))
-                if lens.private_insights_band is None:
-                    raise ValueError(
-                        "lens has private_insights but no private_insights_band "
-                        f"(need a ({len(lens.private_insights)}, D) array)"
-                    )
-                if lens.private_insights_band.shape[0] != len(lens.private_insights):
-                    raise ValueError(
-                        f"private_insights band has {lens.private_insights_band.shape[0]} "
-                        f"rows but private_insights list has {len(lens.private_insights)}"
-                    )
-                bands_io.write_band(zf, _PRIVATE_BAND, lens.private_insights_band)
+        os.replace(tmp, p)
     except BaseException:
+        # Clean up on any failure (write, close, or `os.replace`) so a
+        # Windows concurrent-writer collision doesn't leak an orphan tmp.
         tmp.unlink(missing_ok=True)
         raise
-
-    os.replace(tmp, p)
 
 
 def load(path: str | Path) -> Lens:
     """Load a `.lens` ZIP into a Lens object.
 
     Schema version mismatch raises. Missing optional sections are silently
-    treated as empty.
+    treated as empty. Unknown manifest keys are ignored — accommodates
+    .lens files written by earlier development snapshots without
+    requiring the loader to track every dropped field.
     """
     p = Path(path)
     with zipfile.ZipFile(p, "r") as zf:
@@ -284,7 +220,9 @@ def load(path: str | Path) -> Lens:
                 f"{p}: lens schema_version is {manifest_raw.get('schema_version')!r}, "
                 f"this build only reads {SCHEMA_VERSION!r}"
             )
-        manifest = LensManifest(**manifest_raw)
+        manifest = LensManifest(**{
+            k: v for k, v in manifest_raw.items() if k in _MANIFEST_FIELDS
+        })
 
         names = set(zf.namelist())
 
@@ -305,42 +243,11 @@ def load(path: str | Path) -> Lens:
                 for d in json.loads(zf.read(_PREFERENCES).decode("utf-8"))
             ]
 
-        memory = _row_jsonl_load(zf.read(_MEMORY).decode("utf-8")) \
-                 if _MEMORY in names else []
-        intent_history = _row_jsonl_load(zf.read(_INTENT_HISTORY).decode("utf-8")) \
-                         if _INTENT_HISTORY in names else []
-        verdict_log = _verdict_log_from_jsonl(zf.read(_VERDICT_LOG).decode("utf-8")) \
-                      if _VERDICT_LOG in names else []
-
-        private_insights: list[InsightPassage] = []
-        private_band: np.ndarray | None = None
-        if _PRIVATE_INSIGHTS in names:
-            text = zf.read(_PRIVATE_INSIGHTS).decode("utf-8")
-            if text.strip():
-                private_insights = insight_load_jsonl(text.splitlines())
-        if _PRIVATE_BAND in names:
-            private_band = bands_io.load_base(zf, _PRIVATE_BAND)
-            if private_insights and private_band.shape[0] != len(private_insights):
-                raise ValueError(
-                    f"{p}: private_insights band has {private_band.shape[0]} rows "
-                    f"but private_insights.jsonl has {len(private_insights)}"
-                )
-        if private_insights and private_band is None:
-            raise ValueError(
-                f"{p}: private_insights.jsonl present but bands/private_insights.npz "
-                f"missing — lens is half-written"
-            )
-
     return Lens(
         manifest=manifest,
         declared_stance=stance,
         trust_weights=trust_weights,
         insight_preferences=prefs,
-        memory=memory,
-        intent_history=intent_history,
-        verdict_log=verdict_log,
-        private_insights=private_insights,
-        private_insights_band=private_band,
     )
 
 
@@ -359,11 +266,6 @@ def compose(lenses: list[Lens], composed_id: str, name: str,
       for the same pattern string).
     - Insight preferences: union; on collision, the average of weights
       (a team's collective preference rather than one member's).
-    - Memory + intent_history + verdict_log: concatenated in input order.
-    - Private insights: union by `insight_id`; on collision, the first
-      lens's row wins (consumers can re-promote).
-    - Private band: concatenated. Encoder version must match across all
-      input lenses with non-empty private insights; mismatch raises.
 
     Returns the composed Lens. The input lenses are not mutated.
     """
@@ -397,37 +299,6 @@ def compose(lenses: list[Lens], composed_id: str, name: str,
         key=lambda x: x.insight_id,
     )
 
-    memory = [r for li in lenses for r in li.memory]
-    intent_history = [r for li in lenses for r in li.intent_history]
-    verdict_log = [s for li in lenses for s in li.verdict_log]
-
-    # Private insights: union by insight_id, first-wins.
-    seen_ids: set[str] = set()
-    private_insights: list[InsightPassage] = []
-    band_rows: list[np.ndarray] = []
-    encoder_version: str | None = None
-    for li in lenses:
-        if li.private_insights_band is None:
-            continue
-        if encoder_version is None:
-            encoder_version = li.manifest.encoder_version
-        elif (li.manifest.encoder_version is not None
-              and encoder_version != li.manifest.encoder_version):
-            raise ValueError(
-                f"compose(): encoder version mismatch — "
-                f"{encoder_version!r} vs {li.manifest.encoder_version!r}. "
-                f"Composed lens requires uniform encoder version across inputs."
-            )
-        for row_idx, ins in enumerate(li.private_insights):
-            if ins.insight_id in seen_ids:
-                continue
-            seen_ids.add(ins.insight_id)
-            # Re-stamp insight_idx to match the new composed order.
-            from dataclasses import replace as _replace
-            private_insights.append(_replace(ins, insight_idx=len(private_insights)))
-            band_rows.append(li.private_insights_band[row_idx])
-    private_band = np.stack(band_rows, axis=0) if band_rows else None
-
     return Lens(
         manifest=LensManifest(
             lens_id=composed_id,
@@ -438,15 +309,9 @@ def compose(lenses: list[Lens], composed_id: str, name: str,
             created_at=now,
             last_active=now,
             schema_version=SCHEMA_VERSION,
-            encoder_version=encoder_version,
             scope_metadata={"composed_from": [li.manifest.lens_id for li in lenses]},
         ),
         declared_stance=composed_stance,
         trust_weights=trust,
         insight_preferences=prefs,
-        memory=memory,
-        intent_history=intent_history,
-        verdict_log=verdict_log,
-        private_insights=private_insights,
-        private_insights_band=private_band,
     )

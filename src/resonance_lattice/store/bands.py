@@ -1,22 +1,16 @@
-"""NPZ band I/O — base + optional optimised slots.
+"""NPZ band I/O — the base band.
 
 Each band stored as a single NPZ entry under the key `"embeddings"` inside
-the .rlat ZIP at `bands/<name>.npz`. The optimised band is paired with its
-MRL projection matrix at `bands/optimised_W.npz` (single key
-`"projection"`); both are loaded atomically by `load_optimised`.
+the .rlat ZIP at `bands/<name>.npz`.
 
-NPZ keys (for external readers): `embeddings` for bands,
-`projection` for the optimised W matrix. See
+NPZ keys (for external readers): `embeddings` for bands. See
 docs/internal/KNOWLEDGE_MODEL_FORMAT.md for the full layout.
 
 Base band: (N, 768) L2-normalised float32.
-Optimised band: (N, 512) L2-normalised float32. Smaller MRL dims (64 / 128 /
-256) are zero-copy views via `embeddings[:, :k]` and `W[:k]`.
 
 Write paths apply `_runtime_common.l2_normalize` defensively so a caller
-that produced a slightly-off-norm tensor (e.g. mid-training snapshots)
-doesn't silently store unnormalised vectors. Reads do NOT re-check the norm
-to keep the load path fast.
+that produced a slightly-off-norm tensor doesn't silently store unnormalised
+vectors. Reads do NOT re-check the norm to keep the load path fast.
 
 Phase 2 deliverable. Base plan §2.2 + §4.6.
 """
@@ -33,7 +27,6 @@ if TYPE_CHECKING:
     from zipfile import ZipFile
 
 _BAND_KEY = "embeddings"
-_W_KEY = "projection"
 
 
 def _load_array(zf: "ZipFile", path: str, key: str) -> np.ndarray:
@@ -67,38 +60,6 @@ def load_base(zf: "ZipFile", band_path: str = "bands/base.npz") -> np.ndarray:
     return arr
 
 
-def load_optimised(
-    zf: "ZipFile",
-    band_path: str = "bands/optimised.npz",
-    w_path: str = "bands/optimised_W.npz",
-) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
-    """Load (band, W) atomically.
-
-    Returns (None, None) if BOTH slots are absent — the canonical
-    "optimised not present" case. Raises `ValueError` if exactly one of the
-    two is present (the archive is half-written and a silent (None, None)
-    would mask genuine corruption). Callers branch on `band is None` to
-    detect "optimised not present" without separate existence probes.
-    """
-    names = set(zf.namelist())
-    has_band = band_path in names
-    has_w = w_path in names
-    if not has_band and not has_w:
-        return None, None
-    if has_band ^ has_w:
-        raise ValueError(
-            f"optimised slot is half-written: {band_path} present={has_band}, "
-            f"{w_path} present={has_w}. Re-run `rlat optimise --force` to repair."
-        )
-    band = _load_array(zf, band_path, _BAND_KEY)
-    w = _load_array(zf, w_path, _W_KEY)
-    if band.ndim != 2:
-        raise ValueError(f"optimised band at {band_path} has shape {band.shape}; expected (N, D)")
-    if w.ndim != 2:
-        raise ValueError(f"projection at {w_path} has shape {w.shape}; expected (d_native, d_backbone)")
-    return band, w
-
-
 def write_band(zf: "ZipFile", band_path: str, embeddings: np.ndarray) -> None:
     """Write (N, D) L2-normalised embeddings to a band slot.
 
@@ -112,11 +73,3 @@ def write_band(zf: "ZipFile", band_path: str, embeddings: np.ndarray) -> None:
     arr = np.ascontiguousarray(embeddings, dtype=np.float32).copy()
     l2_normalize(arr)
     _write_npz(zf, band_path, **{_BAND_KEY: arr})
-
-
-def write_projection(zf: "ZipFile", w_path: str, w: np.ndarray) -> None:
-    """Write the MRL optimised projection matrix `(d_native, d_backbone)`
-    to `bands/optimised_W.npz`. Paired with `write_band(... bands/
-    optimised.npz)`; readers expect both or neither."""
-    arr = np.ascontiguousarray(w, dtype=np.float32)
-    _write_npz(zf, w_path, **{_W_KEY: arr})

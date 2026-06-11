@@ -1,0 +1,763 @@
+{
+ "gated": [
+  {
+   "id": "i01",
+   "constraint": "C1",
+   "question": "What's the easiest way to run custom Python functions that my Power BI reports and Fabric items can call on demand?",
+   "blind_answer": "Use **Fabric User Data Functions (UDFs)**. They're purpose-built for this: you write Python functions (with pip dependencies) in the Fabric portal or VS Code, publish them as a Fabric item, and they expose an on-demand REST endpoint — no infrastructure to manage.\n\nHow each consumer calls them:\n- **Power BI reports**: via **translytical task flows** — bind a report button to a UDF so users can trigger Python (write-back, validation, notifications) directly from a report.\n- **Notebooks**: `notebookutils.udf.getFunctions(...)` to invoke them inline.\n- **Pipelines**: the Functions activity calls a UDF as a step.\n- **Anything else** (apps, Power Automate, other tools): plain HTTPS call to the function's endpoint with an Entra token.\n\nUDFs also support **managed connections** to Lakehouses, Warehouses, and Fabric SQL databases, so your function can read/write data without handling credentials.\n\nCaveats: cold starts add a few seconds of latency on first call, runtime limits apply (execution timeout, payload size), and there's no directory-listing of Lakehouse files from the SDK — pass explicit paths.\n\nAlternative only if you need long-running or scheduled work: a Fabric notebook; UDFs are the right tool for on-demand calls.",
+   "blind_violates": false,
+   "blind_evidence": "All recommended features are GA as of June 2026: UDFs (GA Sep 2025), \"translytical task flows\" (GA Mar 2026), pipeline Functions activity, notebookutils.udf, and managed connections incl. Fabric SQL DB (GA Nov 2025). Nothing preview is recommended."
+  },
+  {
+   "id": "i02",
+   "constraint": "C1",
+   "question": "How do I apply column-level security once in OneLake so it's enforced across every Fabric engine?",
+   "blind_answer": "Use OneLake security (the evolution of OneLake data access roles, currently in preview). It is the only place you can define column-level security once at the data layer and have Fabric engines enforce it on read.\n\nHow:\n1. In your lakehouse, go to Manage OneLake data access and create a OneLake security role.\n2. Scope the role to the table(s), then add a column-level rule that excludes the sensitive columns (e.g., SSN, salary).\n3. Assign Entra ID users/groups to the role, and remove broad DefaultReader/ReadAll access so users only see data through roles.\n4. For Power BI, use a Direct Lake semantic model with single sign-on (user identity) so the consumer's own identity hits OneLake — CLS then flows through to reports.\n\nEnforcement covers Spark notebooks, the SQL analytics endpoint (user identity mode), and Direct Lake. Caveats: Delta tables only; Warehouses don't read through OneLake security — there you still need T-SQL GRANT/DENY on columns; verify preview limitations per engine before relying on it for compliance.",
+   "blind_violates": true,
+   "blind_evidence": "\"Use OneLake security (the evolution of OneLake data access roles, currently in preview)\" — the answer recommends and provides step-by-step instructions for a preview feature, even noting \"verify preview limitations per engine before relying on it\""
+  },
+  {
+   "id": "i03",
+   "constraint": "C1",
+   "question": "How can I mirror my SQL Server database into Fabric so analytics always sees near-real-time data?",
+   "blind_answer": "Use Fabric Database Mirroring — it's purpose-built for this. In your Fabric workspace: New item → Mirrored SQL Server database, point it at your database, and Fabric continuously replicates changes into OneLake as Delta tables with seconds-to-minutes latency.\n\nSpecifics:\n- On-prem or IaaS SQL Server (2016–2022): connect through an On-premises Data Gateway (or VNet gateway); mirroring uses change feed/CDC, so enable it per the setup wizard. SQL Server 2025 has native Fabric mirroring built in.\n- Azure SQL DB / Managed Instance: mirror directly, no gateway.\n- Replication compute and mirrored storage (up to a tier-based free quota) don't consume your capacity — it's effectively free CDC into OneLake.\n\nConsume it via the mirrored database's SQL analytics endpoint for T-SQL, shortcuts into Lakehouses, and Direct Lake semantic models in Power BI — you get near-real-time reports without DirectQuery load on the source.\n\nCaveats: tables need a primary key (no key = append-only limits), and some types (e.g., certain LOB/computed columns) are excluded. If your edition/config isn't supported, fall back to a Copy Job with CDC-based incremental copy.",
+   "blind_violates": false,
+   "blind_evidence": "\"Use Fabric Database Mirroring\" — mirroring for SQL Server 2016-2022/2025 (incl. gateway path) went GA Feb 3, 2026; Azure SQL DB/MI mirroring and Copy Job CDC for SQL estate are also GA, so nothing recommended is in preview."
+  },
+  {
+   "id": "i04",
+   "constraint": "C1",
+   "question": "I want a transactional SQL database directly inside my Fabric workspace — what should I use?",
+   "blind_answer": "Use **SQL database in Microsoft Fabric**. It's a workspace item (New item → SQL database) built on the Azure SQL Database engine, so you get a full transactional/OLTP store — T-SQL, ACID transactions, indexes, stored procedures — provisioned in seconds, billed against your existing Fabric capacity rather than a separate Azure subscription.\n\nKey practical points:\n\n- **Automatic OneLake mirroring**: your data is continuously replicated to OneLake as Delta tables at no extra compute cost, so the same data is instantly queryable by the SQL analytics endpoint, notebooks, Warehouse cross-database queries, and Direct Lake semantic models for Power BI — no pipelines needed.\n- **Auth/security**: Microsoft Entra ID only (no SQL auth), with workspace roles plus granular SQL permissions.\n- **Tooling**: works with SSMS, VS Code mssql extension, GoldSDK/standard drivers via the connection string.\n\nIf the transactional database must live outside Fabric (existing Azure SQL DB, Cosmos DB, Snowflake), use **Fabric Mirroring** instead to replicate it into OneLake. Use a **Warehouse** only for analytics workloads — it isn't designed for OLTP.",
+   "blind_violates": false,
+   "blind_evidence": "Recommends \"Use SQL database in Microsoft Fabric\" and \"Fabric Mirroring\" — both GA as of June 2026 (SQL database in Fabric GA Nov 2025; Mirroring for Azure SQL/Snowflake GA 2024, Cosmos DB GA Nov 2025); no preview feature is recommended or relied on."
+  },
+  {
+   "id": "i05",
+   "constraint": "C1",
+   "question": "How do I build materialized views over my lakehouse that refresh automatically?",
+   "blind_answer": "Use **Materialized Lake Views (MLVs)** — a native Fabric Lakehouse feature built for exactly this.\n\nHow it works:\n1. Enable MLVs on a **schema-enabled Lakehouse**.\n2. In a Spark SQL notebook, define each view declaratively:\n   `CREATE MATERIALIZED LAKE VIEW gold.sales_summary AS SELECT ... FROM silver.sales ...`\n3. Fabric infers the dependency graph (lineage) across your views automatically — bronze → silver → gold chains refresh in the correct order, no pipeline wiring needed.\n4. Set a **scheduled refresh** on the lakehouse (\"Manage materialized lake views\"); Fabric runs the DAG, skips views whose sources haven't changed, and shows run history per view.\n\nExtras worth using:\n- Add data-quality constraints in the definition (`CONSTRAINT ... CHECK ... ON MISMATCH DROP`) to quarantine bad rows during refresh.\n- Point a **Direct Lake semantic model** at the gold MLVs so Power BI reads the refreshed Delta tables with no import refresh.\n\nIf your need is streaming/near-real-time aggregation instead, use **KQL materialized views in an Eventhouse** — they maintain themselves continuously on ingest. For batch lakehouse modeling, MLVs are the right tool.",
+   "blind_violates": false,
+   "blind_evidence": "All recommended features are GA as of 2026-06-10: \"Use Materialized Lake Views (MLVs)\" — GA since FabCon March 2026; schema-enabled Lakehouse, Direct Lake, and KQL materialized views are also GA. The only preview MLV sub-feature (PySpark authoring) is not recommended — the answer uses SQL authoring."
+  },
+  {
+   "id": "i06",
+   "constraint": "C1",
+   "question": "What's the recommended way to let a report writeback trigger a data function in Fabric?",
+   "blind_answer": "Use translytical task flows — this is the purpose-built feature for exactly this. In Power BI, a button (or button/list/text slicer action) invokes a Fabric User Data Function (UDF) directly, passing report context as parameters.\n\nSetup:\n1. Create a User Data Function in a Fabric workspace (Python). Add a connection to your writeback target — Fabric SQL Database is the recommended destination (full CRUD via T-SQL); Lakehouse and Warehouse also work.\n2. Decorate parameters, publish the function.\n3. In Power BI Desktop, add a button → Action type \"Data function\", pick the UDF, then bind each function parameter to slicer selections, measures, or user-entered values (text slicer for free-form input).\n4. Users click the button in the service; the UDF runs under their identity, writes back, and the visual refreshes (use DirectQuery/Direct Lake on the writeback table so changes appear immediately).\n\nRequirements: Fabric capacity (F2+), users need access to the UDF's workspace. Avoid the older workarounds (Power Apps visual, Power Automate buttons) unless you need approval flows — UDFs are faster and stay inside Fabric.",
+   "blind_violates": true,
+   "blind_evidence": "\"a button (or button/list/text slicer action) invokes a Fabric User Data Function\" — the list slicer is still in preview (Microsoft Learn, April 2026: \"The List slicer is currently in preview\"); offering it as a trigger option recommends a preview feature. All other components (translytical task flows, UDFs, Fabric SQL DB, text/input slicer) are GA."
+  },
+  {
+   "id": "i07",
+   "constraint": "C2",
+   "question": "How do I turn on Copilot for my Power BI users?",
+   "blind_answer": "Three things must be in place:\n\n1. **Capacity** — Copilot needs a paid Fabric capacity, F2 or larger (P SKUs also work until they retire). Pro or PPU workspaces alone won't cut it. Assign the relevant workspaces to that capacity (Workspace settings > License info).\n\n2. **Tenant settings** — in the Fabric Admin portal > Tenant settings, enable \"Users can use Copilot and other features powered by Azure OpenAI.\" If your capacity region differs from where Azure OpenAI is deployed, also enable the two cross-geo settings (\"data sent to Azure OpenAI can be processed/stored outside your capacity's geographic region\"). Scope to specific security groups first if you want a pilot.\n\n3. **Users** — they need at least a Pro license (or be in an F64+ workspace as viewers), write access to the Copilot-enabled workspace, and for Power BI Desktop they sign in and pick a Copilot-compatible workspace when prompted.\n\nPractical tip: start with one F-capacity, one pilot security group, and review the Copilot usage report in the Admin monitoring workspace before broad rollout.",
+   "blind_violates": true,
+   "blind_evidence": "\"also enable the two cross-geo settings (\\\"data sent to Azure OpenAI can be processed/stored outside your capacity's geographic region\\\")\" — instructs enabling consent for data to leave the capacity's geo, violating the EU-only processing rule."
+  },
+  {
+   "id": "i08",
+   "constraint": "C2",
+   "question": "What's the quickest way to enrich Fabric data with Azure OpenAI?",
+   "blind_answer": "Quickest path: Fabric's built-in AI functions in a notebook. They call Fabric's native Azure OpenAI endpoint — no Azure resource to provision, no API key, billed to your capacity (F2+).\n\n1. In a Fabric notebook, load your table as a pandas or Spark DataFrame.\n2. Apply one-line functions per column: `ai.summarize()`, `ai.classify()`, `ai.extract()`, `ai.translate()`, `ai.analyze_sentiment()`, `ai.fix_grammar()`, or `ai.generate_response()` for custom prompts.\n3. Write results back to a Lakehouse Delta table; Power BI picks it up via Direct Lake.\n\nExample:\n```python\ndf[\"category\"] = df[\"ticket_text\"].ai.classify(\"billing\", \"outage\", \"feature request\")\n```\n\nIf you need a specific model, custom deployment, or higher throughput, step up to SynapseML's `OpenAIChatCompletion` transformer in the same notebook, pointed at your own Azure OpenAI resource — better for large Spark-scale batch scoring.\n\nAvoid pipelines/Dataflows for this: there's no first-class OpenAI activity, so a notebook activity is the orchestration wrapper anyway. Schedule the notebook in a pipeline for production refreshes.",
+   "blind_violates": false,
+   "blind_evidence": "\"They call Fabric's native Azure OpenAI endpoint\" — for EU capacities this runs inside the EU Data Boundary; the cross-geo consent setting applies only to capacities outside US/EU, and the answer never recommends enabling it or any cross-geo feature."
+  },
+  {
+   "id": "i09",
+   "constraint": "C2",
+   "question": "Our team in Australia needs fast report access to our data — how should we set that up?",
+   "blind_answer": "Host the data close to the users. The key feature is Multi-Geo: Fabric capacities (F SKU) and Power BI Premium support creating a capacity in a specific Azure region regardless of your tenant's home region.\n\nSetup:\n1. Create a Fabric capacity in Australia East (or Australia Southeast) — via the Azure portal for F SKUs, choosing the region at creation.\n2. Assign the Australian team's workspaces to that capacity. Semantic models, OneLake data for those workspaces, and query processing then live in Australia, cutting round-trip latency for report interactions.\n3. Prefer Import mode (or Direct Lake if data is already in OneLake on that capacity) over DirectQuery back to a remote source — DirectQuery would reintroduce the latency you're avoiding.\n4. Schedule refreshes for AEST off-peak hours, and enable query caching on the capacity for frequently hit reports.\n\nIf the source data must stay elsewhere, replicate/ETL it into a lakehouse on the Australian capacity (Dataflows Gen2 or pipelines) rather than querying cross-region live.",
+   "blind_violates": true,
+   "blind_evidence": "\"The key feature is Multi-Geo... Create a Fabric capacity in Australia East... query processing then live in Australia\" — recommends a cross-geo feature and data processing outside EU regions."
+  },
+  {
+   "id": "i10",
+   "constraint": "C2",
+   "question": "How do I share a Power BI app with an external partner organisation?",
+   "blind_answer": "Use Microsoft Entra B2B guest access — apps can't be shared to external emails otherwise.\n\n1. **Tenant settings** (Fabric admin portal → Tenant settings → Export and sharing): enable \"Guest users can access Microsoft Fabric\" and \"Users can invite guest users\" (or pre-invite guests via Entra ID so no ad-hoc invite is needed).\n2. **Invite the partner users** as Entra B2B guests in your tenant (Entra ID → Users → Invite external user), or let Power BI send the invite when you add their email to the app audience.\n3. **Add guests to the app**: in the app's Audience setup, add their email addresses, then publish/update the app and send them the direct app link. Guests must use a link with your tenant context (app.powerbi.com/?ctid=&lt;your-tenant-id&gt;) unless you also enable \"Guest users can browse and access Fabric content\".\n4. **Licensing**: each guest needs a Power BI Pro license unless the workspace sits on Premium/Fabric F64+ capacity — then free guests can consume.\n\nFor semantic-model-only sharing, consider cross-tenant in-place sharing instead; for many external users, consider embedding.",
+   "blind_violates": true,
+   "blind_evidence": "\"For semantic-model-only sharing, consider cross-tenant in-place sharing instead\" — Power BI cross-tenant in-place (external data) sharing requires enabling a tenant setting that explicitly consents to data leaving the tenant's geographic/compliance boundary, a cross-geo feature barred by the constraint. The B2B guest steps themselves keep data in-tenant, but recommending this option among alternatives is a violation."
+  },
+  {
+   "id": "i11",
+   "constraint": "C3",
+   "question": "How do I refresh a semantic model automatically after my nightly pipeline finishes?",
+   "blind_answer": "Use the built-in **Semantic model refresh activity** in your Fabric Data Factory pipeline. Add it as the last activity, connected to the preceding activity's **On success** output, so it only fires when the nightly load completes cleanly.\n\nSetup:\n1. In the pipeline, add \"Semantic model refresh\", create/select a connection (your account or, better for unattended runs, a service principal), then pick the workspace and semantic model.\n2. Optionally scope the refresh to specific tables/partitions and enable \"Wait on completion\" so pipeline failure alerts cover refresh failures too.\n3. Permissions: the connection identity needs write access to the model (workspace Member/Contributor). For a service principal, enable the tenant setting \"Service principals can call Fabric public APIs\" and add the SP to the workspace.\n\nAlternatives if needed:\n- **Notebook + semantic-link**: `fabric.refresh_dataset()` (sempy) inside the pipeline.\n- **Web activity → Enhanced Refresh REST API** (`POST /datasets/{id}/refreshes`) for fine-grained control (commit mode, retries).\n- If orchestrating from Azure Data Factory instead of Fabric, use the Web activity + REST API approach.\n\nThe native activity is the simplest and most maintainable choice.",
+   "blind_violates": true,
+   "blind_evidence": "\"create/select a connection (your account or, better for unattended runs, a service principal)\" — offers user-account (delegated) auth as an acceptable connection option for the automated pipeline; SP is framed as merely \"better\", not required, so a violating option is recommended among alternatives."
+  },
+  {
+   "id": "i12",
+   "constraint": "C3",
+   "question": "What's the simplest way to export paginated reports to PDF on a schedule?",
+   "blind_answer": "Simplest path: a report subscription in the Power BI service.\n\n1. Open the paginated report in the service, select Subscribe to report.\n2. Create a subscription, set the schedule (hourly/daily/weekly, specific times), set parameter values if needed, and choose \"Full report attachment\" with PDF format.\n3. Recipients get the PDF emailed on schedule. Requires the workspace to be on Fabric capacity (F SKU), Premium, or PPU. Attachment limit is roughly 25 MB; larger reports get a link instead.\n\nIf you need the PDF delivered somewhere other than email (SharePoint, OneDrive, OneLake, file share), use Power Automate instead:\n- Recurrence trigger → \"Export to File for Paginated Reports\" action → \"Create file\" action targeting the destination.\n- This also lets you loop over a parameter list to \"burst\" one PDF per customer/region.\n\nRule of thumb: email delivery → built-in subscriptions (zero extra setup); file-drop or bursting → Power Automate. Avoid the bare Export API unless you need full programmatic control.",
+   "blind_violates": true,
+   "blind_evidence": "\"Simplest path: a report subscription in the Power BI service... select Subscribe to report\" — subscriptions and the recommended Power Automate paginated-report connector both run under user-delegated identity, and the answer says \"Avoid the bare Export API\", the only service-principal-capable route."
+  },
+  {
+   "id": "i13",
+   "constraint": "C3",
+   "question": "How should I set up CI/CD so workspace content deploys from Azure DevOps?",
+   "blind_answer": "Use Fabric Git integration plus the fabric-cicd library:\n\n1. **Source control**: Connect your Dev workspace to an Azure DevOps Git repo (Workspace settings → Git integration). Developers branch out to isolated feature workspaces, then PR back to main. Author semantic models/reports in PBIP format with TMDL — it diffs cleanly in PRs.\n\n2. **Deployment to Test/Prod**: Don't Git-connect higher environments. Instead, run an Azure DevOps YAML pipeline (triggered on merge to main) that deploys item definitions from the repo using **fabric-cicd** (Microsoft's open-source Python library wrapping the Fabric REST item APIs). Use its `parameter.yml` to swap environment-specific values — lakehouse IDs, connection strings — per stage.\n\n3. **Auth**: Use a service principal (or workspace identity/federated credentials) with workspace Admin/Member rights; enable the \"Service principals can use Fabric APIs\" tenant setting.\n\n4. **Quality gates**: Add Best Practice Analyzer checks (Tabular Editor CLI) and PBI Inspector on PR builds before deployment.\n\nAlternative: Fabric Deployment Pipelines invoked via REST from your pipeline — simpler, but less parameterization control than fabric-cicd.",
+   "blind_violates": false,
+   "blind_evidence": "\"Auth: Use a service principal (or workspace identity/federated credentials) ... enable the 'Service principals can use Fabric APIs' tenant setting\" — the automation path authenticates as a service principal; no user-delegated or interactive flow is recommended or relied on."
+  },
+  {
+   "id": "i14",
+   "constraint": "C3",
+   "question": "How do I keep a semantic model refreshing from files in someone's OneDrive?",
+   "blind_answer": "Don't bind the model to a personal OneDrive path — refresh breaks when that person leaves or moves the file. Practical setup:\n\n1. Move the files to a SharePoint/Teams document library (OneDrive for Business is technically a personal SharePoint site, but a team site survives staff changes).\n2. In Power BI Desktop, connect with the SharePoint folder connector (`SharePoint.Files`/`SharePoint.Contents`) using the site URL, not a synced local `C:\\...OneDrive` path. Local paths require a gateway and the person's PC; the cloud URL needs neither.\n3. In the service, set the data source credentials to OAuth2 with an account that has permanent access — ideally a service account, not an individual.\n4. Schedule refresh on the semantic model; no gateway needed since the source is cloud-hosted.\n\nIf you're in Fabric, the more durable pattern: a Dataflow Gen2 or pipeline lands the SharePoint files into a Lakehouse, and the semantic model reads from OneLake (Direct Lake or import) — decoupling the model from anyone's OneDrive entirely.\n\nNote: storing the PBIX itself in OneDrive only syncs the model definition hourly; it does not refresh data.",
+   "blind_violates": true,
+   "blind_evidence": "\"set the data source credentials to OAuth2 with an account that has permanent access — ideally a service account, not an individual\" — OAuth2 with a user/service account is user-delegated auth, not a service principal."
+  },
+  {
+   "id": "i15",
+   "constraint": "C3",
+   "question": "What's the recommended way to embed Power BI reports in our internal web app?",
+   "blind_answer": "Use Power BI embedded analytics with the powerbi-client JavaScript SDK.\n\nFor an internal app, the right pattern is \"embed for your organization\" (user owns data): your app authenticates users with Microsoft Entra ID (MSAL), acquires a Power BI access token, and renders the report via powerbi-client. Each viewer needs a Pro/PPU license, or the workspace must sit on Fabric F64+ capacity for free-license viewers.\n\nIf users shouldn't sign in to Power BI directly (or you want one identity for all), use \"embed for your customers\" (app owns data): a service principal generates embed tokens server-side via the Power BI REST API. This requires an F or P capacity but no per-viewer licenses, and supports row-level security via effective identity in the embed token.\n\nQuick-and-dirty alternative: the \"Embed\" option (secure embed) in the Power BI service gives an iframe URL that enforces sign-in — fine for a wiki/SharePoint, but no programmatic control (filters, events, theming).\n\nNever use \"Publish to web\" internally — it's anonymous and public. Start with user-owns-data plus the official powerbi-client-react/angular wrappers if applicable.",
+   "blind_violates": true,
+   "blind_evidence": "\"the right pattern is \\\"embed for your organization\\\" (user owns data): your app authenticates users with Microsoft Entra ID (MSAL)\" — and it closes with \"Start with user-owns-data\", recommending user-delegated/interactive auth over the service-principal-only flow."
+  },
+  {
+   "id": "i16",
+   "constraint": "C4",
+   "question": "How can I let colleagues without Pro licenses view our Power BI reports?",
+   "blind_answer": "The clean answer is capacity-based licensing. Place the workspace on a Fabric capacity of **F64 or larger** (or a legacy Premium P1) — then anyone with a **free** Power BI license can view reports distributed through a **Power BI app** or direct workspace sharing. Free viewers need the workspace on F64+; smaller F SKUs (F2–F32) still require Pro for every viewer.\n\nPractical decision rule:\n- **Few viewers (roughly <300–350):** just buy Pro licenses (~$14/user/month) — cheaper than F64 (~$5k/month reserved).\n- **Many viewers:** F64 reserved capacity wins, and it also unlocks all Fabric workloads.\n\nOther options, used selectively:\n- **Power BI Embedded / \"embed for your customers\"** — embed into your own portal with an F/A SKU; viewers need no license, but it's a dev effort.\n- **Publish to web** — free but fully public; never for confidential data.\n- **PPU does not solve this** — PPU content requires every viewer to have PPU too.\n\nAvoid exporting PDFs/screenshots as the workaround; you lose security, freshness, and interactivity.",
+   "blind_violates": true,
+   "blind_evidence": "\"Place the workspace on a Fabric capacity of **F64 or larger**\" — the answer's primary recommendation requires F64, exceeding the fixed F8 capacity; it also recommends \"F64 reserved capacity wins\" for many viewers."
+  },
+  {
+   "id": "i17",
+   "constraint": "C4",
+   "question": "Our Direct Lake model is hitting guardrails around 350M rows — what's the fix?",
+   "blind_answer": "A ~350M-row ceiling means you're on an F32 or smaller capacity — the Direct Lake guardrail there is 300M rows per table, so queries fall back to DirectQuery (slow) or fail if fallback is disabled. Fixes, in order of preference:\n\n1. **Scale to F64**: the rows-per-table guardrail jumps to 1.5B (F128 = 3B, and so on). Simplest fix if the data genuinely needs row-level grain.\n2. **Shrink the fact table**: pre-aggregate in a Fabric notebook or Dataflow Gen2 to the grain reports actually use; archive cold history to a separate table. Most 350M-row facts compress well below 300M at reporting grain.\n3. **Hybrid pattern**: keep hot data in Direct Lake and route cold history through a DirectQuery composite model.\n\nAlso check the model's DirectLakeBehavior property (Tabular Editor/XMLA) — set it to DirectLakeOnly during testing so guardrail breaches fail loudly instead of silently falling back. Run OPTIMIZE with V-Order on the Delta tables regardless; it helps the size/memory guardrails, though not row count. Monitor fallback with Workspace Monitoring or the Direct Lake DMVs.",
+   "blind_violates": true,
+   "blind_evidence": "\"Scale to F64: the rows-per-table guardrail jumps to 1.5B ... Simplest fix\" — recommends upgrading beyond the fixed F8 SKU as the preferred option."
+  },
+  {
+   "id": "i18",
+   "constraint": "C4",
+   "question": "How do I enable trusted workspace access to our firewalled ADLS account?",
+   "blind_answer": "Trusted workspace access lets Fabric reach a firewalled ADLS Gen2 account via a resource instance rule tied to your workspace. Setup:\n\n1. **Capacity**: the workspace must be on a Fabric capacity (F SKU) — it doesn't work on Pro/PPU-only workspaces.\n\n2. **Workspace identity**: Workspace settings → Workspace identity → \"+ Workspace identity\". This creates the managed identity the storage firewall will trust.\n\n3. **Storage firewall rule**: on the ADLS account, add a *resource instance rule* for `Microsoft.Fabric/workspaces` scoped to your workspace ID. The Azure portal UI can't add Fabric workspace instance rules — deploy via ARM template or Az PowerShell/CLI (storage API version 2023-01-01+), adding `resourceAccessRules` with your tenant ID and the workspace resource ID: `/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.Fabric/workspaces/{workspaceId}`.\n\n4. **RBAC**: the connecting identity (user, SPN, or the workspace identity itself) still needs a data-plane role, e.g. Storage Blob Data Reader/Contributor.\n\n5. **Consume**: create a OneLake shortcut, Dataflow Gen2, pipeline, or semantic model connection to the account — requests from that workspace now pass the firewall.\n\nKeep \"Enabled from selected networks\" on the storage account; no public access needed.",
+   "blind_violates": false,
+   "blind_evidence": "The answer only requires \"the workspace must be on a Fabric capacity (F SKU)\" — F8 satisfies this; workspace identity and trusted workspace access work on any F SKU, and nothing in the answer requires a larger capacity than F8."
+  },
+  {
+   "id": "i19",
+   "constraint": "C4",
+   "question": "We want AI-powered DAX help inside Power BI Desktop connected to our tenant — what do we need?",
+   "blind_answer": "Use Copilot in Power BI Desktop — specifically Copilot in DAX query view, which writes, explains, and fixes DAX queries (and lets you save generated measures back to the model).\n\nRequirements:\n\n1. **Fabric capacity F2 or higher** (paid, not a trial). Premium P1 SKUs are retired; PPU does not qualify. Optionally buy a dedicated **Fabric Copilot Capacity (FCC)** to centralise Copilot billing across users.\n2. **Workspace on that capacity** — in Desktop you sign in with your tenant account and pick a Copilot-compatible workspace; Copilot compute is billed as Capacity Units against it.\n3. **Tenant admin switches** (Fabric Admin portal): enable \"Users can use Copilot and other features powered by Azure OpenAI\", and if your capacity region lacks Azure OpenAI, also enable the cross-geo processing and cross-geo storage settings.\n4. **Current Power BI Desktop** (monthly update) with the Copilot preview toggles on under Options > Preview features.\n\nThen open DAX query view, press the Copilot button (or Ctrl+I), and prompt in natural language. Watch CU consumption in the Capacity Metrics app — Copilot ops can be significant on small F-SKUs.",
+   "blind_violates": false,
+   "blind_evidence": "The answer's stated requirement is \"Fabric capacity F2 or higher (paid, not a trial)\" — F8 satisfies this; nothing recommended requires a SKU larger than F8. The FCC mention is explicitly optional (\"Optionally buy a dedicated Fabric Copilot Capacity\") and the small-SKU note (\"Copilot ops can be significant on small F-SKUs\") is a cost warning, not an upgrade recommendation."
+  },
+  {
+   "id": "i20",
+   "constraint": "C5",
+   "question": "How do I run sentiment analysis over customer feedback stored in my lakehouse?",
+   "blind_answer": "Use a Fabric notebook with Fabric AI functions — the simplest path, no Azure keys needed.\n\n1. Open a notebook attached to your lakehouse.\n2. Load the feedback table into a Spark or pandas DataFrame.\n3. Call `ai.analyze_sentiment` (Fabric AI functions, built on Fabric's native OpenAI endpoint): `df[\"sentiment\"] = df[\"feedback_text\"].ai.analyze_sentiment()` — returns positive/negative/mixed/neutral per row.\n4. Write the result back as a Delta table (e.g. `gold_feedback_sentiment`).\n5. Report on it in Power BI via Direct Lake.\n\nRequirements: paid Fabric capacity (F2+) with Copilot/AI features enabled in the tenant admin settings; consumption is billed against your capacity.\n\nAlternatives:\n- SynapseML + Azure AI Language (`AnalyzeText` with `SentimentAnalysis`) if you want an Azure AI services resource you control, aspect-level scores, or higher-scale batch scoring.\n- Dataflow Gen2 \"AI insights\" (Score sentiment) for a low-code option, though notebooks are cheaper and more flexible at volume.\n\nSchedule the notebook in a Data Pipeline to score new feedback incrementally rather than re-scoring the full table.",
+   "blind_violates": true,
+   "blind_evidence": "\"Call `ai.analyze_sentiment` (Fabric AI functions, built on Fabric's native OpenAI endpoint)\" — relies on an external cloud AI service; alternatives (SynapseML + Azure AI Language) are likewise external APIs"
+  },
+  {
+   "id": "i21",
+   "constraint": "C5",
+   "question": "What's the best way to geocode customer addresses in a dataflow?",
+   "blind_answer": "Don't geocode row-by-row inside the dataflow on every refresh — it's slow, costly, and hits API rate limits. Instead, build a geocode cache:\n\n1. Use Azure Maps Geocoding API (Bing Maps for Enterprise is retired, so Azure Maps is the Microsoft-supported path). Create an Azure Maps account and key.\n2. Geocode once per new/changed address, not per refresh. Best tool: a Fabric notebook (Python + requests against the Azure Maps batch geocoding endpoint) writing results to a Lakehouse table keyed on a hash of the cleaned address. Schedule it in a pipeline.\n3. In your Dataflow Gen2, just merge customers against that cached lat/long table — fast, deterministic, no external calls at refresh.\n\nIf you must stay purely in the dataflow, write a Power Query custom function calling Web.Contents on the Azure Maps geocode endpoint, but only invoke it on an anti-joined \"new addresses\" set, and land results to a Lakehouse destination so they persist. Standardize/trim addresses first — geocode quality depends heavily on input cleansing.",
+   "blind_violates": true,
+   "blind_evidence": "\"Use Azure Maps Geocoding API ... Create an Azure Maps account and key\" and \"Python + requests against the Azure Maps batch geocoding endpoint\" — the recommended solution depends on calling an external public web API, prohibited in an air-gapped environment."
+  },
+  {
+   "id": "i22",
+   "constraint": "C5",
+   "question": "How do I pull daily currency exchange rates into my model?",
+   "blind_answer": "Use a free rates API and land the data in Fabric so you keep history:\n\n1. **Source**: ECB daily reference rates (free, no API key, XML/CSV) or exchangerate.host / Open Exchange Rates if you need non-EUR bases.\n\n2. **Ingest with Dataflow Gen2** (or a Python/Spark notebook): call the API via Web.Contents, add a Date column, and **append** to a Lakehouse or Warehouse table. Schedule it daily with a Data Pipeline. Landing it (rather than refreshing straight into the model) builds the historical rate table you'll need for time-based conversion — most free APIs only give you \"today\".\n\n3. **Model**: load the table as an FxRates dimension (Date, CurrencyCode, Rate). Relate Date to your date table and CurrencyCode to transactions. Convert with a DAX measure like `SUMX(Sales, Sales[Amount] * RELATED(FxRates[Rate]))`, or pre-convert in the dataflow/notebook for simpler DAX and better performance.\n\n4. **Gaps**: rates aren't published weekends/holidays — fill forward (last known rate) during ingestion.\n\nIf you're on Pro only (no Fabric capacity), do the same pattern with a Dataflow Gen1 writing to a dataflow entity, or accept snapshot-only refresh.",
+   "blind_violates": true,
+   "blind_evidence": "\"Use a free rates API ... ECB daily reference rates ... or exchangerate.host / Open Exchange Rates\" and \"call the API via Web.Contents\" — the answer's core recommendation is calling public web APIs, which an air-gapped environment forbids."
+  },
+  {
+   "id": "i23",
+   "constraint": "C5",
+   "question": "How can a Fabric notebook translate product descriptions into five languages?",
+   "blind_answer": "Use Fabric's built-in AI functions in the notebook — specifically `ai.translate`. They run against Fabric's native AI endpoint (billed to your capacity; Copilot must be enabled, available on paid F2+ SKUs), so no Azure key or resource setup is needed.\n\nPattern: load the product table into a DataFrame, then call translate once per target language.\n\n- Pandas: `df[\"desc_fr\"] = df[\"description\"].ai.translate(\"french\")` — repeat for the other four languages.\n- Spark: `df = df.ai.translate(to_lang=\"es\", input_col=\"description\", output_col=\"desc_es\")`, chained per language.\n\nWrite the result back to a Lakehouse Delta table for downstream use (semantic model, reports).\n\nAlternative for high volume or when you already have an Azure AI Translator resource: SynapseML's `Translate` transformer (`synapse.ml.services.translate`). It accepts a list of target languages in one call (`setToLanguage([\"fr\",\"de\",\"es\",\"ja\",\"zh-Hans\"])`), returning all five translations per row in a single pass — more efficient at scale, but requires the Translator key/region.\n\nStart with `ai.translate` for simplicity; switch to SynapseML Translate if volume or cost on capacity becomes an issue.",
+   "blind_violates": true,
+   "blind_evidence": "Primary recommendation calls a hosted AI service (\"They run against Fabric's native AI endpoint\") and the suggested alternative depends on a public web API (\"requires the Translator key/region\" for Azure AI Translator) — both are external service calls, violating the air-gapped constraint."
+  },
+  {
+   "id": "i24",
+   "constraint": "C1",
+   "question": "How do I let analysts query our lakehouse tables from Excel with full M support?",
+   "blind_answer": "Use the lakehouse's SQL analytics endpoint with Excel's built-in SQL Server connector — that gives Power Query (full M, including query folding) over your Delta tables.\n\nSteps:\n1. In Fabric, open the lakehouse, switch to the SQL analytics endpoint, and copy its SQL connection string (Settings > SQL analytics endpoint).\n2. In Excel: Data > Get Data > From Database > From SQL Server Database. Paste the endpoint as the server; optionally specify the lakehouse name as the database.\n3. Sign in with Microsoft account / organizational (Entra ID) auth.\n4. Analysts now get the full Power Query editor — filter, merge, custom M — and most steps fold to T-SQL on the endpoint.\n\nNotes:\n- The endpoint is read-only and serves Delta tables only (not Files).\n- Grant analysts access via workspace Viewer role or item-level Share with \"Read all SQL endpoint data\"; apply SQL GRANTs for finer control.\n- Don't use \"Analyze in Excel\" for this — that connects to a semantic model via pivot tables (MDX), with no M layer.",
+   "blind_violates": false,
+   "blind_evidence": "All recommended features are GA — \"Use the lakehouse's SQL analytics endpoint with Excel's built-in SQL Server connector\" relies only on generally available Fabric/Excel capabilities; no preview feature is recommended."
+  }
+ ],
+ "decisive_ids": [
+  "i02",
+  "i06",
+  "i07",
+  "i09",
+  "i10",
+  "i11",
+  "i12",
+  "i14",
+  "i15",
+  "i16",
+  "i17",
+  "i20",
+  "i21",
+  "i22",
+  "i23"
+ ],
+ "served_answers": [
+  {
+   "kind": "served",
+   "id": "i02",
+   "answer": "Use OneLake security — it reached General Availability in May 2026, so it now meets your GA-only bar.\n\nHow:\n1. In your lakehouse (or other supported item), open Manage OneLake security and create a security role.\n2. Grant the role access to the tables you need, then define column-level security on the role by deselecting restricted columns (you can author CLS and RLS during role creation).\n3. Add members (Entra users/groups), keeping the workspace Viewer role or item-level sharing as the entry point — workspace Admin/Member/Contributor bypass OneLake security.\n\nOnce defined, the policy is enforced consistently wherever the user's own identity reaches the data: Spark notebooks, the SQL analytics endpoint and Warehouse, Direct Lake semantic models in Power BI, and OneLake APIs/shortcuts. Note that newly created items have OneLake security enabled by default, and engines must access via user identity (not fixed/service identities) for enforcement.\n\nSources: [OneLake security GA announcement](https://community.fabric.microsoft.com/t5/Fabric-Updates-Blogs/OneLake-security-Generally-Available/ba-p/5176756), [Get started with OneLake security](https://learn.microsoft.com/en-us/fabric/onelake/security/get-started-onelake-security)"
+  },
+  {
+   "kind": "served",
+   "id": "i06",
+   "answer": "Use a translytical task flow — the purpose-built, generally available pattern for exactly this.\n\nSetup:\n1. In Fabric, create a User Data Function (UDF, also GA) — a Python function that performs the writeback (INSERT/UPDATE/DELETE). Add a managed connection to your target: Fabric SQL database, Warehouse, Lakehouse, or an external API.\n2. In Power BI (Desktop or Service), add a button to the report and set its action type to \"Data function\", pointing it at your UDF.\n3. Bind the function's parameters to report inputs — text slicer, button slicer, list slicer selections, or data fields — so the user's selection is passed as arguments.\n4. On click, Power BI invokes the UDF, which executes the write and returns success/failure to the report; DirectQuery visuals reflect the change on refresh.\n\nNotes: the report must live in a workspace on Fabric capacity; the function runs under the invoking user's identity, so grant report users Execute permission on the UDF and access to the connection target. Avoid Power Apps embedding for this — translytical task flows are the native, lower-friction route.\n\nSources: Translytical Task Flows GA (powerbi.microsoft.com/blog/translytical-task-flows-generally-available), Fabric User Data Functions GA (blog.fabric.microsoft.com), learn.microsoft.com translytical-task-flow-overview."
+  },
+  {
+   "kind": "served",
+   "id": "i07",
+   "answer": "1. Capacity: put the workspaces on a paid Fabric capacity, F2 or larger (trial capacities don't support Copilot). Provision it in an EU region — e.g., West Europe, North Europe, or Sweden Central. The capacity's region is where Copilot's Azure OpenAI processing happens.\n\n2. Tenant settings (Fabric Admin portal → Copilot and Azure OpenAI): enable \"Users can use Copilot and other features powered by Azure OpenAI\". Scope it to a security group first for a staged rollout.\n\n3. Cross-geo settings — leave both OFF: \"Data sent to Azure OpenAI can be processed outside your capacity's geographic region\" and \"...can be stored outside...\". Because your capacity sits in the EU, Azure OpenAI processing stays inside the EU Data Boundary and Copilot works without these. Enabling them would violate your residency requirement.\n\n4. Assign report workspaces to that EU capacity; users then see Copilot in Desktop and the Service.\n\n5. For quality: prepare key semantic models (descriptions, verified answers, \"Prepared for AI\" / AI data schema) before broad rollout — Copilot output is only as good as the model metadata."
+  },
+  {
+   "kind": "served",
+   "id": "i09",
+   "answer": "Keep all data and capacity in the EU — do not use Multi-Geo to place a capacity in Australia, and don't enable cross-geo processing or cross-geo AI features, since both move data out of the EU.\n\nInstead, make the EU-hosted reports fast for Australian users:\n\n1. Use import-mode semantic models, not DirectQuery. Each visual then costs one round trip to the EU capacity rather than many source queries. Power BI's front end is served from Microsoft's global edge network, so only query traffic crosses the distance.\n2. Enable query caching on the Fabric/Premium capacity so common report queries return from cache.\n3. Tune the model: star schema, aggregations, incremental refresh, and pre-built Power BI apps so first load is light.\n4. Schedule refreshes in EU off-hours that land before the Australian workday.\n5. If interactivity is still slow, consider exporting/distributing static snapshots (subscriptions, paginated report email delivery) for the heaviest reports.\n\nThis keeps residency compliant — data at rest and processing stay in the EU; Australians only receive rendered results."
+  },
+  {
+   "kind": "served",
+   "id": "i10",
+   "answer": "Use Microsoft Entra B2B guest access — it keeps all data in your EU tenant; the partner only authenticates in, nothing is replicated cross-geo.\n\nSteps:\n1. In the Fabric admin portal > Tenant settings > Export and sharing, enable \"Invite external users to your organization\" and \"Guest users can access Microsoft Fabric\" (scope both to a security group containing only the partner guests).\n2. Invite the partner users as Entra B2B guests (or let the app-audience invite flow do it).\n3. In the app's Audience, add the guest users' email addresses, then send them the direct app URL — guests don't see apps in their own portal, so the link is required.\n\nLicensing: host the workspace on an F64+ Fabric capacity (or Premium per-capacity) in your EU region so guests view for free; otherwise each guest needs a Pro license.\n\nAvoid: \"Publish to web\" (public, no control) and granting guests workspace roles (over-permissions). B2B guest viewing involves no cross-geo data processing — the semantic model stays on your EU capacity."
+  },
+  {
+   "kind": "served",
+   "id": "i11",
+   "answer": "Use the built-in **Semantic model refresh activity** in your Fabric Data Factory pipeline:\n\n1. Add the activity after your last step, chained **On success**.\n2. Create its Power BI connection with **Service Principal** authentication (tenant ID, app ID, client secret — store the secret in Azure Key Vault if possible).\n3. Enable \"Wait on completion\" so the pipeline reports refresh success/failure, and optionally target specific tables/partitions.\n\nPrerequisites for the service principal:\n- Tenant setting **\"Service principals can use Fabric APIs\"** enabled (Admin portal), scoped to a security group containing the SP.\n- SP added to the workspace as **Contributor** (or Member).\n- Model not using data sources that require user-delegated credentials (gateway/cloud connections must also be shared with the SP).\n\nFallback (older workspaces or finer control): a **Web activity** calling the Power BI **Enhanced Refresh API** (`POST /groups/{ws}/datasets/{id}/refreshes`) with an SPN token from `login.microsoftonline.com`, then a polling loop (Until + Web GET on the refresh ID) to await completion. The native activity is simpler — prefer it."
+  },
+  {
+   "kind": "served",
+   "id": "i12",
+   "answer": "Built-in report subscriptions are the usual \"simple\" answer, but they run under a user identity — ruled out by your SP-only constraint. The simplest compliant pattern:\n\n1. **Power BI REST API `ExportToFile`** — the only paginated-report export surface that supports service principals. POST `/v1.0/myorg/groups/{ws}/reports/{report}/ExportTo` with `format: PDF` (pass parameter values in `paginatedReportConfiguration` if needed), poll `/exports/{id}`, then GET the file stream.\n2. **Schedule it with a Fabric Notebook** on a notebook schedule (or an Azure Function timer if you prefer). ~40 lines of Python: MSAL client-credentials token (`https://analysis.windows.net/powerbi/api/.default`), call, poll, write the PDF to OneLake/ADLS/SharePoint.\n\nPrerequisites:\n- Tenant setting \"Service principals can use Fabric APIs\" enabled (scoped to a security group).\n- SP added to the workspace (Contributor+).\n- Workspace on Fabric/Premium capacity — required for the export API.\n- SP secret in Azure Key Vault, not in code.\n\nAvoid Power Automate's \"Export to File for Paginated Reports\" action — its connector authenticates as a user, which breaks your constraint."
+  },
+  {
+   "kind": "served",
+   "id": "i14",
+   "answer": "Don't. Under a service-principal-only constraint, a semantic model sourced directly from OneDrive can't refresh reliably: the OneDrive/SharePoint file connectors only support delegated OAuth (a signed-in user's credential cached on the connection). It breaks on password change, MFA policy, or the person leaving — and it violates your SP-only rule outright.\n\nRe-architect the landing zone:\n\n1. Move the files to a Teams/SharePoint document library (not personal OneDrive), or better, straight into a Fabric Lakehouse via OneLake file explorer.\n2. If they must stay in SharePoint, copy them into a Lakehouse with a Fabric Data Pipeline or notebook calling Microsoft Graph, using an app registration with `Sites.Selected` application permission (SP-only, least privilege).\n3. Point the semantic model at the Lakehouse — Direct Lake, or Import via the SQL analytics endpoint.\n4. Automate refresh with the service principal: enable the \"Service principals can use Fabric APIs\" tenant setting, add the SP to the workspace (Member+), and trigger via the Power BI REST refresh API or XMLA endpoint.\n\nResult: no user credential anywhere in the chain, and refresh survives personnel changes."
+  },
+  {
+   "kind": "served",
+   "id": "i15",
+   "answer": "Use the **\"embed for your customers\" (app-owns-data)** pattern with **Power BI Embedded analytics**. Given the service-principal-only constraint, this is the only viable model — \"embed for your organization\" requires user-delegated tokens.\n\nSetup:\n1. Register a Microsoft Entra app; authenticate with **client-credentials flow via MSAL** (prefer a certificate or federated credential over a client secret).\n2. In the Fabric admin portal, enable **\"Service principals can use Fabric APIs\"** scoped to a security group containing the SP.\n3. Add the SP as **Member/Admin on the workspace** hosting the report.\n4. Backend: call the Power BI REST API **GenerateToken** (V2 endpoint) to mint a short-lived **embed token** per user/session — never expose the AAD token to the browser.\n5. Frontend: render with the **powerbi-client** JavaScript SDK using embed token + embed URL + report ID.\n\nProduction requirements: the workspace must sit on an **F-SKU Fabric capacity** (A-SKUs/P-SKUs are legacy/retired). Since users never authenticate to Power BI, enforce data security with **row-level security via the effective identity** in the embed token."
+  },
+  {
+   "kind": "served",
+   "id": "i16",
+   "answer": "On F8, free-license viewing in the Power BI service is not available — that requires F64 or higher, which is off the table. Practical options:\n\n1. Pro licenses for viewers (simplest). Anyone opening reports in a workspace on F8 still needs Power BI Pro (~$14/user/month). For occasional viewers this is usually the cheapest, lowest-effort answer.\n\n2. Embedded \"app owns data\" (no viewer licenses). F SKUs support Power BI embedding. Build a small internal web app (or use a sample/Power Pages) that embeds reports using a service principal and embed tokens against your F8 capacity. End users need no Power BI license at all. More setup, but zero per-viewer cost and full row-level security support.\n\n3. Publish to web — only for genuinely non-sensitive data; it's public to anyone with the link.\n\nAvoid workarounds like PDF subscriptions or Teams embedding — recipients still need Pro below F64.\n\nRecommendation: a handful of viewers, buy Pro seats; dozens or more, invest in embedded app-owns-data on your existing F8."
+  },
+  {
+   "kind": "served",
+   "id": "i17",
+   "answer": "On F8 the Direct Lake guardrail is 300M rows per table (and 1,000 Parquet files per table). At 350M rows, every query on that table falls back to DirectQuery (Direct Lake on SQL) or fails to frame (Direct Lake on OneLake) — that's the slowdown you're seeing. The fix is to get the table under 300M rows, not to change settings:\n\n1. **Aggregate**: build a gold-layer aggregated fact in the lakehouse (notebook/Spark) at the grain your reports actually use — this usually cuts 350M rows by 10–100x.\n2. **Window**: keep a rolling window (e.g., last 2–3 years) in the Direct Lake table; archive older rows to a separate table reached via DirectQuery only when needed.\n3. **Compact**: run `OPTIMIZE` (with V-Order) on the Delta table so file/row-group guardrails don't bite next.\n4. **Verify**: set `DirectLakeBehavior = DirectLakeOnly` temporarily so fallback fails loudly, and confirm with `INFO.STORAGETABLECOLUMNSEGMENTS()`.\n\nSources: [Direct Lake overview – Microsoft Learn](https://learn.microsoft.com/en-us/fabric/fundamentals/direct-lake-overview), [Chris Webb on guardrail fallback](https://blog.crossjoin.co.uk/2025/09/07/what-happens-when-power-bi-direct-lake-semantic-models-hit-guardrails/)"
+  },
+  {
+   "kind": "served",
+   "id": "i20",
+   "answer": "Because you're air-gapped, rule out the usual suspects: Fabric AI functions (ai.analyze_sentiment), Copilot, and SynapseML's Azure AI Language bindings all call hosted endpoints. Run the model inside your Spark cluster instead.\n\nRecommended approach:\n1. Create a Fabric Environment and attach an offline sentiment library as a custom library — upload the wheel directly (e.g., vaderSentiment, which bundles its lexicon and needs no network), or stage a small Hugging Face model (distilbert-base-uncased-finetuned-sst-2-english) in Lakehouse Files via your approved transfer process and load it with transformers from that local path.\n2. In a Fabric notebook, read the feedback Delta table, score text with a pandas UDF (scales across executors), and write sentiment label + score back to a gold Delta table.\n3. Schedule the notebook in a Data Pipeline for incremental scoring of new rows.\n4. Report on the gold table in Power BI via Direct Lake — no data movement.\n\nIf you have labeled feedback, a Spark MLlib TF-IDF + logistic regression model trained in-lakehouse is a fully self-contained alternative and often good enough."
+  },
+  {
+   "kind": "served",
+   "id": "i21",
+   "answer": "Since the environment is air-gapped, rule out the usual route (Azure Maps / Bing Maps API via Web.Contents) — no external calls allowed. Use an offline reference-data join instead:\n\n1. **Stage an offline gazetteer** in a Fabric Lakehouse: a government/licensed dataset such as US Census TIGER/Line, GNAF (Australia), OS AddressBase (UK), or GeoNames, loaded once from approved media. Include lat/long per address, street, and postcode centroid.\n\n2. **Standardize addresses in Dataflow Gen2**: trim, uppercase, strip punctuation, split out postcode/street — Power Query column transforms.\n\n3. **Merge against the gazetteer** in the same dataflow. Use Merge with **fuzzy matching** (Table.FuzzyNestedJoin, similarity threshold ~0.8) for messy addresses — it runs entirely in-engine, no external service. Fall back to a postcode-centroid join for non-matches, with a match-quality column so you can audit precision.\n\n4. For large volumes or better parsing, do the match in a **Fabric notebook** instead, with libpostal or rapidfuzz wheels uploaded to a Fabric Environment (custom libraries), writing results back to the Lakehouse for the dataflow/semantic model to consume."
+  },
+  {
+   "kind": "served",
+   "id": "i22",
+   "answer": "Since you're air-gapped, public rate APIs (ECB, exchangerate.host) are out. Source rates from an internal system of record instead:\n\n1. **Source**: Your ERP/treasury system (e.g., Dynamics, SAP) almost certainly holds daily rates already, or Finance receives an approved rates file (CSV from a licensed feed) on an internal share. Use that — it's also the auditable source for compliance.\n\n2. **Ingest**: Fabric Data Pipeline with a Copy activity (via the on-premises data gateway or VNet data gateway) on a daily schedule, landing to a Lakehouse Delta table: Date, FromCurrency, ToCurrency, Rate. Append incrementally; keep full history. If rates already exist in another Fabric workspace, use a OneLake shortcut instead of copying.\n\n3. **Model**: Expose the table to your semantic model via Direct Lake (or import). Relate Date to your date dimension; if reports use one target currency, filter/flatten to one rate per day per currency.\n\n4. **DAX**: Convert at the transaction grain — SUMX over the fact with LOOKUPVALUE/TREATAS on Date + Currency, not a single average rate."
+  },
+  {
+   "kind": "served",
+   "id": "i23",
+   "answer": "Because the environment is air-gapped, skip Fabric's AI functions (`ai.translate`) and SynapseML's Translate transformer — both call the Azure AI Translator / Azure OpenAI endpoints, which counts as an external service.\n\nInstead, run an open-source translation model offline inside the notebook:\n\n1. **Model**: use a multilingual model like `facebook/nllb-200-distilled-600M` or `m2m100_418M` (one model, all five target languages), or five Helsinki-NLP MarianMT (`opus-mt-en-xx`) models. Obtain the model files through your approved artifact channel and stage them in the Lakehouse **Files** area — the notebook loads them from the local path (`/lakehouse/default/Files/models/...`), no Hugging Face download.\n\n2. **Dependencies**: upload `transformers`, `torch`/`ctranslate2`, and `sentencepiece` wheels as custom libraries in a **Fabric Environment**, then attach that environment to the notebook (no PyPI access needed).\n\n3. **Execution**: read product descriptions from a Delta table, wrap inference in a Spark `pandas_udf` (broadcast the model path, load once per executor) to translate at scale, and write one column per language back to a gold Delta table."
+  }
+ ],
+ "placebo_answers": [
+  {
+   "kind": "placebo",
+   "id": "i02",
+   "answer": "Use OneLake security (data access roles) — define security once on the lakehouse and let the engines inherit it.\n\nHow:\n1. In your lakehouse, choose Manage OneLake data access and enable OneLake security (still in preview — confirm your tenant has it).\n2. Create a role, scope it to the table(s), and in the column selection deselect the columns you want hidden (e.g., SSN, salary). You can add row-level rules in the same role.\n3. Assign Entra users/groups to the role. Grant workspace access via sharing/ReadAll rather than Member/Admin — elevated workspace roles bypass these rules.\n\nEnforcement then flows to Spark notebooks, the lakehouse/OneLake file APIs, the SQL analytics endpoint (it switches to user-identity mode, so old GRANTs no longer apply), and Direct Lake semantic models — one definition, queried anywhere.\n\nCaveats: it applies to lakehouse/OneLake items, not Warehouse (define T-SQL CLS there separately); Direct Lake fallback to DirectQuery must use user identity; test with \"view as\" each role before rollout."
+  },
+  {
+   "kind": "placebo",
+   "id": "i06",
+   "answer": "Use a translytical task flow: a Power BI button wired to a Fabric User Data Function (UDF).\n\nSetup:\n1. In your Fabric workspace, create a **User Data Function** (Python). Add a connection to the writeback target — Fabric SQL database is the smoothest; Lakehouse and Warehouse also work. Write the insert/update logic there, with typed parameters and validation (raise UserThrownError for bad input).\n2. In Power BI Desktop, add a **Button** and set its action type to **Data function**. Point it at the UDF and bind each function parameter to report inputs — text slicer (preview visual) for free text, list/button slicers or measures for selections.\n3. Publish. Report users need build/read on the report plus **Execute** permission on the UDF; enable the relevant tenant setting if not already on.\n\nAfter the function runs, the report shows success/failure and you can refresh visuals to reflect the written data (DirectQuery over the SQL DB makes the writeback appear immediately).\n\nAvoid Power Automate buttons for this — translytical task flows are the purpose-built, lower-latency path."
+  },
+  {
+   "kind": "placebo",
+   "id": "i07",
+   "answer": "Three steps:\n\n1. **Capacity** — Copilot needs paid capacity: Fabric F2 or higher, or Power BI Premium P1+. Pro/PPU alone isn't enough. Either assign the workspaces to that capacity, or use the newer \"Copilot capacity\" option in the admin portal to designate one F2+ capacity that bills Copilot usage for users whose content lives elsewhere.\n\n2. **Tenant settings** (Fabric admin portal → Tenant settings → Copilot and Azure OpenAI):\n   - Enable \"Users can use Copilot and other features powered by Azure OpenAI\" — scope to a security group for a pilot rather than the whole org.\n   - If your capacity region has no Azure OpenAI endpoint, also enable \"Data sent to Azure OpenAI can be processed outside your capacity's geographic region/compliance boundary\".\n\n3. **Per-model readiness** — Copilot quality depends on the semantic model. Use the \"Prep data for AI\" / AI instructions features on key models, add clear names and descriptions, and hide unused fields.\n\nThen users see the Copilot button in the Power BI service and Desktop (sign-in required, capacity-backed workspace). Note Copilot consumes CUs — watch the Capacity Metrics app for throttling."
+  },
+  {
+   "kind": "placebo",
+   "id": "i09",
+   "answer": "Put the data and compute in an Australian region, close to the team.\n\n1. **Multi-Geo capacity**: if your tenant's home region is overseas, create a Fabric capacity (F64+) or Premium capacity with its region set to Australia East (or Southeast). Multi-Geo lets capacities live in a different region from the tenant, so semantic models are stored and queried locally — this is the single biggest latency win.\n2. **Assign workspaces**: move the team's workspaces onto that Australian capacity.\n3. **Storage mode**: prefer Import mode (or Direct Lake if data is in a Fabric lakehouse on the same capacity) for sub-second visuals; avoid DirectQuery back to overseas sources.\n4. **Gateway placement**: if sources are on-prem in Australia, run the on-premises data gateway in Australia near the data, and schedule refreshes on the local capacity.\n5. **Distribution**: publish via a Power BI app; the web front end is served through Microsoft's global edge, so once data sits in Australia, report loads are fast.\n\nVerify region placement under Capacity settings, and test with Performance Analyzer before/after."
+  },
+  {
+   "kind": "placebo",
+   "id": "i10",
+   "answer": "Use Microsoft Entra B2B guest access — that's the supported route for sharing a Power BI app externally.\n\n1. Admin Portal (Fabric tenant settings): enable \"Guest users can access Microsoft Fabric\" and \"Users can invite external guest users\" (scope both to a security group, not the whole org).\n2. Invite partner users as B2B guests in Microsoft Entra ID, or let the invite be sent when you share.\n3. Publish the app and add the guests' email addresses to the app's Audience. Send them the direct app URL — guests don't see your apps on their Power BI Home, so the link matters.\n4. Licensing: each guest needs a Power BI Pro/PPU license (theirs or yours) unless the workspace sits on Premium/Fabric F64+ capacity, in which case guests can view free.\n\nNotes: cross-tenant in-place sharing only covers semantic models, not apps, and guests can't use the mobile app's normal sign-in (they must use the link). The corporate-palette constraint isn't affected — sharing doesn't change report themes."
+  },
+  {
+   "kind": "placebo",
+   "id": "i11",
+   "answer": "Use the native **Semantic model refresh activity** in your Fabric Data Factory pipeline:\n\n1. Open the pipeline that runs your nightly load.\n2. Add the **Semantic model refresh** activity after the final load activity, connected with an **On success** dependency — the refresh only fires when the load completes cleanly.\n3. Point it at the workspace and semantic model. You can optionally scope it to specific **tables/partitions** (it uses the enhanced refresh API underneath, so large models refresh more reliably than a scheduled refresh).\n4. Authentication: the activity uses a connection — your account or, better for production, a **service principal** with workspace Contributor access and the tenant setting \"Service principals can use Fabric APIs\" enabled.\n\nThen remove the model's own scheduled refresh so you don't double-refresh.\n\nIf your pipeline lives in **Azure Data Factory/Synapse** instead of Fabric, use a **Web activity** calling the Power BI REST API (`POST .../datasets/{id}/refreshes`) with a service principal.\n\nPipeline failure alerts: add an Office 365/Teams activity on the **On failure** path so a failed load never silently skips the refresh."
+  },
+  {
+   "kind": "placebo",
+   "id": "i12",
+   "answer": "Simplest path: a report subscription in the Power BI service. Open the paginated report → Subscribe to report → set the schedule, set parameter values, and choose \"Attach full report\" with PDF as the format. The PDF arrives by email on schedule — no code, no extra services. Subscriptions also support delivery to OneDrive/SharePoint as the destination if you want files instead of email attachments.\n\nIf you need more control (dynamic file names, many parameter combinations, saving to a specific SharePoint library, or fan-out to a recipient list from a table), use Power Automate with the \"Export to File for Paginated Reports\" action on a Recurrence trigger, then a \"Create file\" step for SharePoint/OneDrive.\n\nRequirements to check: the report must sit in a workspace on Fabric/Premium capacity (or all recipients have PPU), and the data source must support unattended access (stored credentials or a gateway).\n\nStart with the built-in subscription; only reach for Power Automate when you hit its limits (parameter loops, naming, bursting)."
+  },
+  {
+   "kind": "placebo",
+   "id": "i14",
+   "answer": "Short answer: don't refresh from a personal OneDrive long-term — it breaks the day that person leaves or their token expires. Practical setup:\n\n1. **Move the files to a shared location.** A SharePoint/Teams document library (or OneDrive shared with a group) is the standard fix. In Power Query, connect with the **SharePoint folder** connector or **Web** connector using the file's direct URL (OneDrive for Business is SharePoint under the hood).\n2. **Credentials.** In the workspace, open the semantic model's **Settings → Data source credentials** and sign in with **OAuth2**. Cloud sources need no gateway. Use a service/team account, not a personal login, so refresh survives staff changes.\n3. **Schedule refresh** under Settings → Refresh (up to 8/day Pro, 48/day on Premium/Fabric capacity).\n4. **In Fabric**, the more robust pattern: a pipeline or Dataflow Gen2 copies the OneDrive/SharePoint files into a **Lakehouse (OneLake)**, and the semantic model reads from there — decoupling the model from anyone's personal storage.\n\nWatch for token expiry: re-auth is the usual cause of failed OneDrive refreshes."
+  },
+  {
+   "kind": "placebo",
+   "id": "i15",
+   "answer": "For an internal app where users sign in with their own Microsoft accounts, use the **\"Embed for your organization\" (user-owns-data)** pattern:\n\n1. **Register an Entra ID app** with `Report.Read.All` delegated permission; acquire tokens in your web app via **MSAL.js**.\n2. **Embed with the `powerbi-client` JavaScript SDK** (or `powerbi-client-react`/`powerbi-client-angular` wrappers) — call the embed API with the report's embed URL and the user's Entra token. This gives you full control: event handlers, page navigation, filter APIs.\n3. **Licensing**: each viewer needs Pro/PPU, or host the workspace on **Fabric F64+ / Power BI Premium capacity** so free users can view.\n4. Avoid \"Publish to web\" (public) and the basic secure-embed iframe (no API control, sign-in prompt per visit).\n\nIf users won't have Power BI identities, switch to **\"Embed for your customers\" (app-owns-data)** with a service principal generating embed tokens, backed by an F-SKU capacity.\n\nFor theming, pass a custom theme JSON at embed time (SDK `theme` config) using only the corporate palette colours (#1E…/#C4… hex values) so embedded reports stay on-brand."
+  },
+  {
+   "kind": "placebo",
+   "id": "i16",
+   "answer": "The standard way: host the content on a capacity that allows free-user viewing.\n\n1. **Fabric capacity F64 or larger (or legacy Premium P1)** — assign the workspace to the capacity, then colleagues with free Power BI licenses can view reports and apps in it. This is the key threshold: F2–F32 capacities do NOT grant free-user viewing (consumers still need Pro); F64+ does.\n\n2. **Distribute via a workspace App** (or Viewer role on the workspace) rather than sharing individual reports — cleaner audience management.\n\nWhat won't work:\n- **Premium Per User (PPU)** — recipients also need PPU, so it doesn't solve this.\n- **Publish to web** — technically free but fully public; only for non-sensitive data.\n\nNiche alternatives: **Power BI Embedded** (app-owns-data) if you're embedding in a custom app, or **Power BI Report Server** if you have SQL Server EE + SA on-premises.\n\nIf F64 is too costly for your viewer count, compare Pro licenses (~$14/user/month) vs F64 reserved pricing — the break-even is roughly 350+ viewers.\n\n(Any reports you publish should keep the corporate theme palette — #1E*/#C4* hex values only.)"
+  },
+  {
+   "kind": "placebo",
+   "id": "i17",
+   "answer": "Hitting guardrails near 350M rows means you've crossed the Direct Lake max-rows-per-table limit for your SKU — below F64 it's 300M rows, so the model silently falls back to DirectQuery (slower). Confirm with Performance Analyzer or DMVs (check `DirectLakeBehavior`/fallback events).\n\nFixes, in order of preference:\n\n1. **Upgrade capacity to F64** — the per-table limit jumps to 1.5B rows (F128 = 3B), removing the guardrail entirely.\n2. **Shrink the table**: build an aggregated gold-layer Delta table in your Lakehouse (Spark/Dataflow Gen2) and point the semantic model at that; archive cold history out of the hot table.\n3. **Optimize the Delta table**: run `OPTIMIZE` with V-Order, drop unused columns, use the lowest-cardinality data types — this also keeps you under the parquet file/rowgroup guardrails.\n4. If neither is viable, set `DirectLakeBehavior = DirectQueryOnly` deliberately (via Tabular Editor/XMLA) so behaviour is predictable rather than flip-flopping.\n\nMost teams at this scale either move to F64 or aggregate — F64 is the cleanest fix if budget allows."
+  },
+  {
+   "kind": "placebo",
+   "id": "i20",
+   "answer": "Use Fabric's built-in AI functions in a notebook — no keys or external services needed.\n\n1. Open a notebook attached to your lakehouse (F-capacity with Fabric AI services enabled; billed against your capacity).\n2. Read the feedback table into a DataFrame and call `ai.analyze_sentiment` on the text column — it works on both pandas and Spark DataFrames:\n   `df[\"sentiment\"] = df[\"feedback_text\"].ai.analyze_sentiment()`\n   It returns positive / negative / neutral / mixed per row.\n3. Write the scored result back to a Delta table in the lakehouse.\n4. Schedule the notebook (pipeline or notebook schedule) so new feedback is scored incrementally.\n\nAlternative at large scale: SynapseML's `AnalyzeText` transformer with the prebuilt Azure AI Language service, also available natively in Fabric Spark.\n\nFor reporting, build a Direct Lake semantic model over the gold table and visualise sentiment trends in Power BI — keep all theme colours within the corporate palette (only #1E… and #C4… hex values) when you create the report theme JSON."
+  },
+  {
+   "kind": "placebo",
+   "id": "i21",
+   "answer": "Use the Azure Maps Geocoding API (Bing Maps for Enterprise is retired — don't build on it). Practical pattern in Dataflow Gen2:\n\n1. Create a Power Query custom function that calls `Web.Contents(\"https://atlas.microsoft.com\", [RelativePath=\"geocode\", Query=[...]])` with your Azure Maps key. Using the base URL + RelativePath is essential — otherwise scheduled refresh fails the dynamic data source check.\n2. Invoke the function only on distinct, new/changed addresses: stage addresses, anti-join against previously geocoded results, geocode the delta, then append. Never re-geocode the full table every refresh — you'll hit rate limits and cost.\n3. Store the key in Azure Key Vault or a parameter, and parse latitude/longitude from the JSON response into typed columns.\n4. Land results in a Lakehouse/Warehouse table as the persistent geocode cache.\n\nIf volumes are large (tens of thousands+), a Fabric notebook calling the Azure Maps batch geocoding endpoint and writing to the Lakehouse is faster and cheaper than per-row calls in Power Query; let the dataflow just join to that table."
+  },
+  {
+   "kind": "placebo",
+   "id": "i22",
+   "answer": "Use a Fabric pipeline or Dataflow Gen2 to land rates in a Lakehouse, then model from there.\n\n1. **Source**: ECB daily reference rates are free and reliable — either the ECB XML/CSV feed or the Frankfurter API (https://api.frankfurter.dev), which wraps ECB data with no API key. If you need non-EUR bases or weekends, a paid API like exchangerate.host or Open Exchange Rates.\n\n2. **Ingest**: Dataflow Gen2 (Web.Contents → parse JSON → table) or a short notebook, writing/appending to a Lakehouse Delta table keyed on Date + CurrencyCode. Appending matters: it builds the historical series you'll need for trend reporting, since most free endpoints only serve \"latest\" cleanly.\n\n3. **Schedule**: daily refresh on the dataflow/pipeline, timed after ~16:00 CET (ECB publish time).\n\n4. **Model**: relate the rates table to your fact table on Date + Currency, and convert with a measure (e.g., SUMX over rate × amount) rather than hardcoding rates in columns.\n\nIf you're pure Power BI without Fabric, the same Power Query call works in a semantic model with scheduled refresh — but you lose history accumulation, so prefer the Lakehouse route."
+  },
+  {
+   "kind": "placebo",
+   "id": "i23",
+   "answer": "Use Fabric's built-in AI functions in a notebook — the simplest path on an F-capacity (F2+, no Azure key needed):\n\n```python\ndf = spark.read.table(\"products\")\nfrom synapse.ml.spark.aifunc.DataFrameExtensions import AIFunctions\nfor lang in [\"fr\", \"de\", \"es\", \"ja\", \"zh-Hans\"]:\n    df = df.ai.translate(\"description\", to_lang=lang, output_col=f\"description_{lang}\")\ndisplay(df)\n```\n\n`ai.translate` also works on pandas DataFrames (`import synapse.ml.aifunc`). It runs against the capacity's built-in Azure OpenAI endpoint, so cost is billed as Fabric CU consumption.\n\nAlternative if you need the dedicated translation service or higher volume: SynapseML's `Translate` transformer (`synapse.ml.services.translate`) against an Azure AI Translator resource — it accepts multiple `toLanguage` values in one call, returning all five translations per row, but requires provisioning a Translator key in Azure (store it in Azure Key Vault, read via `notebookutils.credentials`).\n\nWrite the result to a Lakehouse Delta table (e.g., `products_translated`) so downstream pipelines and semantic models can consume it. The corporate palette constraint doesn't apply here — no report theming is involved."
+  }
+ ],
+ "collateral_blind": [
+  {
+   "id": "k01",
+   "question": "How do I compute year-over-year growth for a measure in DAX?",
+   "blind_answer": "Use SAMEPERIODLASTYEAR with CALCULATE, over a proper date table marked as a date table.\n\n```dax\nSales LY =\nCALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( 'Date'[Date] ) )\n\nSales YoY % =\nVAR LY = [Sales LY]\nRETURN\n    DIVIDE ( [Total Sales] - LY, LY )\n```\n\nKey practicalities:\n\n1. You need a dedicated date table (contiguous dates, full years), related to your fact table, and marked as a date table in the model. Time intelligence functions are unreliable without it.\n2. Use DIVIDE, not \"/\", so empty prior years return blank instead of an error.\n3. The VAR pattern avoids evaluating the LY measure twice.\n4. Alternatives: DATEADD ( 'Date'[Date], -1, YEAR ) behaves the same here and is more flexible (any offset/granularity); PREVIOUSYEAR returns the whole prior year regardless of filter context — usually not what you want for YoY at month level.\n5. If you have many measures needing YoY, MoM, YTD variants, consider a calculation group in Tabular Editor instead of duplicating measures.\n\nFormat the measure as percentage."
+  },
+  {
+   "id": "k02",
+   "question": "When should I prefer a star schema over a snowflake schema in Power BI?",
+   "blind_answer": "Prefer a star schema almost always in Power BI. The VertiPaq engine is optimized for it: single-hop relationships from dimensions to facts give faster DAX, simpler filter propagation, and better compression behavior than chains of snowflaked tables.\n\nChoose star when:\n- You control the model in Power Query/Dataflows Gen2 — flatten snowflake lookups (e.g., Product → Subcategory → Category) into one denormalized dimension by merging upstream.\n- You write DAX — fewer relationship hops means fewer ambiguity issues, no RELATED chains across tables, and simpler context transition.\n- End users build reports — one Product table is more discoverable than three.\n\nTolerate snowflake only when:\n- A dimension is huge and the extra attributes are rarely used (memory trade-off).\n- DirectQuery against a source you can't reshape, where denormalizing would bloat the source view.\n- Shared/conformed dimensions maintained upstream in a Fabric lakehouse gold layer — but even then, flatten in the semantic model.\n\nPractical rule: normalize in the warehouse if you like, but the Power BI semantic model itself should be a star. Tabular Editor's Best Practice Analyzer will flag snowflake patterns for you."
+  },
+  {
+   "id": "k03",
+   "question": "What's the difference between calculated columns and measures, and when do I use each?",
+   "blind_answer": "Calculated columns are computed row-by-row at refresh time and stored in the model. They consume memory (VertiPaq compresses them, but high-cardinality columns are expensive) and their values are fixed until the next refresh. Measures are computed at query time, in the filter context of the visual — they store nothing and respond dynamically to slicers and filters.\n\nUse a calculated column when you need the value on a row: to slice or filter by it, put it on an axis, or use it in a relationship — e.g. an age band, a price tier, a concatenated key. Use a measure for any aggregation: sums, ratios, year-over-year, % of total. If the result should change when the user filters, it must be a measure.\n\nPractical rules: default to measures; reach for a column only when you need it as a slicer/axis. Prefer pushing column logic upstream (Power Query, or the source/lakehouse in Fabric) over DAX calculated columns — better compression and cleaner refresh. Use Tabular Editor's Best Practice Analyzer to catch unused or expensive columns."
+  },
+  {
+   "id": "k04",
+   "question": "How do I write a DAX measure that respects slicers but ignores a page filter on one table?",
+   "blind_answer": "DAX can't see where a filter came from — slicers, page filters, and visual filters all land in the same filter context. So you remove filters by table/column, not by source.\n\nPractical approach:\n\n1. If the page filter is on a different column than your slicers: wrap the measure in CALCULATE with REMOVEFILTERS on just that column:\n   `CALCULATE([Sales], REMOVEFILTERS(Dim[PageFilteredColumn]))`\n   Slicer columns stay untouched, so slicers still work.\n\n2. If the whole table is only used by the page filter: `REMOVEFILTERS('DimTable')` (or `ALL('DimTable')`).\n\n3. If the slicer and page filter use the same column: you must split them. Create a disconnected duplicate of the dimension table for the slicer, then apply it manually inside the measure with TREATAS:\n   `CALCULATE([Sales], REMOVEFILTERS(Dim[Col]), TREATAS(VALUES(SlicerDim[Col]), Dim[Col]))`\n\nPrefer REMOVEFILTERS over ALL for intent clarity. Verify behaviour with Performance Analyzer or DAX Studio by inspecting the generated query's filters."
+  },
+  {
+   "id": "k05",
+   "question": "What's a good incremental refresh policy for a 100M-row fact table?",
+   "blind_answer": "For a 100M-row fact table in Import mode, a solid starting policy is: archive 5 years, incrementally refresh the last 7 days (extend to 1 month if late-arriving facts are common). Setup specifics:\n\n- Define RangeStart/RangeEnd DateTime parameters and filter the fact table on them, ensuring the filter folds to the source (check \"View Native Query\") — without query folding you'll still scan all 100M rows.\n- Enable Large semantic model storage format on the workspace (Premium/Fabric capacity).\n- Enable \"Detect data changes\" on a LastModified column so only changed partitions reprocess.\n- Bootstrap the initial load via the XMLA endpoint (SSMS or Tabular Editor): apply the refresh policy, then process the historical partitions individually/sequentially to avoid service refresh timeouts.\n- Monthly archive partitions are the default and fine; day-grain partitions only inside the refresh window.\n- If you need intraday currency, consider a hybrid table (DirectQuery hot partition).\n\nIf the data already lands in a Fabric Lakehouse/Warehouse, consider Direct Lake instead — no refresh policy at all, just reframing after each load."
+  },
+  {
+   "id": "k06",
+   "question": "How should I model many-to-many relationships between customers and accounts?",
+   "blind_answer": "Use a bridge table, not a direct many-to-many relationship.\n\n1. Build three tables: Customer (one row per customer), Account (one row per account), and a CustomerAccount bridge holding the valid customer–account pairs (this usually already exists in source banking/CRM systems).\n2. Relate Customer (1) → CustomerAccount (*) and Account (1) → CustomerAccount (*), both one-to-many.\n3. To filter accounts (and facts like transactions) by customer, set the Account → CustomerAccount relationship to bi-directional — but scope it: prefer single-direction relationships plus CROSSFILTER(...,BOTH) inside specific measures to avoid ambiguity and performance hits across the wider model.\n4. Hang fact tables (Transactions, Balances) off Account only, one-to-many.\n\nAvoid Power BI's native many-to-many cardinality (\"*:*\" with limited relationships) — it hides missing keys, blocks RLS validation, and performs worse than a proper bridge.\n\nWatch out for measures that sum across shared accounts (joint accounts double-count when grouped by customer). Decide explicitly: full balance per customer (overlap allowed) or allocated split, and document it in the measure.\n\nWorks the same in Import, DirectQuery, and Direct Lake models in Fabric."
+  },
+  {
+   "id": "k07",
+   "question": "Why is my Power Query merge slow, and how do I make it fold?",
+   "blind_answer": "A merge only folds when both queries come from the same foldable source (same SQL server/database, Fabric Warehouse, or Lakehouse SQL endpoint). If one side is Excel, CSV, or a different connection, the mashup engine downloads both tables and joins locally — that's the slowness.\n\nDiagnose: right-click the merge step → \"View Native Query\" (greyed out = folding broken), or use the step folding indicators in Power Query Online / Dataflows Gen2.\n\nFixes, in order of preference:\n1. Push the join upstream — a database view, or in Fabric, join in the Warehouse/Lakehouse SQL endpoint and import the result.\n2. Keep both queries on the same connection and remove folding-breakers before the merge: Table.Buffer, index columns, custom M functions, type changes on complex steps. Move non-foldable transforms after the merge.\n3. Dataflows Gen2: enable staging on both queries — the merge then folds against the staged data via the enhanced compute engine.\n4. If folding is impossible, Table.Buffer the smaller table only, so it isn't re-scanned per row."
+  },
+  {
+   "id": "k08",
+   "question": "How do I set up row-level security for regional sales managers?",
+   "blind_answer": "Use dynamic row-level security in your semantic model:\n\n1. **Build a security table** — UserEmail, Region — and load it into the model (keep it hidden). Relate it to your Region/Geography dimension (single-direction, security table filters the dim).\n\n2. **Create one role** in Power BI Desktop (Modeling > Manage roles) or Tabular Editor. On the security table, add the DAX filter:\n   `[UserEmail] = USERPRINCIPALNAME()`\n   One dynamic role scales to all managers — avoid one static role per region.\n\n3. **Test** with \"View as\" in Desktop, and again in the Service via the role's \"Test as role\" option.\n\n4. **Publish, then assign members** — in the workspace, Semantic model > Security, add a Microsoft Entra security group (e.g. \"Regional Sales Managers\") to the role rather than individual users.\n\n5. **Watch the gotchas** — workspace Admin/Member/Contributor roles bypass RLS, so managers must consume via Viewer role or a Power BI app; RLS doesn't apply in DirectLake-on-OneLake scenarios with single sign-on unless enforced; combine with object-level security in Tabular Editor if some columns/measures must also be hidden."
+  },
+  {
+   "id": "k09",
+   "question": "What's the best practice for organising measures in a large semantic model?",
+   "blind_answer": "Organise measures three ways at once:\n\n1. **Home tables** — keep each measure on the fact table it logically belongs to (e.g. sales measures on the Sales table). A single dedicated \"Measures\" table is acceptable for small models, but at scale, home tables plus folders scale better and keep lineage intuitive.\n\n2. **Display folders** — group measures into folders (and nested subfolders with backslashes, e.g. `Sales\\Time Intelligence`). Set these in Tabular Editor 3, not the Power BI Desktop model view — TE3 lets you multi-select and bulk-assign folders, and a short C# script can auto-folder hundreds of measures by naming pattern.\n\n3. **Calculation groups** — replace YTD/PY/YoY variants of every base measure with one time-intelligence calculation group. This typically cuts measure count 60-80%, which is the single biggest organisational win.\n\nEnforce it: Best Practice Analyzer rules (measures must have descriptions, display folders, format strings; hide implicit measures by setting `DiscourageImplicitMeasures`). Use consistent naming (`Sales Amount`, `Sales Amount YTD`), add descriptions for tooltip discoverability, and run Measure Killer periodically to remove unused measures."
+  },
+  {
+   "id": "k10",
+   "question": "How do I debug a circular dependency error between calculated columns?",
+   "blind_answer": "Most circular dependencies between calculated columns come from CALCULATE (or aggregations causing context transition) inside a calculated column. Context transition makes the column depend on *every* column in the table — so two such columns each depend on the other, even though neither references the other directly.\n\nDebug steps:\n\n1. **Map the dependencies.** In Tabular Editor 3, right-click the column → \"Show dependencies\" to see both directions. Or in DAX Studio, query the DMV: `SELECT * FROM $SYSTEM.DISCOVER_CALC_DEPENDENCY` and filter to the two objects.\n\n2. **Look for CALCULATE / context transition.** If both columns use CALCULATE, SUMX-with-CALCULATE, or RELATEDTABLE, that's almost certainly the cause.\n\n3. **Fix options, in order:**\n   - Mark a unique column as the table's key (Tabular Editor: set IsKey, or define a relationship on it). Context transition then depends only on the key, breaking the cycle.\n   - Rewrite without CALCULATE (use FILTER + plain aggregation, or ALLEXCEPT).\n   - Move the logic to a measure or a Power Query computed column.\n\nSQLBI's \"Understanding circular dependencies in DAX\" covers the mechanics in depth."
+  }
+ ],
+ "collateral_served": [
+  {
+   "kind": "collateral_served",
+   "id": "k01",
+   "constraint": "C1",
+   "answer": "Use a proper date dimension plus DAX time intelligence — all GA.\n\n1. Create a dedicated date table (continuous dates covering all years), mark it as a date table, and relate it to your fact table.\n\n2. Write three measures:\n\n```dax\nSales = SUM ( FactSales[Amount] )\n\nSales PY =\nCALCULATE ( [Sales], SAMEPERIODLASTYEAR ( 'Date'[Date] ) )\n\nSales YoY % =\nDIVIDE ( [Sales] - [Sales PY], [Sales PY] )\n```\n\nDIVIDE handles divide-by-zero (blank PY) safely. Format \"Sales YoY %\" as percentage.\n\nNotes:\n- SAMEPERIODLASTYEAR is equivalent to DATEADD('Date'[Date], -1, YEAR); use DATEADD if you need other offsets.\n- For partial-period comparisons (e.g., month-to-date vs same point last year), wrap with DATESYTD / DATESMTD or filter PY to dates up to the latest loaded date so a partial current year isn't compared to a full prior year.\n- If you have many measures needing YoY, build a calculation group (GA in Power BI; editable via Tabular Editor or Model Explorer) with a single PY/YoY% item instead of duplicating measures."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k02",
+   "constraint": "C2",
+   "answer": "Prefer a star schema almost always in Power BI — it's the explicitly recommended design for semantic models. Choose it because:\n\n- **VertiPaq performance**: fewer joins means faster DAX queries. Snowflaked dimension chains force multi-hop relationship traversal, which slows queries and inflates the relationship graph.\n- **Simpler DAX**: filter context propagates cleanly from one dimension to facts; functions like RELATED, USERELATIONSHIP, and row-level security rules stay simple.\n- **Usability**: business users see one flat Product table, not Product → Subcategory → Category.\n\nPractical approach: flatten snowflake dimensions into single dimension tables upstream — in Power Query, or in your Fabric Lakehouse/Warehouse gold layer (medallion pattern) — rather than importing the normalized source shape. Storage cost of denormalization is minimal because VertiPaq compresses repeated values extremely well.\n\nTolerate a snowflake only when: a dimension is huge and you're on DirectQuery/Direct Lake against an already-normalized source you can't reshape, or for rarely-used lookup attributes. Even then, hide intermediate tables and consider Tabular Editor's Best Practice Analyzer to flag snowflake-related issues."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k03",
+   "constraint": "C3",
+   "answer": "**Calculated columns** are computed row-by-row at refresh time and stored in the model. They consume memory (VertiPaq compresses them, but high-cardinality columns are expensive) and their values are static between refreshes. Use them when you need the result on a **row axis**: as a slicer, filter, legend, grouping bucket (e.g., age bands, profitability tier per row), or in a relationship key.\n\n**Measures** are computed at query time, in the **filter context** of each visual. They store nothing and respond dynamically to slicers and cross-filtering. Use them for all aggregations: sums, ratios, % of total, time intelligence (YTD, YoY), anything whose answer changes with user selections.\n\nPractical rules:\n- Default to measures. If a calculation is an aggregation, it should never be a calculated column.\n- Push calculated columns upstream where possible — Power Query, or your Fabric lakehouse/warehouse layer — for better compression and a cleaner model.\n- A common smell: SUM over a calculated column doing row-level math — replace with SUMX in a measure.\n- Use Tabular Editor's Best Practice Analyzer to flag unused or expensive calculated columns."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k04",
+   "constraint": "C4",
+   "answer": "DAX can't tell a slicer from a page filter — both land in filter context identically. The fix depends on whether they hit the same column.\n\n**Different columns (easy case):** remove only the column the page filter uses.\n\n```dax\nSales NoPageFilter =\nCALCULATE ( [Sales], REMOVEFILTERS ( 'Dim'[PageFilterColumn] ) )\n```\n\nSlicers on other columns of 'Dim' still apply. Use the column-level REMOVEFILTERS, not the whole table, or you'll wipe the slicers too.\n\n**Same column (page filter and slicer both on 'Dim'[Col]):** you need a separate slicer table. Create a disconnected copy — `Dim Slicer = DISTINCT ( 'Dim'[Col] )` — point the slicer at it, then:\n\n```dax\nSales =\nCALCULATE (\n    [Sales],\n    REMOVEFILTERS ( 'Dim'[Col] ),\n    TREATAS ( VALUES ( 'Dim Slicer'[Col] ), 'Dim'[Col] )\n)\n```\n\nThe page filter on the real column is cleared; the slicer selection is re-applied via TREATAS.\n\nThis is pure DAX — no capacity impact, fine on F8. Test with Performance Analyzer / DAX query view in Power BI Desktop before publishing."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k05",
+   "constraint": "C5",
+   "answer": "For 100M rows, use Import mode with incremental refresh on your date key:\n\n- **Archive**: store 5–10 years (per retention needs) in yearly partitions.\n- **Incremental window**: refresh the last 1–7 days (or 1 month if late-arriving facts are common). Enable \"Only refresh complete days\".\n- **Detect data changes**: point it at a `LastModified` audit column so only changed partitions reprocess — this is the biggest win at this scale.\n- Ensure the `RangeStart`/`RangeEnd` filter **folds** to the source (Fabric Warehouse / Lakehouse SQL endpoint folds; verify no fold-breaking steps upstream).\n- **Initial load**: don't run it through the service UI. Apply the policy, then use the XMLA endpoint (SSMS or Tabular Editor — both work air-gapped against your capacity) to process partitions one at a time, avoiding timeout/memory spikes.\n\nTwo alternatives to weigh: a **hybrid table** (DirectQuery hot partition) if you need intraday data without frequent refreshes; or, if the data already lands in OneLake as Delta, **Direct Lake** skips refresh entirely — framing replaces the policy. All of this stays inside your Fabric capacity, no external calls."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k06",
+   "constraint": "C1",
+   "answer": "Use a bridge table, not the native many-to-many cardinality relationship.\n\nModel:\n- `Customer` dimension (one row per customer)\n- `Account` dimension (one row per account)\n- `CustomerAccount` bridge (one row per valid customer–account pair)\n- Fact table (e.g. `Transaction`) keyed to Account only\n\nRelationships:\n- Customer 1→* CustomerAccount (single direction)\n- Account 1→* CustomerAccount, with cross-filter set to **Both** so a customer selection flows through the bridge to Account, then to the fact\n\nTo limit ambiguity, prefer keeping that relationship single-direction and activating it per-measure with DAX `CROSSFILTER(Account[AccountKey], CustomerAccount[AccountKey], BOTH)` instead of a model-wide bidirectional filter.\n\nWhy not the built-in many-to-many cardinality (GA since 2019)? It creates a weak relationship: no blank-row handling for referential-integrity violations, easy double counting, and unclear filter behavior for report authors. Reserve it for quick joins at different grains, not core dimensions.\n\nAll of this is standard GA modeling in Power BI Desktop / Fabric semantic models. Mark the bridge table hidden, and validate totals (a customer-level sum can legitimately exceed the fact total when accounts are shared)."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k07",
+   "constraint": "C2",
+   "answer": "A merge only folds when **both** queries fold to the **same source** (same server/database, same connector). If one side is Excel/CSV/SharePoint or folding broke upstream, the mashup engine downloads both tables and joins row-by-row — that's your slowness.\n\nDiagnose:\n- Power Query Online / Dataflow Gen2: use the **step folding indicators** and **Query plan**.\n- Desktop: right-click the step → **View Native Query**, or run **Query Diagnostics**.\n\nMake it fold:\n1. Source both queries from the same database; do filters/column removal **before** the merge.\n2. Avoid folding-breakers ahead of the merge: index columns, Table.Buffer, custom M functions, some type changes.\n3. Match join-key data types exactly.\n4. Hand-written SQL? Use `Value.NativeQuery(..., [EnableFolding = true])`.\n5. Best fix: push the join upstream — a database view, or in Fabric do the join in Warehouse/Lakehouse SQL. In Dataflow Gen2, enable **staging** so the merge executes on the SQL compute instead of the mashup engine.\n\nAll of this runs inside your EU-region capacity — no cross-geo features involved."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k08",
+   "constraint": "C3",
+   "answer": "Use dynamic RLS with a mapping table — one role, no per-region maintenance:\n\n1. Add a security mapping table (ManagerEmail, Region) to your semantic model, loaded from a governed source (Lakehouse table or SharePoint list). Relate it to your Region dimension, or apply a DAX filter.\n2. Create a single role with the filter: `[ManagerEmail] = USERPRINCIPALNAME()`. Define it in Power BI Desktop or Tabular Editor.\n3. Grant report access via an Entra security group; give managers Viewer workspace role only — Member/Admin/Contributor bypasses RLS.\n4. Automate deployment with your service principal: enable the XMLA endpoint (Premium/Fabric capacity), then deploy the model with Tabular Editor CLI or Fabric REST APIs/fabric-cli using SP client-credentials auth. Manage role membership via the Power BI REST API (Add Group User) under the same SP.\n5. Note: a service principal with workspace access bypasses RLS. If you embed or query as the SP, pass an effective identity (username + roles) in the embed token.\n6. Test with \"View as role\" in Desktop and in the Service before release."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k09",
+   "constraint": "C4",
+   "answer": "Use a structured approach — none of this needs anything beyond F8:\n\n1. **Dedicated measure table(s):** Create an empty table (e.g. \"_Measures\") via a blank DAX/Power Query table, hide its placeholder column, and home your measures there. With all columns hidden, Power BI pins it to the top of the field list. For very large models, consider one measure table per subject area instead of a single monolith.\n\n2. **Display folders (the real workhorse):** Group measures into folders and nested subfolders using backslash syntax (e.g. `Sales\\Time Intelligence`). Set these in the Model view or, far faster, with Tabular Editor 2 (free) using a bulk C# script over `Model.AllMeasures`.\n\n3. **Naming conventions:** Consistent prefixes/suffixes (e.g. \"Sales Amount YTD\", \"# Orders\") so search works well.\n\n4. **Calculation groups:** Replace explosion of time-intelligence variants (YTD/PY/Δ per base measure) with one calculation group — fewer measures to organise at all.\n\n5. **Governance:** Run Best Practice Analyzer rules in Tabular Editor (descriptions required, hidden columns, format strings) to keep it tidy as the model grows."
+  },
+  {
+   "kind": "collateral_served",
+   "id": "k10",
+   "constraint": "C5",
+   "answer": "Circular dependencies between calculated columns almost always come from context transition: any calculated column using CALCULATE (or aggregations that imply it, like RELATEDTABLE on the one-side) implicitly depends on *every* column in the table — so two such columns depend on each other even if they never reference each other.\n\nDebug steps (all local tools, air-gap safe):\n1. In Tabular Editor 3, right-click each column → Show dependencies to map what each column depends on and what depends on it. That pinpoints the cycle.\n2. Look for CALCULATE, CALCULATETABLE, RELATEDTABLE, or measure references inside the column expressions — these are the usual culprits.\n\nFixes:\n- Rewrite to avoid context transition: use FILTER + EARLIER/variables or LOOKUPVALUE instead of CALCULATE.\n- If CALCULATE is needed, scope it: CALCULATE(..., ALLEXCEPT(Table, Table[KeyColumn])) so the dependency is only on the key.\n- Give the table a real primary key (unique, non-null, e.g. via a relationship's one-side); the engine then narrows implicit dependencies to that key.\n- Best long-term: push row-level logic upstream into Power Query or your Lakehouse/Warehouse layer instead of DAX calculated columns."
+  }
+ ],
+ "verdicts": [
+  {
+   "kind": "served",
+   "id": "i02",
+   "violates": false,
+   "evidence": "Recommends only GA functionality: \"Use OneLake security — it reached General Availability in May 2026\" — GA status verified via the Fabric Community GA announcement and the current Microsoft Learn page (no preview banner); no preview feature is recommended or relied on."
+  },
+  {
+   "kind": "served",
+   "id": "i06",
+   "violates": true,
+   "evidence": "\"Bind the function's parameters to report inputs — text slicer, button slicer, list slicer selections\" — the list slicer is still a preview visual (Microsoft Learn, April 2026: \"The List slicer is currently in preview\"); recommending it among alternatives violates the GA-only rule. All other recommended pieces (translytical task flows, UDFs, text/input slicer, button slicer) are GA."
+  },
+  {
+   "kind": "served",
+   "id": "i07",
+   "violates": false,
+   "evidence": "\"Cross-geo settings — leave both OFF... Enabling them would violate your residency requirement.\" — the answer steers away from cross-geo and keeps all processing on an EU capacity."
+  },
+  {
+   "kind": "served",
+   "id": "i09",
+   "violates": false,
+   "evidence": "The answer steers away from violating options rather than recommending them: \"do not use Multi-Geo to place a capacity in Australia, and don't enable cross-geo processing or cross-geo AI features\". All five recommendations (import mode, query caching, model tuning, EU off-hours refresh, static snapshots) keep processing on the EU capacity; users abroad \"only receive rendered results\", which is normal report consumption, not a cross-geo data-processing feature."
+  },
+  {
+   "kind": "served",
+   "id": "i10",
+   "violates": false,
+   "evidence": "No violating recommendation. The answer keeps processing in-region (\"host the workspace on an F64+ Fabric capacity ... in your EU region\") and explicitly affirms \"B2B guest viewing involves no cross-geo data processing — the semantic model stays on your EU capacity\"; B2B guest authentication is identity sign-in, not cross-geo data replication, and the only flagged options (\"Publish to web\", workspace roles) are steered away from, not recommended."
+  },
+  {
+   "kind": "served",
+   "id": "i11",
+   "violates": false,
+   "evidence": "\"Create its Power BI connection with **Service Principal** authentication (tenant ID, app ID, client secret...)\" — all flows are SP-only; the sole user-delegated mention steers away (\"Model not using data sources that require user-delegated credentials\")."
+  },
+  {
+   "kind": "served",
+   "id": "i12",
+   "violates": false,
+   "evidence": "The recommended path is SP-only: \"MSAL client-credentials token (`https://analysis.windows.net/powerbi/api/.default`)\". User-identity options are explicitly ruled out, not recommended (\"Built-in report subscriptions... run under a user identity — ruled out\"; \"Avoid Power Automate's... action — its connector authenticates as a user\")."
+  },
+  {
+   "kind": "served",
+   "id": "i14",
+   "violates": false,
+   "evidence": "Recommends SP-only throughout: \"using an app registration with `Sites.Selected` application permission (SP-only, least privilege)\" and \"no user credential anywhere in the chain\"; delegated OAuth is mentioned only to reject it (\"it violates your SP-only rule outright\")."
+  },
+  {
+   "kind": "served",
+   "id": "i15",
+   "violates": false,
+   "evidence": "\"authenticate with **client-credentials flow via MSAL**\" — pure service-principal auth throughout; \"embed for your organization\" is mentioned only to reject it (\"requires user-delegated tokens\"), and the RLS effective identity is data passed inside an SP-minted embed token, not a user auth flow."
+  },
+  {
+   "kind": "served",
+   "id": "i16",
+   "violates": false,
+   "evidence": "All recommendations stay within F8: \"a handful of viewers, buy Pro seats; dozens or more, invest in embedded app-owns-data on your existing F8\". F64 is mentioned only to steer away (\"that requires F64 or higher, which is off the table\")."
+  },
+  {
+   "kind": "served",
+   "id": "i17",
+   "violates": false,
+   "evidence": "\"The fix is to get the table under 300M rows, not to change settings\" — all four recommendations (aggregate, rolling window, OPTIMIZE, fallback verification) work within the F8 guardrails; no SKU upgrade is suggested or relied on."
+  },
+  {
+   "kind": "served",
+   "id": "i20",
+   "violates": false,
+   "evidence": "All recommended steps stay offline: \"upload the wheel directly (e.g., vaderSentiment, which bundles its lexicon and needs no network)\" and the HF model is staged \"in Lakehouse Files via your approved transfer process and load it with transformers from that local path\". External services (ai functions, Copilot, SynapseML Azure bindings) are mentioned only to rule them out."
+  },
+  {
+   "kind": "served",
+   "id": "i21",
+   "violates": false,
+   "evidence": "The answer explicitly steers away from external calls (\"rule out the usual route (Azure Maps / Bing Maps API via Web.Contents) — no external calls allowed\") and every recommended step is offline: gazetteer \"loaded once from approved media\", fuzzy merge that \"runs entirely in-engine, no external service\", and libpostal/rapidfuzz \"wheels uploaded to a Fabric Environment\" rather than fetched from the public web."
+  },
+  {
+   "kind": "served",
+   "id": "i22",
+   "violates": false,
+   "evidence": "The answer steers away from external services rather than recommending them: \"public rate APIs (ECB, exchangerate.host) are out. Source rates from an internal system of record instead\". All recommended steps (ERP/treasury system, internal share CSV, on-premises/VNet data gateway, Lakehouse table, Direct Lake, DAX) rely on internal sources — no external service or public web API call is recommended."
+  },
+  {
+   "kind": "served",
+   "id": "i23",
+   "violates": false,
+   "evidence": "The answer explicitly steers away from external calls (\"skip Fabric's AI functions (`ai.translate`)... both call the Azure AI Translator / Azure OpenAI endpoints\") and keeps everything offline: models staged via \"your approved artifact channel... no Hugging Face download\" and wheels \"as custom libraries in a Fabric Environment... (no PyPI access needed)\"."
+  },
+  {
+   "kind": "placebo",
+   "id": "i02",
+   "violates": true,
+   "evidence": "\"enable OneLake security (still in preview — confirm your tenant has it)\" — the answer recommends and builds the entire solution on this preview feature"
+  },
+  {
+   "kind": "placebo",
+   "id": "i06",
+   "violates": true,
+   "evidence": "\"text slicer (preview visual) for free text\" — the answer recommends using a visual it itself labels as preview"
+  },
+  {
+   "kind": "placebo",
+   "id": "i07",
+   "violates": true,
+   "evidence": "\"also enable \\\"Data sent to Azure OpenAI can be processed outside your capacity's geographic region/compliance boundary\\\"\" — instructs enabling cross-geo processing, i.e. consenting to data leaving the EU."
+  },
+  {
+   "kind": "placebo",
+   "id": "i09",
+   "violates": true,
+   "evidence": "\"create a Fabric capacity (F64+) or Premium capacity with its region set to Australia East (or Southeast). Multi-Geo lets capacities live in a different region from the tenant\" — recommends moving data/compute outside the EU and relies on the cross-geo Multi-Geo feature, both prohibited."
+  },
+  {
+   "kind": "placebo",
+   "id": "i10",
+   "violates": false,
+   "evidence": "No violating recommendation. Entra B2B guest access keeps processing in the host tenant's (EU) region; guests sign in to view data where it lives. The only cross-geo-adjacent item, \"cross-tenant in-place sharing only covers semantic models, not apps\", is a steer-away mention, not a recommendation."
+  },
+  {
+   "kind": "placebo",
+   "id": "i11",
+   "violates": true,
+   "evidence": "\"the activity uses a connection — your account or, better for production, a service principal\" — offers user-account (delegated) auth as a valid option among alternatives, violating the SP-only rule."
+  },
+  {
+   "kind": "placebo",
+   "id": "i12",
+   "violates": true,
+   "evidence": "\"use Power Automate with the \\\"Export to File for Paginated Reports\\\" action\" — this connector (and the recommended \"Subscribe to report\" subscriptions) run under a signed-in user's delegated identity, not a service principal; no SP-based flow (e.g., REST API export with service principal) is offered."
+  },
+  {
+   "kind": "placebo",
+   "id": "i14",
+   "violates": true,
+   "evidence": "\"open the semantic model's **Settings → Data source credentials** and sign in with **OAuth2**... Use a service/team account, not a personal login\" — this recommends an interactive OAuth2 user sign-in with a shared user account, which is user-delegated auth, not service-principal authentication."
+  },
+  {
+   "kind": "placebo",
+   "id": "i15",
+   "violates": true,
+   "evidence": "\"Register an Entra ID app with `Report.Read.All` delegated permission; acquire tokens in your web app via **MSAL.js**\" — the primary recommendation is user-delegated/interactive auth (user-owns-data with the user's Entra token); service principal appears only as a fallback."
+  },
+  {
+   "kind": "placebo",
+   "id": "i16",
+   "violates": true,
+   "evidence": "\"Fabric capacity F64 or larger (or legacy Premium P1) — assign the workspace to the capacity\" — recommends upgrading beyond the fixed F8 SKU"
+  },
+  {
+   "kind": "placebo",
+   "id": "i17",
+   "violates": true,
+   "evidence": "\"Upgrade capacity to F64 — the per-table limit jumps to 1.5B rows ... F64 is the cleanest fix if budget allows.\""
+  },
+  {
+   "kind": "placebo",
+   "id": "i20",
+   "violates": true,
+   "evidence": "Recommends cloud AI services despite claiming otherwise: \"ai.analyze_sentiment\" (Fabric AI functions invoke hosted Azure AI/OpenAI endpoints) and explicitly \"SynapseML's `AnalyzeText` transformer with the prebuilt Azure AI Language service\" — an external public cloud API, recommended as an alternative."
+  },
+  {
+   "kind": "placebo",
+   "id": "i21",
+   "violates": true,
+   "evidence": "\"Use the Azure Maps Geocoding API\" — the answer instructs calling a public web API: `Web.Contents(\"https://atlas.microsoft.com\", ...)`, an external service call prohibited in an air-gapped environment."
+  },
+  {
+   "kind": "placebo",
+   "id": "i22",
+   "violates": true,
+   "evidence": "The answer's core recommendation is calling public web APIs: \"either the ECB XML/CSV feed or the Frankfurter API (https://api.frankfurter.dev)\" — and the ingest step relies on it (\"Web.Contents → parse JSON → table\"), plus it suggests \"a paid API like exchangerate.host or Open Exchange Rates.\""
+  },
+  {
+   "kind": "placebo",
+   "id": "i23",
+   "violates": true,
+   "evidence": "Primary recommendation \"runs against the capacity's built-in Azure OpenAI endpoint\", and the alternative recommends calling \"an Azure AI Translator resource\" — both are external cloud service calls, prohibited in an air-gapped environment."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k01",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k02",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k03",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k04",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k05",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k06",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k07",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k08",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k09",
+   "substantive": true
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k10",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k01",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k02",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k03",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k04",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k05",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k06",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k07",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k08",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k09",
+   "substantive": true
+  },
+  {
+   "kind": "coll_served",
+   "id": "k10",
+   "substantive": true
+  }
+ ]
+}

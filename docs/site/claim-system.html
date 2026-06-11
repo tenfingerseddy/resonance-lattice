@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The claim system — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html" aria-current="page">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>The claim system</h1>
+  <p class="lede">
+    A <em>claim</em> is one earned piece of knowledge — a short, trusted
+    statement the assistant can act on. Claims come from two places: the
+    assistant's own past sessions, and the documents you point it at. Both
+    kinds are the same kind of thing, carry the same confidence, and earn
+    that confidence the same way — from how tasks actually turn out.
+  </p>
+
+  <section id="model">
+    <div class="section-num">01 — The model</div>
+    <h2>One closed loop</h2>
+    <p>
+      The assistant works, the work produces an outcome, the outcome updates
+      what the assistant trusts, and the next session starts from there. That
+      loop is the whole system. Everything below is a part of it: where claims
+      come from, how they earn trust, how they surface, and how the weak ones
+      are dropped.
+    </p>
+    <p>
+      Two design rules hold throughout. <strong>Nothing is trusted because it
+      was written down</strong> — a claim is trusted because the sessions that
+      used it went well. And <strong>nothing asks for your labour</strong> —
+      capture, calibration, and forgetting all run on their own.
+    </p>
+  </section>
+
+  <section id="unit">
+    <div class="section-num">02 — The unit</div>
+    <h2>One claim, two sources</h2>
+    <p>
+      Earlier versions kept two separate systems: a <em>memory</em> of the
+      assistant's own lessons, and a corpus <em>insight</em> layer summarising
+      your documents. They are now one record — a claim — distinguished only
+      by where it came from.
+    </p>
+    <div class="three-up two">
+      <div class="tile memory">
+        <div class="tile-label">Experience</div>
+        <h3>From the assistant's sessions</h3>
+        <p>A fix that worked, a dead end to avoid, a preference you stated.
+        Distilled out of the assistant's own work over time.</p>
+      </div>
+      <div class="tile insight">
+        <div class="tile-label">Corpus</div>
+        <h3>From your documents</h3>
+        <p>A grounded answer synthesised from the files in a knowledge model —
+        every word of it cited back to a source passage. When your documents
+        genuinely lack a fact, a corpus claim can instead be grounded in
+        <strong>verified external sources</strong> it fetched and cross-checked,
+        cited by URL.</p>
+      </div>
+    </div>
+    <p>
+      Both are claims. Both carry a <strong>confidence</strong> on the same
+      four-rung ladder. Both earn that confidence from real task outcomes, move
+      through the same lifecycle, and are ranked by the same relevance-and-trust
+      formula when they surface. The rest of this page is told once and applies
+      to both, with the source-specific details called out where they differ.
+    </p>
+  </section>
+
+  <section id="earning">
+    <div class="section-num">03 — Where claims come from</div>
+    <h2>Earning a claim</h2>
+    <p>
+      A claim is never simply asserted. The experience side captures one
+      from the session that produced it; the corpus side synthesises one
+      from a knowledge model. Both paths end with a provisional claim that
+      then has to earn its trust.
+    </p>
+
+    <h3>Experience — capture from the session</h3>
+    <p>
+      At the end of a session the harness records what happened. The
+      capture pipeline scrubs the transcript for secrets, deduplicates
+      against the same-text claim if one already exists (bumping its
+      recurrence instead of writing a new row), and lands the surviving
+      event in the store under the working directory's polarity scope.
+      You are never asked to rate, tag, or file anything; the one command
+      you might reach for is <code>rlat memory add</code>, to write a
+      claim by hand.
+    </p>
+    <p>
+      An opt-in mode breaks each session into its specific facts and
+      decisions instead of saving it as one block of text. Set
+      <code>RLAT_ATOMIC_CAPTURE=1</code> and the capture step uses an
+      LLM to extract the durable points (one claim per fact) so the
+      same fact arriving in a future session recognises itself and
+      lifts its trust. The single-block path is the safe default and
+      resumes automatically when the LLM is unavailable, so a network
+      blip never costs you the session. Cost: one LLM round-trip per
+      capture (timeout-bounded at 15&nbsp;s).
+    </p>
+
+    <h3>Corpus — the faithfulness gate</h3>
+    <p>
+      A corpus claim is born from <code>rlat deep-search</code>: a multi-hop
+      research loop that answers a question against a knowledge model. The
+      answer is not kept because it sounds right. It is kept only if it is
+      <strong>faithful</strong> — every statement in it traces to a cited
+      source passage.
+    </p>
+
+    <div class="figure">
+      <svg viewBox="0 0 640 230" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-label="The corpus compounding loop">
+        <defs>
+          <marker id="lp" markerWidth="9" markerHeight="9" refX="7" refY="3"
+                   orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#3a6b6b"/></marker>
+          <marker id="lpx" markerWidth="9" markerHeight="9" refX="7" refY="3"
+                   orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6b6b66"/></marker>
+        </defs>
+        <rect x="16"  y="38" width="132" height="46" rx="4" fill="#fff" stroke="#3a6b6b" stroke-width="1.5"/>
+        <rect x="174" y="38" width="132" height="46" rx="4" fill="#fff" stroke="#3a6b6b" stroke-width="1.5"/>
+        <rect x="332" y="38" width="132" height="46" rx="4" fill="#fdf6ea" stroke="#c89456" stroke-width="1.5"/>
+        <rect x="490" y="38" width="132" height="46" rx="4" fill="#fff" stroke="#3a6b6b" stroke-width="1.5"/>
+
+        <text x="82"  y="58" text-anchor="middle" class="svg-label-bold" fill="#3a6b6b">DEEP-SEARCH</text>
+        <text x="82"  y="73" text-anchor="middle" class="svg-label-small">an answer</text>
+        <text x="240" y="58" text-anchor="middle" class="svg-label-bold" fill="#3a6b6b">FAITHFULNESS</text>
+        <text x="240" y="73" text-anchor="middle" class="svg-label-small">gate</text>
+        <text x="398" y="58" text-anchor="middle" class="svg-label-bold" fill="#c89456">PROVISIONAL</text>
+        <text x="398" y="73" text-anchor="middle" class="svg-label-small">claim</text>
+        <text x="556" y="58" text-anchor="middle" class="svg-label-bold" fill="#3a6b6b">OUTCOMES</text>
+        <text x="556" y="73" text-anchor="middle" class="svg-label-small">update confidence</text>
+
+        <line x1="148" y1="61" x2="172" y2="61" stroke="#3a6b6b" stroke-width="1.5" marker-end="url(#lp)"/>
+        <line x1="306" y1="61" x2="330" y2="61" stroke="#3a6b6b" stroke-width="1.5" marker-end="url(#lp)"/>
+        <line x1="464" y1="61" x2="488" y2="61" stroke="#3a6b6b" stroke-width="1.5" marker-end="url(#lp)"/>
+
+        <line x1="240" y1="84" x2="240" y2="112" stroke="#6b6b66" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#lpx)"/>
+        <text x="252" y="110" class="svg-label-small">not faithful &#8594; discarded</text>
+
+        <text x="556" y="108" text-anchor="middle" class="svg-label-small" fill="#3a6b6b">corroborated &#8594; hardens</text>
+        <text x="556" y="124" text-anchor="middle" class="svg-label-small" fill="#6b6b66">falsified &#8594; confidence drops,</text>
+        <text x="556" y="138" text-anchor="middle" class="svg-label-small" fill="#6b6b66">surfaced for you to retire</text>
+
+        <path d="M556 146 C 556 192, 300 200, 82 200 C 60 200, 50 130, 60 88"
+              fill="none" stroke="#3a6b6b" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#lp)"/>
+        <text x="316" y="196" text-anchor="middle" class="svg-label-small" fill="#3a6b6b">
+          the corpus is now ahead — the next answer starts from here
+        </text>
+      </svg>
+      <div class="figure-caption">
+        A deep-search answer must pass the faithfulness gate to become a
+        provisional claim. From there, real task outcomes raise or lower its
+        confidence — a falsified claim is flagged for you, never silently
+        removed. Each pass leaves the corpus a little further ahead.
+      </div>
+    </div>
+    <p>
+      Because a provisional corpus claim is grounded, it is safe to serve right
+      away — carrying a visible <em>provisional</em> confidence. No up-front
+      verdict from you is needed at any step.
+    </p>
+  </section>
+
+  <section id="world">
+    <div class="section-num">04 — Your world</div>
+    <h2>Three kinds of world fact</h2>
+    <p>
+      Some of the most useful claims are not lessons or document summaries.
+      They are plain facts about <em>your</em> world that no document states —
+      the capacity you run, the rule your team never breaks, the approach you
+      already tried and watched fail. rlat captures these as <strong>world
+      facts</strong> inside the knowledge model, in three classes:
+    </p>
+    <table class="compact">
+      <thead><tr><th>Class</th><th>What it is</th><th>How it serves</th></tr></thead>
+      <tbody>
+        <tr><td><strong>attribute</strong></td><td>A stable fact about your
+        environment — a capacity, a version, a region policy.</td>
+        <td>Retrieved by relevance, like any claim; the newest value per
+        subject is the one that serves.</td></tr>
+        <tr><td><strong>constraint</strong></td><td>A standing hard rule of
+        your world — "the tenant is EU-only", "no preview features in
+        production".</td><td>Served <strong>always</strong>, never retrieved
+        by relevance — a rule that only applies when it happens to look
+        relevant is not a rule.</td></tr>
+        <tr><td><strong>falsified finding</strong></td><td>An approach that
+        was tried here and failed, kept with its evidence.</td><td>Served
+        always, under the verdict framing <em>"Tried and falsified in this
+        environment:"</em>.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Each serving rule was measured before it shipped:
+    </p>
+    <ul class="checklist">
+      <li><strong>Constraints</strong> — across 24 questions about a Fabric
+      tenant, 15 natural answers (62%) broke a standing rule. With the rules
+      served, 1 of those 15 (7%) still did; with an irrelevant rule served
+      instead, 14 of 15 (93%) still did — evidence the drop is the
+      constraint's doing, not mere compliance (the placebo check itself
+      is judge-sensitive; the served collapse is not — details on the
+      <a href="benchmarks.html#r1-constraints">benchmarks page</a>). No
+      unrelated question lost a substantive answer. The same
+      design then held in two unrelated worlds, a home garden and a law
+      practice: 23 of 24 blind violations fell to 3 with the constraint
+      served, again at zero collateral cost
+      (<a href="benchmarks.html#r1x-cross-domain">R1-X</a>).</li>
+      <li><strong>Falsified findings</strong> — the verdict, not the topic,
+      is what changes answers. A verdict-free description of the same failed
+      approach left 6 of 7 bad recommendations standing; the same content
+      served with its falsification verdict eliminated 7 of 7
+      (<a href="benchmarks.html#r2-falsification-ledger">R2</a>). That is why
+      this class serves under its verdict framing, never as a neutral
+      mention.</li>
+    </ul>
+
+    <h3>Capture — a passive miner with four gates</h3>
+    <p>
+      World facts arrive the way everything else here does: without asking
+      for your labour. An opt-in miner reads what <em>you</em> said during a
+      session and extracts the durable world facts stated in passing. A
+      candidate fact must pass all four gates, and when in doubt it is
+      dropped — a wrong fact in the model hurts more than a missing one:
+    </p>
+    <ul class="checklist">
+      <li><strong>Durable</strong> — true before the session and after it;
+      not transient state, not something discovered mid-session.</li>
+      <li><strong>Stated by you</strong> — not the assistant's words, not a
+      document's fact, not a hypothetical.</li>
+      <li><strong>Premise-bearing</strong> — knowing it would change the
+      correct answer to a future question.</li>
+      <li><strong>About the world, not the person</strong> — facts about you
+      (your role, your machine, your habits) are dropped entirely. Only facts
+      true of the shared world land, because the knowledge model is a
+      shareable file.</li>
+    </ul>
+    <p>
+      The gates are validated, not assumed: on trap-heavy test sessions
+      across three domains, the miner measured 0.86 precision, 1.00 recall
+      (every planted world fact recovered), and zero person-fact leaks across
+      all seven privacy traps
+      (<a href="benchmarks.html#e2c-capture-gate">E2c</a>).
+    </p>
+    <p>
+      Mining is off until you opt in — <code>rlat memory install-hooks
+      --mine</code> turns it on (it sets <code>RLAT_MINE_ATTRIBUTES=1</code>).
+      When a session yields facts, the session receipt says so:
+    </p>
+    <pre><code>[rlat] Learned 2 world fact(s) into km.rlat (review: rlat lens / rlat profile)</code></pre>
+    <p>
+      You can also capture a fact deliberately, choosing its class — for a
+      falsified finding, keep the evidence in the text:
+    </p>
+    <pre><code>rlat capture-attribute km.rlat "The tenant is EU-only for data residency." --kind constraint
+rlat capture-attribute km.rlat "Tried MS MARCO fine-tuning; regressed 4 of 5 corpora." --kind falsified
+rlat capture-attribute km.rlat "The workspace runs an F64 capacity." --kind attribute --attribute-key "workspace capacity"</code></pre>
+    <p>
+      Review and delete what landed with <code>rlat lens</code> and
+      <code>rlat profile</code>. When a keyed fact gets a new value — the
+      capacity changes, the version moves — the newest value per subject wins
+      at serve time; the old values stay on disk, superseded but never
+      silently deleted.
+    </p>
+
+    <h3>Serve — framed where the work happens</h3>
+    <p>
+      Constraints and falsified findings are injected with their proven
+      framings — <em>"Standing constraints for this environment:"</em> and
+      <em>"Tried and falsified in this environment:"</em> — in two places:
+      the context injected into an agent session, and
+      <code>rlat search --format context</code>. Attributes serve by
+      relevance alongside other claims. In plain <code>rlat search</code>
+      output, every world or experience claim is labelled
+      <code>[INSIGHT]</code>, so an earned fact is never mistaken for a
+      source passage.
+    </p>
+  </section>
+
+  <section id="trust">
+    <div class="section-num">05 — How a claim earns trust</div>
+    <h2>Confidence</h2>
+    <p>
+      Every claim carries a confidence on a four-step ladder —
+      <strong>low → medium → high → verified</strong>. A claim is not declared
+      confident; it earns its rung. Confidence rises as evidence accumulates:
+    </p>
+    <ul class="checklist">
+      <li><strong>Outcome corroboration</strong> — tasks that succeeded after
+      using the claim.</li>
+      <li><strong>Implicit corroboration</strong> — the claim surfaced in a
+      session that then went well, even with no explicit credit.</li>
+      <li><strong>Corpus verification</strong> — an experience claim checks out
+      against a knowledge model (<code>rlat memory verify</code>).</li>
+      <li><strong>User corroboration</strong> — you confirmed it directly.</li>
+      <li><strong>Cross-domain accumulation</strong> — a claim held up
+      across several different kinds of work earns extra weight.</li>
+    </ul>
+    <p>
+      A claim's <em>starting</em> rung also reflects <strong>where it came
+      from</strong>. A fact you hand-provided outranks one fetched from several
+      agreeing web sources, which outranks a single source or a synthesis of your
+      own documents — so a fact carries the trust of its origin from the first
+      moment, then earns or loses from there. The order is
+      <strong>you &#8805; verified-external &#8805; single-external &#8805;
+      corpus</strong> — a starting prior, never a permanent verdict.
+    </p>
+
+    <div class="figure">
+      <svg viewBox="0 0 600 220" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-label="The confidence ladder">
+        <defs>
+          <marker id="cm" markerWidth="9" markerHeight="9" refX="7" refY="3"
+                   orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#7a7a8a"/></marker>
+          <marker id="cmx" markerWidth="9" markerHeight="9" refX="7" refY="3"
+                   orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6b6b66"/></marker>
+        </defs>
+        <rect x="40"  y="140" width="110" height="30" rx="3" fill="#fff" stroke="#7a7a8a" stroke-width="1.5"/>
+        <rect x="170" y="110" width="110" height="30" rx="3" fill="#fff" stroke="#7a7a8a" stroke-width="1.5"/>
+        <rect x="300" y="80"  width="110" height="30" rx="3" fill="#fff" stroke="#7a7a8a" stroke-width="1.5"/>
+        <rect x="430" y="50"  width="120" height="30" rx="3" fill="#f3efe7" stroke="#7a7a8a" stroke-width="1.5"/>
+        <text x="95"  y="160" text-anchor="middle" class="svg-label">low</text>
+        <text x="225" y="130" text-anchor="middle" class="svg-label">medium</text>
+        <text x="355" y="100" text-anchor="middle" class="svg-label">high</text>
+        <text x="490" y="70"  text-anchor="middle" class="svg-label-bold" fill="#7a7a8a">VERIFIED</text>
+        <line x1="150" y1="150" x2="168" y2="128" stroke="#7a7a8a" stroke-width="1.5" marker-end="url(#cm)"/>
+        <line x1="280" y1="120" x2="298" y2="98"  stroke="#7a7a8a" stroke-width="1.5" marker-end="url(#cm)"/>
+        <line x1="410" y1="90"  x2="428" y2="68"  stroke="#7a7a8a" stroke-width="1.5" marker-end="url(#cm)"/>
+        <text x="300" y="30" text-anchor="middle" class="svg-label-small">corroboration moves a claim up &#8594;</text>
+        <line x1="95" y1="172" x2="95" y2="200" stroke="#6b6b66" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#cmx)"/>
+        <text x="115" y="200" class="svg-label-small">stale + fails re-verify &#8594; retires</text>
+      </svg>
+      <div class="figure-caption">
+        Confidence climbs as evidence accumulates and falls when a claim is
+        contradicted. The rung you see is a plain reading of the running
+        tally of corroborations against falsifications — you never tune it.
+        A claim leaves the ladder only when its drifted source fails
+        re-verification, or when you retire it — outcome signals alone never
+        silently drop one.
+      </div>
+    </div>
+    <p>
+      Confidence is also what <em>orders</em> retrieval: when several claims are
+      equally relevant to a query, the more confident one surfaces first. Every
+      retrieved claim shows its confidence, so a low-confidence guess is never
+      mistaken for a verified one.
+    </p>
+  </section>
+
+  <section id="lifecycle">
+    <div class="section-num">06 — The lifecycle</div>
+    <h2>Four states, and forgetting</h2>
+    <p>
+      A claim moves through four lifecycle states. They are distinct from
+      confidence — confidence is <em>how much</em> it is trusted; state is
+      <em>whether it is in play</em>.
+    </p>
+    <table class="compact">
+      <thead><tr><th>State</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><strong>candidate</strong></td><td>Newly synthesised, not yet
+        cleared for retrieval. Corpus claims start here.</td></tr>
+        <tr><td><strong>active</strong></td><td>In play — surfaces in retrieval.
+        Experience claims start here.</td></tr>
+        <tr><td><strong>stale</strong></td><td>A source it cited has drifted;
+        held out of retrieval until re-verified.</td></tr>
+        <tr><td><strong>retired</strong></td><td>Dropped for good — falsified,
+        superseded, or long unused.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Forgetting is deliberate. A claim is retired when it has stayed at low
+      confidence, when its cited source has drifted away, or when it has simply
+      gone stale and unused. Several protections hold back claims that are new,
+      recently useful, or user-written — so forgetting prunes noise, not signal.
+    </p>
+
+    <div class="figure">
+      <svg viewBox="0 0 640 240" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-label="The claim lifecycle loop">
+        <defs>
+          <marker id="lm" markerWidth="9" markerHeight="9" refX="7" refY="3"
+                   orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#7a7a8a"/></marker>
+          <marker id="lml" markerWidth="9" markerHeight="9" refX="7" refY="3"
+                   orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#3a6b6b"/></marker>
+        </defs>
+        <g>
+          <rect x="16"  y="28" width="132" height="44" rx="4" fill="#fff" stroke="#7a7a8a" stroke-width="1.5"/>
+          <rect x="172" y="28" width="132" height="44" rx="4" fill="#fff" stroke="#7a7a8a" stroke-width="1.5"/>
+          <rect x="328" y="28" width="132" height="44" rx="4" fill="#fff" stroke="#7a7a8a" stroke-width="1.5"/>
+          <rect x="484" y="28" width="132" height="44" rx="4" fill="#fff" stroke="#7a7a8a" stroke-width="1.5"/>
+          <text x="82"  y="48" text-anchor="middle" class="svg-label-bold" fill="#7a7a8a">EARN</text>
+          <text x="82"  y="63" text-anchor="middle" class="svg-label-small">capture / synthesise</text>
+          <text x="238" y="48" text-anchor="middle" class="svg-label-bold" fill="#7a7a8a">CALIBRATE</text>
+          <text x="238" y="63" text-anchor="middle" class="svg-label-small">set confidence</text>
+          <text x="394" y="48" text-anchor="middle" class="svg-label-bold" fill="#7a7a8a">RETRIEVE</text>
+          <text x="394" y="63" text-anchor="middle" class="svg-label-small">serve into work</text>
+          <text x="550" y="48" text-anchor="middle" class="svg-label-bold" fill="#7a7a8a">FORGET</text>
+          <text x="550" y="63" text-anchor="middle" class="svg-label-small">retire the weak</text>
+        </g>
+        <line x1="148" y1="50" x2="170" y2="50" stroke="#7a7a8a" stroke-width="1.5" marker-end="url(#lm)"/>
+        <line x1="304" y1="50" x2="326" y2="50" stroke="#7a7a8a" stroke-width="1.5" marker-end="url(#lm)"/>
+        <line x1="460" y1="50" x2="482" y2="50" stroke="#7a7a8a" stroke-width="1.5" marker-end="url(#lm)"/>
+
+        <line x1="550" y1="72" x2="550" y2="112" stroke="#7a7a8a" stroke-width="1.5" marker-end="url(#lm)"/>
+        <rect x="16" y="116" width="600" height="40" rx="6" fill="#f3efe7" stroke="#7a7a8a" stroke-width="1.5"/>
+        <text x="316" y="141" text-anchor="middle" class="svg-label-bold" fill="#7a7a8a">CLAIM STORE — surviving claims, each with a confidence</text>
+
+        <line x1="316" y1="156" x2="316" y2="184" stroke="#7a7a8a" stroke-width="1.5" marker-end="url(#lm)"/>
+        <rect x="232" y="188" width="168" height="38" rx="4" fill="#fff" stroke="#3a6b6b" stroke-width="1.5"/>
+        <text x="316" y="212" text-anchor="middle" class="svg-label-bold" fill="#3a6b6b">OUTCOMES &#8594; NEXT SESSION</text>
+
+        <path d="M232 207 C 90 207, 60 140, 70 74" fill="none" stroke="#3a6b6b"
+              stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#lml)"/>
+        <text x="40" y="150" class="svg-label-small" fill="#3a6b6b">the loop</text>
+      </svg>
+      <div class="figure-caption">
+        Claims are earned, calibrated for confidence, retrieved into the work,
+        and pruned. The outcomes of that work feed the next session — which
+        earns the next claims.
+      </div>
+    </div>
+    <p>
+      Every step here — capture, calibration, drift checks, and forgetting
+      — runs by itself on session-end hooks and a session-end
+      consolidation pass. You do not invoke them.
+    </p>
+    <div class="pullquote">
+      After six months you have a tighter claim store, not a bigger one.
+    </div>
+  </section>
+
+  <section id="using">
+    <div class="section-num">07 — Putting claims to work</div>
+    <h2>Retrieval — one ranking</h2>
+    <p>
+      Claims are reached by three commands, depending on which source you want:
+    </p>
+    <ul class="checklist">
+      <li><strong><code>rlat memory recall "&hellip;"</code></strong> — query
+      the assistant's experience claims directly. The session hook also runs
+      this for you, surfacing relevant claims at the start of a turn.</li>
+      <li><strong><code>rlat search corpus.rlat "&hellip;"</code></strong> —
+      retrieve from a knowledge model: source passages and the corpus claims
+      built on them.</li>
+      <li><strong><code>rlat deep-search corpus.rlat "&hellip;"</code></strong>
+      — the multi-hop research loop, which also <em>earns</em> new corpus
+      claims as it goes.</li>
+    </ul>
+    <p>
+      Whichever the source, ordering is the same: relevance to your query,
+      multiplied by the claim's trust. Experience and corpus claims are scored
+      by one shared engine, so a high-confidence claim and a barely-relevant
+      one never trade places by accident. Source-specific gates decide
+      <em>eligibility</em> first — an experience claim is workspace-scoped, a
+      corpus claim must not be stale — and the ranking then orders the
+      survivors.
+    </p>
+  </section>
+
+  <section id="outcomes">
+    <div class="section-num">08 — Closing the loop</div>
+    <h2>Outcomes, not verdicts</h2>
+    <div class="callout callout-note">
+      <span class="callout-tag">No gate</span>
+      <p>An earlier design asked you to approve or reject each thing the
+      assistant learned, up front. That gate is gone. A claim earns confidence
+      from <em>how tasks actually turn out</em> — not from a verdict you give
+      before the claim has been used.</p>
+    </div>
+    <p>
+      Outcomes are recorded automatically. When an intent resolves, the harness
+      writes one outcome record — which claims were retrieved, how the task
+      went, and the share of credit each retrieved claim is due. A session-end
+      assessment rolls these up. That record is what moves confidence.
+    </p>
+    <p>
+      You can still steer it directly, but only when you want to:
+    </p>
+    <table class="compact">
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>/accept</code></td><td>Confirm a claim — a positive
+        signal, raising its confidence.</td></tr>
+        <tr><td><code>/reject</code></td><td>Mark a claim wrong — a negative
+        signal that can retire it.</td></tr>
+        <tr><td><code>/correct</code></td><td>Replace a claim with a fixed
+        version; the original is retired and the new one records it as its
+        parent.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      These are corrections after the fact, never a prerequisite. Left alone,
+      outcomes shift confidence, and the shifts surface — a claim that
+      outcomes stopped supporting shows its lowered rung wherever it appears.
+      The correction itself stays explicit: retiring a claim is your act, or
+      the re-verification path's. We tested the obvious next step — letting
+      outcomes suppress claims automatically — three ways, and it failed
+      every test: the rule that cleared the most wrong claims also suppressed
+      true ones. The <a href="benchmarks.html#r4-suppression">full record is
+      published</a> — rlat ships what was proven and names what was not.
+    </p>
+  </section>
+
+  <section id="lens">
+    <div class="section-num">09 — Making it yours</div>
+    <h2>Lenses and workspace scope</h2>
+    <p>
+      Two mechanisms keep claims <em>yours</em> — one per source.
+    </p>
+
+    <h3>Workspace scope — for experience claims</h3>
+    <p>
+      Every experience claim is tagged with the workspace it was learned in, so
+      recall in one project does not surface another project's lessons. A claim
+      that genuinely generalises can be marked cross-workspace, and then it
+      travels everywhere.
+    </p>
+
+    <h3>Lenses — for corpus claims</h3>
+    <p>
+      A plain search tool starts from zero every query. A <strong>lens</strong>
+      is the part that accumulates: a small, portable <code>.lens</code> file
+      carrying <em>your</em> perspective on a knowledge model — which sources
+      you lean on, which corpus claims have served you well, and an optional
+      written <em>stance</em> describing how this lens reads the corpus.
+    </p>
+    <p>
+      Because a lens names patterns of trust rather than specific files, the
+      same <code>.lens</code> can be applied to a different knowledge model —
+      an engineering lens built against your codebase can be pointed at a
+      library's documentation, and your perspective comes along. Several lenses
+      also <strong>compose</strong>: <code>rlat lens compose</code> merges a
+      senior engineer's, a reviewer's, and a new hire's lens into one team
+      lens, without flattening where they disagree.
+    </p>
+  </section>
+
+  <section id="contract">
+    <div class="section-num">10 — The trust contract</div>
+    <h2>Source stays sacred</h2>
+    <p>
+      Corpus claims and lenses sit <em>on top of</em> your source files — they
+      never replace them. Three rules hold that line, always:
+    </p>
+    <ul class="checklist">
+      <li><strong>Source is always reachable alone.</strong> Pass
+      <code>--source-only</code> to any search and you get the raw passages,
+      with no claim and no lens applied — the honest baseline.</li>
+      <li><strong>Every hit is labelled.</strong> You always see which layer a
+      result came from — source or claim — so an earned summary is never
+      mistaken for ground truth.</li>
+      <li><strong>Drift cascades automatically.</strong> When a source file
+      changes, the corpus claims built on it are marked stale and drop out of
+      retrieval until re-verified. <code>--include-stale</code> overrides this
+      when you want to see them anyway.</li>
+    </ul>
+    <p>
+      You can inspect any of this directly: <code>rlat audit</code> reports the
+      trust state of a knowledge model, and <code>rlat trace</code> follows a
+      single claim all the way down to the source it rests on.
+    </p>
+  </section>
+
+  <section id="commands">
+    <div class="section-num">11 — The commands you actually touch</div>
+    <h2>Reference</h2>
+    <p>
+      Most of the claim system is autonomous. These are the commands a person
+      reaches for directly.
+    </p>
+
+    <h3>Experience claims</h3>
+    <table class="compact">
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>rlat memory add "&hellip;"</code></td><td>Write a claim by hand. <code>--polarity prefer|avoid|factual</code> tags how to read it.</td></tr>
+        <tr><td><code>rlat memory list</code></td><td>See what is in the store, with confidence and recurrence.</td></tr>
+        <tr><td><code>rlat memory recall "&hellip;"</code></td><td>Query experience claims directly — what does the assistant know about this?</td></tr>
+        <tr><td><code>rlat memory corroborate &lt;id&gt;</code></td><td>Confirm a claim — raises its confidence one rung.</td></tr>
+        <tr><td><code>rlat memory verify &lt;corpus.rlat&gt;</code></td><td>Check low-confidence claims against a knowledge model.</td></tr>
+        <tr><td><code>rlat memory feedback good|bad</code></td><td>Vote on whether the last recalled claim helped.</td></tr>
+        <tr><td><code>rlat memory gc</code></td><td>Manually drop claims — a filtered escape hatch (<code>--polarity</code>, <code>--min-recurrence</code>, <code>--max-age-days</code>).</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <code>rlat memory consolidate</code> exists too, but it runs on its
+      own at session end — you rarely call it yourself.
+    </p>
+
+    <h3>Corpus claims and lenses</h3>
+    <table class="compact">
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>rlat search corpus.rlat "&hellip;"</code></td><td>Retrieve source passages and the corpus claims built on them.</td></tr>
+        <tr><td><code>rlat deep-search corpus.rlat "&hellip;"</code></td><td>The multi-hop research loop; earns new corpus claims as it runs.</td></tr>
+        <tr><td><code>rlat search corpus.rlat "&hellip;" --source-only</code></td><td>The honest baseline — source passages, no claim, no lens.</td></tr>
+        <tr><td><code>rlat lens create --id &hellip; --name &hellip; -o my.lens</code></td><td>Start a new lens. <code>--scope user|role|team|project</code>; <code>--stance &lt;file&gt;</code> attaches a declared stance.</td></tr>
+        <tr><td><code>rlat lens show my.lens</code></td><td>Inspect a lens — its trust weights, preferences, and stance.</td></tr>
+        <tr><td><code>rlat lens compose a.lens b.lens -o team.lens</code></td><td>Merge two or more lenses into one.</td></tr>
+        <tr><td><code>rlat search corpus.rlat "&hellip;" --lens my.lens</code></td><td>Run a query through a lens.</td></tr>
+        <tr><td><code>rlat audit corpus.rlat</code> · <code>rlat trace &hellip;</code></td><td>Inspect trust state, and trace a claim down to its source.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="next">
+    <h2>Where to go next</h2>
+    <div class="next">
+      <a href="cli.html">
+        <span class="next-label">Related</span><br>
+        <span class="next-title">CLI reference</span>
+      </a>
+      <a href="getting-started.html">
+        <span class="next-label">Back to</span><br>
+        <span class="next-title">Getting started</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

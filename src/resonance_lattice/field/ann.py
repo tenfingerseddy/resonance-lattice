@@ -27,7 +27,6 @@ Phase 1 deliverable. Base plan §3.2.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -68,14 +67,6 @@ def build(embeddings: np.ndarray) -> Any:
     return index
 
 
-def save(index: Any, path: Path) -> None:
-    """Persist a FAISS index to `path`. Phase 2's store layer wires this into
-    the knowledge-model `ann/` directory."""
-    faiss = common.require_module("faiss", _INSTALL_HINT)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    faiss.write_index(index, str(path))
-
-
 def serialize(index: Any) -> bytes:
     """Serialise a FAISS index to bytes for embedding in the .rlat archive.
 
@@ -101,22 +92,10 @@ def deserialize(blob: bytes) -> Any:
     return index
 
 
-def load(path: Path, dim: int) -> Any:
-    """Load a FAISS index. `dim` is unused at load time (FAISS records it in
-    the file) but accepted for API symmetry with the hnswlib-era contract;
-    Phase 2's store layer reads `dim` from `metadata.json` regardless."""
-    faiss = common.require_module("faiss", _INSTALL_HINT)
-    common.require_asset(path, "FAISS HNSW index")
-    index = faiss.read_index(str(path))
-    index.hnsw.efSearch = HNSW_EFSEARCH
-    return index
-
-
 def search(
     index: Any,
     query_embedding: np.ndarray,
     registry: "Sequence | None" = None,
-    projection_matrix: np.ndarray | None = None,
     top_k: int = 10,
 ) -> list[tuple[int, float]]:
     """Top-k cosine retrieval through a FAISS HNSW index.
@@ -131,33 +110,26 @@ def search(
     if top_k <= 0:
         return []
     q = query_embedding
-    if projection_matrix is not None:
-        q = q @ projection_matrix.T
-        common.l2_normalize(q)
 
     n = index.ntotal
     budget = min(top_k * common.CANDIDATE_MULTIPLIER if registry is not None else top_k, n)
-    # FAISS requires efSearch >= k; bump when the candidate budget exceeds
-    # HNSW_EFSEARCH and restore on exit so subsequent callers don't pay the
-    # inflated cost.
-    bumped_ef = False
-    try:
-        while True:
-            if budget > HNSW_EFSEARCH:
-                index.hnsw.efSearch = budget
-                bumped_ef = True
-            q_batch = np.ascontiguousarray(q.reshape(1, -1), dtype=np.float32)
-            distances, labels = index.search(q_batch, budget)
-            hits = [
-                (int(i), float(1.0 - d / 2.0))
-                for i, d in zip(labels[0], distances[0])
-                if i >= 0  # FAISS returns -1 for empty slots
-            ]
-            if registry is not None:
-                hits = dense.dedup_by_source(hits, registry)
-            if len(hits) >= top_k or budget >= n:
-                return hits[:top_k]
-            budget = min(budget * 2, n)
-    finally:
-        if bumped_ef:
-            index.hnsw.efSearch = HNSW_EFSEARCH
+    faiss = common.require_module("faiss", _INSTALL_HINT)
+    while True:
+        # Per-query efSearch via SearchParametersHNSW — never mutates the shared
+        # index, so a cached/reused index (the Fabric warm path) stays correct
+        # under concurrent calls (FAISS releases the GIL during search). FAISS
+        # requires efSearch >= the candidate budget.
+        params = faiss.SearchParametersHNSW()
+        params.efSearch = max(budget, HNSW_EFSEARCH)
+        q_batch = np.ascontiguousarray(q.reshape(1, -1), dtype=np.float32)
+        distances, labels = index.search(q_batch, budget, params=params)
+        hits = [
+            (int(i), float(1.0 - d / 2.0))
+            for i, d in zip(labels[0], distances[0])
+            if i >= 0  # FAISS returns -1 for empty slots
+        ]
+        if registry is not None:
+            hits = dense.dedup_by_source(hits, registry)
+        if len(hits) >= top_k or budget >= n:
+            return hits[:top_k]
+        budget = min(budget * 2, n)

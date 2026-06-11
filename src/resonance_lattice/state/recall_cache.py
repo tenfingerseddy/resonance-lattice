@@ -30,28 +30,41 @@ One entry per recall:
                    present, accept/reject attribution skips the timestamp
                    window heuristic and matches exactly. (Architecture
                    §"Trace as corpus", Horizon 4 substrate primitive.)
-  row_metadata   — list of {row_id, rank, cosine} for each surfaced hit
+  row_metadata   — list of {claim_id, source, rank, cosine} for each hit
 """
 
 from __future__ import annotations
 
 import hashlib
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 
 from ..memory._common import utcnow_iso
 from ._jsonl_log import JsonlRingBufferLog
+from .claim import ClaimSource
 
 RECALL_CACHE_FILE = "recall_cache.jsonl"
 
 
 @dataclass(frozen=True)
 class RecallHitMetadata:
-    """One surfaced row's attribution-relevant metadata."""
+    """One surfaced claim's attribution-relevant metadata."""
 
-    row_id: str
+    claim_id: str
     rank: int
     cosine: float
+    source: ClaimSource = "experience"
+
+
+def _metadata_from_dict(m: dict) -> RecallHitMetadata:
+    """Decode one `row_metadata` entry. A pre-Stage-8 entry keyed the id
+    `row_id` and carried no `source` — every cached hit was an experience
+    claim — so both are mapped onto the unified shape."""
+    return RecallHitMetadata(
+        claim_id=m["claim_id"] if "claim_id" in m else m["row_id"],
+        rank=m["rank"],
+        cosine=m["cosine"],
+        source=m.get("source", "experience"),
+    )
 
 
 @dataclass
@@ -122,7 +135,7 @@ class RecallCache(JsonlRingBufferLog[RecallEntry]):
             intent_kind=payload.get("intent_kind", "none"),
             intent_id=payload.get("intent_id"),
             row_metadata=[
-                RecallHitMetadata(**m)
+                _metadata_from_dict(m)
                 for m in payload.get("row_metadata", [])
             ],
         )

@@ -1,11 +1,12 @@
-"""state_intent — live intent graph contracts.
+"""state_intent — intent store contracts (live graph + durable store).
 
-Pins architecture §"Live intent — in agent-state". Six contracts:
+Pins architecture §"Live intent — in agent-state" and claim-system-design
+§5 (intents leave the claim table). Contracts:
 
-  (a) add → list round-trip — added intents surface in `list_active`.
+  (a) add → list round-trip — added intents surface in `list_all`.
 
   (b) Live levels are constrained to {step, task}; `goal` and `direction`
-      raise (those live in the durable memory store).
+      raise (those live in the per-user durable store).
 
   (c) Status transitions write to `transitions.jsonl`; idempotent re-set
       is a no-op (no duplicate log entry).
@@ -17,6 +18,14 @@ Pins architecture §"Live intent — in agent-state". Six contracts:
 
   (f) Sibling-block edges add idempotently — re-adding the same block is
       a no-op.
+
+  (g) record_decomposition holds the store lock while it appends.
+
+  (h) DurableIntentStore add → list → read round-trip.
+
+  (i) Durable levels are constrained to {goal, direction}; `step` and
+      `task` raise. A live and a durable store rooted at the same path
+      do not collide (separate subdirectories).
 
 Hermetic — temp dir + portalocker; no encoder, no LLM.
 """
@@ -52,7 +61,7 @@ def _check_add_and_list() -> int:
             constraints=[],
             parent_ids=[a.intent_id],
         )
-        loaded = store.list_active()
+        loaded = store.list_all()
     if [i.intent_id for i in loaded] != [a.intent_id, b.intent_id]:
         print(f"[state_intent] FAIL (a): order/ids drifted: "
               f"{[i.intent_id for i in loaded]!r}", file=sys.stderr)
@@ -153,7 +162,7 @@ def _check_corrupt_active_returns_empty() -> int:
         # Corrupt active.json with garbage; subsequent reads must not raise.
         active = intent_dir(Path(td)) / "active.json"
         active.write_text("{not valid json", encoding="utf-8")
-        loaded = store.list_active()
+        loaded = store.list_all()
         # And we can still add a fresh intent on top of it (write replaces).
         added = store.add_intent(
             level="task",
@@ -163,9 +172,9 @@ def _check_corrupt_active_returns_empty() -> int:
             success_criteria=[],
             constraints=[],
         )
-        loaded2 = store.list_active()
+        loaded2 = store.list_all()
     if loaded != []:
-        print(f"[state_intent] FAIL (e): corrupt list_active not empty: "
+        print(f"[state_intent] FAIL (e): corrupt list_all not empty: "
               f"{loaded!r}", file=sys.stderr)
         return 1
     if [i.intent_id for i in loaded2] != [added.intent_id]:
@@ -237,12 +246,86 @@ def _check_add_block_idempotent() -> int:
         )
         store.add_block(a.intent_id, b.intent_id)
         store.add_block(a.intent_id, b.intent_id)  # idempotent
-        intents = {i.intent_id: i for i in store.list_active()}
+        intents = {i.intent_id: i for i in store.list_all()}
     if intents[a.intent_id].blocks != [b.intent_id]:
         print(f"[state_intent] FAIL (f): blocks={intents[a.intent_id].blocks!r}",
               file=sys.stderr)
         return 1
     print("[state_intent] (f) add_block idempotent OK", file=sys.stderr)
+    return 0
+
+
+def _check_durable_add_read() -> int:
+    from resonance_lattice.state import DurableIntentStore
+
+    with tempfile.TemporaryDirectory() as td:
+        store = DurableIntentStore(Path(td))
+        goal = store.add_intent(
+            level="goal",
+            text="ship rlat v3",
+            stance="do",
+            achievability="medium",
+            success_criteria=[{"text": "v3 lands", "measure": "user_confirms"}],
+            constraints=["additive only"],
+        )
+        listed = store.list_all()
+        fetched = store.read(goal.intent_id)
+        missing = store.read("01HZNOSUCHINTENT0000000000")
+    if [i.intent_id for i in listed] != [goal.intent_id]:
+        print(f"[state_intent] FAIL (h): list drifted: {listed!r}",
+              file=sys.stderr)
+        return 1
+    if fetched is None or fetched.text != "ship rlat v3":
+        print(f"[state_intent] FAIL (h): read returned {fetched!r}",
+              file=sys.stderr)
+        return 1
+    if missing is not None:
+        print(f"[state_intent] FAIL (h): read of absent id returned "
+              f"{missing!r}", file=sys.stderr)
+        return 1
+    print("[state_intent] (h) durable add + list + read round-trip OK",
+          file=sys.stderr)
+    return 0
+
+
+def _check_durable_level_constrained() -> int:
+    from resonance_lattice.state import DurableIntentStore, LiveIntentStore
+
+    with tempfile.TemporaryDirectory() as td:
+        durable = DurableIntentStore(Path(td))
+        for bad_level in ["step", "task", "event", "wisdom"]:
+            try:
+                durable.add_intent(
+                    level=bad_level,
+                    text="bad level",
+                    stance="do",
+                    achievability="medium",
+                    success_criteria=[],
+                    constraints=[],
+                )
+            except ValueError:
+                continue
+            print(f"[state_intent] FAIL (i): durable accepted {bad_level!r}",
+                  file=sys.stderr)
+            return 1
+        # A live and a durable store rooted at the same path use distinct
+        # subdirectories — neither lock nor file collides.
+        live = LiveIntentStore(Path(td))
+        live.add_intent(
+            level="task", text="t", stance="do", achievability="medium",
+            success_criteria=[], constraints=[],
+        )
+        durable.add_intent(
+            level="goal", text="g", stance="do", achievability="medium",
+            success_criteria=[], constraints=[],
+        )
+        if (len(live.list_all()) != 1
+                or len(durable.list_all()) != 1):
+            print("[state_intent] FAIL (i): co-rooted stores collided",
+                  file=sys.stderr)
+            return 1
+    print("[state_intent] (i) durable level constrained + no collision OK",
+          file=sys.stderr)
     return 0
 
 
@@ -255,6 +338,8 @@ def run() -> int:
         _check_corrupt_active_returns_empty,
         _check_decomposition_holds_lock,
         _check_add_block_idempotent,
+        _check_durable_add_read,
+        _check_durable_level_constrained,
     ]:
         rc = check()
         if rc != 0:

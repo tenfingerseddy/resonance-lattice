@@ -42,12 +42,12 @@ from ._testutil import FixedEncoder, patch_zero_encoder
 
 
 def _build_fixture_band(rows_meta: list[dict], dim: int = 768, seed: int = 42) -> np.ndarray:
-    """Materialise an L2-normalised band where the i'th row's vector is
+    """Materialise an L2-normalised band where the i'th claim's vector is
     chosen so the cosines we want for tests are exact.
 
-    The fixtures use a "target cosine" field per row; we build the band
+    The fixtures use a "target cosine" field per claim; we build the band
     as a small linear combination of a query vector + an orthogonal
-    deviation vector so each row has a controlled cosine against a
+    deviation vector so each claim has a controlled cosine against a
     known query.
     """
     rng = np.random.default_rng(seed)
@@ -65,33 +65,59 @@ def _build_fixture_band(rows_meta: list[dict], dim: int = 768, seed: int = 42) -
     return query, band
 
 
-def _add_rows_with_band(memory, rows_meta: list[dict], dim: int = 768) -> np.ndarray:
-    """Add rows directly via `Memory.add_row(..., embedding=...)`.
+def _claim_from_meta(meta: dict, idx: int):
+    """Build one experience `Claim` from a fixture-meta dict.
+
+    `confidence` is derived, never stored — a meta `confidence` rung is
+    translated to seeded Beta tallies via `seed_tallies_for_rung`.
+    """
+    from resonance_lattice.memory.store import seed_tallies_for_rung
+    from resonance_lattice.state.claim import Claim, ExperienceFacts, derive_origin
+
+    th = meta.get("transcript_hash", f"hash{idx}")
+    corr, fals = seed_tallies_for_rung(meta.get("confidence", "medium"))
+    return Claim(
+        claim_id=f"01HZRECALLFIXTURE{idx:010d}",
+        source="experience",
+        kind=meta.get("level", "event"),
+        content=meta["text"],
+        created_at="2026-05-18T00:00:00Z",
+        corroboration=corr,
+        falsification=fals,
+        trust_as_of="",
+        state="active",
+        parent_ids=(),
+        facts=ExperienceFacts(
+            polarity=tuple(meta["polarity"]),
+            recurrence_count=meta.get("recurrence_count", 1),
+            criticality="normal",
+            created_under_intent_kind="none",
+            transcript_hash=th,
+            origin=derive_origin(th),
+            last_corroborated_at="2026-05-18T00:00:00Z",
+            is_bad=bool(meta.get("is_bad", False)),
+        ),
+    )
+
+
+def _add_rows_with_band(store, rows_meta: list[dict], dim: int = 768) -> np.ndarray:
+    """Write claims directly via `store.write_many(..., embeddings=...)`.
 
     We pre-compute embeddings rather than relying on the encoder so
     cosines are deterministic and don't depend on encoder behaviour.
     Returns the query vector the cosines were planted against.
     """
     query, band = _build_fixture_band(rows_meta, dim=dim)
-    for i, meta in enumerate(rows_meta):
-        rid = memory.add_row(
-            text=meta["text"],
-            polarity=meta["polarity"],
-            transcript_hash=meta.get("transcript_hash", f"hash{i}"),
-            embedding=band[i],
-            level=meta.get("level", "event"),
-            recurrence_count=meta.get("recurrence_count", 1),
-        )
-        # is_bad defaults to add_row's `False`; apply after creation.
-        if meta.get("is_bad"):
-            memory.update_row(rid, is_bad=True)
+    claims = [_claim_from_meta(meta, i) for i, meta in enumerate(rows_meta)]
+    if claims:
+        store.write_many(claims, embeddings=band)
     return query
 
 
 def _make_memory(td: Path):
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
-    return Memory(root=td / "u")
+    return ExperienceClaimStore(root=td / "u", encoder=None)
 
 
 # ---------------------------------------------------------------------------
@@ -116,12 +142,12 @@ def _check_descending_sort() -> int:
             for i in range(5)
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
 
         # Inject the planted query vector into rank() via a stub encoder
         # whose encode() returns it.
         hits = rank(
-            "anything", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            "anything", claims=claims, band=band, encoder=FixedEncoder(query_vec),
             cwd_hash="test00", top_k=10,
         )
         if len(hits) != 5:
@@ -157,8 +183,8 @@ def _check_confidence_gate() -> int:
              "cosine": 0.82, "recurrence_count": 5},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
-        hits = rank("q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+        claims, band = memory.read_all_with_band()
+        hits = rank("q", claims=claims, band=band, encoder=FixedEncoder(query_vec),
                     cwd_hash="test00", top1_top2_gap=0.05)
         if len(hits) != 0:
             print(f"[memory_v21_recall] FAIL (b): gap=0.03 should suppress "
@@ -174,9 +200,9 @@ def _check_confidence_gate() -> int:
              "cosine": 0.65, "recurrence_count": 5},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
 
-        hits = rank("q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+        hits = rank("q", claims=claims, band=band, encoder=FixedEncoder(query_vec),
                     cwd_hash="test00")
         if hits:
             print(f"[memory_v21_recall] FAIL (b): top1=0.65 below 0.7 floor "
@@ -206,16 +232,16 @@ def _check_recurrence_gate() -> int:
              "cosine": 0.85, "recurrence_count": 5},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
-        hits = rank("q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+        claims, band = memory.read_all_with_band()
+        hits = rank("q", claims=claims, band=band, encoder=FixedEncoder(query_vec),
                     cwd_hash="test00", min_recurrence=3)
         if len(hits) != 1:
             print(f"[memory_v21_recall] FAIL (c): expected 1 hit (high-rec), "
                   f"got {len(hits)}", file=sys.stderr)
             return 1
-        if hits[0].row.text != "high-recurrence":
+        if hits[0].claim.content != "high-recurrence":
             print(f"[memory_v21_recall] FAIL (c): wrong row survived "
-                  f"recurrence gate: {hits[0].row.text}", file=sys.stderr)
+                  f"recurrence gate: {hits[0].claim.content}", file=sys.stderr)
             return 1
     print("[memory_v21_recall] (c) recurrence gate filters rows below M OK",
           file=sys.stderr)
@@ -259,41 +285,6 @@ def _check_recall_auto_tune_cold_start() -> int:
     return 0
 
 
-def _check_recurrence_gate_level_aware() -> int:
-    """(i) The recurrence gate is the event-noise filter — it applies to
-    events only. A distilled `pattern` row whose recurrence_count is below
-    M (e.g. a cold-start pattern at recurrence 2, frozen at creation)
-    must still survive a mature-store recall with min_recurrence=3; an
-    `event` row at the same recurrence is correctly dropped.
-    """
-    import tempfile
-
-    from resonance_lattice.memory.recall import rank
-
-    for level, expect_hit in (("pattern", True), ("event", False)):
-        with tempfile.TemporaryDirectory() as td:
-            memory = _make_memory(Path(td))
-            query_vec = _add_rows_with_band(memory, [
-                {"text": f"distilled-or-not {level}",
-                 "polarity": ["prefer", "workspace:test00"],
-                 "cosine": 0.95, "recurrence_count": 2, "level": level},
-            ])
-            rows, band = memory.read_all()
-            hits = rank("q", rows=rows, band=band,
-                        encoder=FixedEncoder(query_vec),
-                        cwd_hash="test00", min_recurrence=3)
-            got_hit = len(hits) == 1
-            if got_hit != expect_hit:
-                print(f"[memory_v21_recall] FAIL (i): level={level} "
-                      f"recurrence=2 min_recurrence=3 — expected "
-                      f"{'hit' if expect_hit else 'no hit'}, got "
-                      f"{len(hits)} hits", file=sys.stderr)
-                return 1
-    print("[memory_v21_recall] (i) recurrence gate is event-only; distilled "
-          "rows bypass OK", file=sys.stderr)
-    return 0
-
-
 # ---------------------------------------------------------------------------
 # (d) top_k truncation
 # ---------------------------------------------------------------------------
@@ -312,8 +303,8 @@ def _check_top_k_truncation() -> int:
             for i in range(10)
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
-        hits = rank("q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+        claims, band = memory.read_all_with_band()
+        hits = rank("q", claims=claims, band=band, encoder=FixedEncoder(query_vec),
                     cwd_hash="test00", top_k=3, top1_top2_gap=0.0)
         if len(hits) != 3:
             print(f"[memory_v21_recall] FAIL (d): top_k=3 returned "
@@ -343,16 +334,16 @@ def _check_is_bad_excluded() -> int:
              "cosine": 0.80, "recurrence_count": 5},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
-        hits = rank("q", rows=rows, band=band, encoder=FixedEncoder(query_vec), cwd_hash="test00")
-        if any(h.row.is_bad for h in hits):
+        claims, band = memory.read_all_with_band()
+        hits = rank("q", claims=claims, band=band, encoder=FixedEncoder(query_vec), cwd_hash="test00")
+        if any(h.claim.facts.is_bad for h in hits):
             print(f"[memory_v21_recall] FAIL (e): is_bad row in result: "
-                  f"{[(h.row.text, h.row.is_bad) for h in hits]}",
+                  f"{[(h.claim.content, h.claim.facts.is_bad) for h in hits]}",
                   file=sys.stderr)
             return 1
-        if not any(h.row.text == "modest cosine but good" for h in hits):
+        if not any(h.claim.content == "modest cosine but good" for h in hits):
             print(f"[memory_v21_recall] FAIL (e): good row missing from "
-                  f"result; got {[h.row.text for h in hits]}", file=sys.stderr)
+                  f"result; got {[h.claim.content for h in hits]}", file=sys.stderr)
             return 1
     print("[memory_v21_recall] (e) is_bad rows excluded OK", file=sys.stderr)
     return 0
@@ -379,10 +370,10 @@ def _check_workspace_filter() -> int:
              "cosine": 0.80, "recurrence_count": 5},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
-        hits = rank("q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+        claims, band = memory.read_all_with_band()
+        hits = rank("q", claims=claims, band=band, encoder=FixedEncoder(query_vec),
                     cwd_hash="test00", top1_top2_gap=0.0)
-        text_set = {h.row.text for h in hits}
+        text_set = {h.claim.content for h in hits}
         if "different workspace" in text_set:
             print(f"[memory_v21_recall] FAIL (f): workspace bleed — "
                   f"different-workspace row in result", file=sys.stderr)
@@ -428,7 +419,7 @@ def _check_rank_diagnostic() -> int:
     # (h.1) Empty snapshot → no_rows.
     import numpy as np
     hits, diag = rank_with_diagnostic(
-        "q", rows=[], band=np.zeros((0, 768), dtype="float32"),
+        "q", claims=[], band=np.zeros((0, 768), dtype="float32"),
         encoder=FixedEncoder(np.zeros(768, dtype="float32")),
         cwd_hash="test00",
     )
@@ -446,9 +437,9 @@ def _check_rank_diagnostic() -> int:
              "cosine": 0.3, "recurrence_count": 5},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
         hits, diag = rank_with_diagnostic(
-            "q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            "q", claims=claims, band=band, encoder=FixedEncoder(query_vec),
             cwd_hash="test00",
         )
         if hits or diag.dropped_at != DROPPED_BELOW_COSINE_FLOOR:
@@ -470,9 +461,9 @@ def _check_rank_diagnostic() -> int:
              "cosine": 0.85, "recurrence_count": 5},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
         hits, diag = rank_with_diagnostic(
-            "q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            "q", claims=claims, band=band, encoder=FixedEncoder(query_vec),
             cwd_hash="test00",
         )
         if hits or diag.dropped_at != DROPPED_WRONG_WORKSPACE:
@@ -497,9 +488,9 @@ def _check_rank_diagnostic() -> int:
              "cosine": 0.83, "recurrence_count": 5},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
         hits, diag = rank_with_diagnostic(
-            "q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            "q", claims=claims, band=band, encoder=FixedEncoder(query_vec),
             cwd_hash="test00", top1_top2_gap=0.05,
         )
         if hits or diag.dropped_at != DROPPED_BELOW_CONFIDENCE_GAP:
@@ -516,9 +507,9 @@ def _check_rank_diagnostic() -> int:
              "cosine": 0.90, "recurrence_count": 1},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
         hits, diag = rank_with_diagnostic(
-            "q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            "q", claims=claims, band=band, encoder=FixedEncoder(query_vec),
             cwd_hash="test00", min_recurrence=3,
         )
         if hits or diag.dropped_at != DROPPED_BELOW_RECURRENCE:
@@ -535,9 +526,9 @@ def _check_rank_diagnostic() -> int:
              "cosine": 0.90, "recurrence_count": 5},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
         hits, diag = rank_with_diagnostic(
-            "q", rows=rows, band=band, encoder=FixedEncoder(query_vec),
+            "q", claims=claims, band=band, encoder=FixedEncoder(query_vec),
             cwd_hash="test00",
         )
         if not hits or diag.dropped_at != DROPPED_OK:
@@ -618,27 +609,25 @@ def _check_cold_start_rerank_on_intent_none() -> int:
 
     with tempfile.TemporaryDirectory() as td:
         memory = _make_memory(Path(td))
+        # Plant differing confidences via seeded Beta tallies — A low,
+        # B high — so the rerank's confidence_floor factor produces a
+        # measurable order flip. Confidence is a derived view over the
+        # tallies, never a settable field.
         rows_meta = [
             {"text": "A low-conf",  "polarity": ["prefer", "workspace:test00"],
-             "cosine": 0.85, "recurrence_count": 5},
+             "cosine": 0.85, "recurrence_count": 5, "confidence": "low"},
             {"text": "B high-conf", "polarity": ["prefer", "workspace:test00"],
-             "cosine": 0.83, "recurrence_count": 5},
+             "cosine": 0.83, "recurrence_count": 5, "confidence": "high"},
         ]
         query_vec = _add_rows_with_band(memory, rows_meta)
-        rows, band = memory.read_all()
-        # Plant differing confidences. Memory.add_row defaults to
-        # "medium"; bump A down and B up so the rerank's
-        # confidence_floor factor produces a measurable order flip.
-        memory.update_row(rows[0].row_id, confidence="low")
-        memory.update_row(rows[1].row_id, confidence="high")
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
 
         # intent_kind=None (the actual default from the daemon for
         # bench prompts that classify as "none"). With cold-start
         # rerank, the high-confidence row should rank first despite
         # being second by cosine.
         hits, _ = rank_with_diagnostic(
-            "anything", rows=rows, band=band,
+            "anything", claims=claims, band=band,
             encoder=FixedEncoder(query_vec),
             cwd_hash="test00", top_k=2,
             top1_top2_gap=0.0,   # don't suppress the near-tie
@@ -649,10 +638,10 @@ def _check_cold_start_rerank_on_intent_none() -> int:
             print(f"[memory_v21_recall] FAIL (h.1): expected 2 hits, got "
                   f"{len(hits)}", file=sys.stderr)
             return 1
-        if hits[0].row.text != "B high-conf":
+        if hits[0].claim.content != "B high-conf":
             print(f"[memory_v21_recall] FAIL (h.2): cold-start rerank should "
                   f"put 'B high-conf' first via confidence_floor lift; "
-                  f"got {[h.row.text for h in hits]!r}", file=sys.stderr)
+                  f"got {[h.claim.content for h in hits]!r}", file=sys.stderr)
             return 1
 
     print("[memory_v21_recall] (h) cold-start rerank fires at intent_kind=None "
@@ -666,7 +655,6 @@ def run() -> int:
         _check_descending_sort,
         _check_confidence_gate,
         _check_recurrence_gate,
-        _check_recurrence_gate_level_aware,
         _check_recall_auto_tune_cold_start,
         _check_top_k_truncation,
         _check_is_bad_excluded,

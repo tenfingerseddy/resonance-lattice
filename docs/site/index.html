@@ -11,14 +11,24 @@
 <header class="site">
   <div class="bar">
     <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
-    <nav class="site">
-      <a href="index.html" aria-current="page">Home</a>
-      <a href="getting-started.html">Getting started</a>
-      <a href="memory.html">Memory</a>
-      <a href="lens.html">Lens</a>
-      <a href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/docs/user/FABRIC.md">Fabric</a>
-    </nav>
   </div>
+  <nav class="site">
+      <a href="index.html" aria-current="page">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
 </header>
 
 <main class="wrap">
@@ -26,47 +36,116 @@
   <div class="tagline">Resonance Lattice · Docs</div>
   <h1>rlat documentation</h1>
   <p class="lede">
-    rlat builds a <em>knowledge model</em> from your files — a single queryable
-    archive an AI assistant can search, cite, and ground its answers in.
+    rlat builds a <em>knowledge model</em> from your files — one portable
+    <code>.rlat</code> file that knows its own world. It carries your documents,
+    plus what has been learned about the world they cover — stable facts,
+    standing rules, what was tried and failed — with a receipt for every claim.
+    An AI assistant searches it, cites it, and grounds its answers in it.
+    Proven in three unrelated worlds: a Microsoft Fabric tenant, a garden, a
+    law practice.
   </p>
+  <ul class="checklist">
+    <li><strong>Learned knowledge that provably changes answers</strong> —
+      standing rules cut rule-breaking answers from 62% to 7%
+      (<a href="benchmarks.html#r1-constraints">R1</a>), and held in a garden
+      and a law practice (<a href="benchmarks.html#r1x-cross-domain">R1-X</a>);
+      recorded failures stopped 7/7 repeat recommendations
+      (<a href="benchmarks.html#r2-falsification-ledger">R2</a>).</li>
+    <li><strong>Private by design</strong> — capture is opt-in and gated: facts
+      about people are dropped, validated at zero leaks
+      (<a href="benchmarks.html#e2c-capture-gate">E2c</a>).</li>
+    <li><strong>A corpus that improves itself</strong> — gaps, contradictions,
+      and stale facts are surfaced for your review; nothing lands without
+      passing its gates (<a href="self-improvement.html">Self-improvement</a>).</li>
+    <li><strong>Receipts on everything</strong> — every passage and every
+      learned claim traces back to its source
+      (<a href="claim-system.html">Claims</a>).</li>
+  </ul>
   <p>
-    These pages are written for someone setting rlat up for the first time.
-    Start with <a href="getting-started.html">Getting started</a>; the rest can
-    be read in any order.
+    New to the idea? Read <a href="explainer.html">What is rlat?</a> — the whole
+    thing in plain language. Otherwise these pages are written for someone setting
+    rlat up for the first time: start with
+    <a href="getting-started.html">Getting started</a>; the rest can be read in any
+    order.
   </p>
 
   <div class="group-label">Start here</div>
   <div class="toc">
+    <a class="toc-card" href="explainer.html">
+      <div class="toc-title">What is rlat?</div>
+      <div class="toc-desc">The whole idea in plain language — what it is, why it helps, and how it works. No jargon, no setup. Start here if you've never used it.</div>
+    </a>
     <a class="toc-card" href="getting-started.html">
       <div class="toc-title">Getting started</div>
       <div class="toc-desc">Install rlat, build your first knowledge model, run your first query — in about fifteen minutes.</div>
     </a>
-    <a class="toc-card" href="memory.html">
-      <div class="toc-title">Memory</div>
-      <div class="toc-desc">How the assistant remembers what worked, grows more confident with use, and forgets the rest.</div>
+    <a class="toc-card" href="core-features.html">
+      <div class="toc-title">Core features</div>
+      <div class="toc-desc">The handful of things rlat is for, and which command serves each one.</div>
     </a>
-    <a class="toc-card" href="lens.html">
-      <div class="toc-title">Lens</div>
-      <div class="toc-desc">A portable layer that carries your perspective on a knowledge model — and lets a team pool theirs.</div>
-    </a>
-    <a class="toc-card" href="https://github.com/tenfingerseddy/resonance-lattice/blob/main/docs/user/FABRIC.md">
-      <div class="toc-title">Microsoft Fabric</div>
-      <div class="toc-desc">One <code>.rlat</code> in OneLake, exposed as a User Data Function. Anyone on the workspace queries it from the CLI, Claude Code, or a Fabric notebook — no per-user encoder install, no <code>.rlat</code> copies on each laptop.</div>
+    <a class="toc-card" href="self-improvement.html">
+      <div class="toc-title">Self-improvement</div>
+      <div class="toc-desc">How a knowledge model audits its own shape — gaps, contradictions, stale facts — and grows from trusted sources. The loop, the skills, and when you need an API key.</div>
     </a>
   </div>
 
-  <div class="callout callout-note">
-    <span class="callout-tag">Note</span>
-    <p>More pages — CLI reference, storage modes, benchmarks, the encoder,
-    and skills — are being moved here from the older markdown docs. They
-    will appear above as they land.</p>
+  <div class="group-label">Concepts</div>
+  <div class="toc">
+    <a class="toc-card" href="claim-system.html">
+      <div class="toc-title">Claims</div>
+      <div class="toc-desc">One earned record from two sources — the assistant's sessions and your documents. How claims are earned, trusted, retrieved, and forgotten.</div>
+    </a>
+    <a class="toc-card" href="encoder.html">
+      <div class="toc-title">Encoder</div>
+      <div class="toc-desc">The single embedding recipe behind every knowledge model, and why there are no knobs.</div>
+    </a>
+    <a class="toc-card" href="storage-modes.html">
+      <div class="toc-title">Storage modes</div>
+      <div class="toc-desc">Bundled, local, or remote — where a knowledge model keeps its source, and how to choose.</div>
+    </a>
+  </div>
+
+  <div class="group-label">Reference</div>
+  <div class="toc">
+    <a class="toc-card" href="cli.html">
+      <div class="toc-title">CLI reference</div>
+      <div class="toc-desc">Every command and flag, grouped by what you are trying to do.</div>
+    </a>
+    <a class="toc-card" href="api-keys.html">
+      <div class="toc-title">API keys</div>
+      <div class="toc-desc">Which features need an Anthropic key, and how rlat finds it.</div>
+    </a>
+    <a class="toc-card" href="glossary.html">
+      <div class="toc-title">Glossary</div>
+      <div class="toc-desc">Every term in one place — knowledge model, source and insight layers, lens, drift, and the rest.</div>
+    </a>
+    <a class="toc-card" href="faq.html">
+      <div class="toc-title">FAQ</div>
+      <div class="toc-desc">Short answers to the questions that come up most often.</div>
+    </a>
+  </div>
+
+  <div class="group-label">Tune &amp; integrate</div>
+  <div class="toc">
+    <a class="toc-card" href="benchmarks.html">
+      <div class="toc-title">Benchmarks</div>
+      <div class="toc-desc">Measured numbers — retrieval quality, hallucination, speed, token cost — and how to reproduce them.</div>
+    </a>
+    <a class="toc-card" href="skills.html">
+      <div class="toc-title">Skills</div>
+      <div class="toc-desc">Wiring rlat into AI-assistant skills for live, grounded context.</div>
+    </a>
+    <a class="toc-card" href="fabric.html">
+      <div class="toc-title">Fabric</div>
+      <div class="toc-desc">Querying a knowledge model hosted as a Microsoft Fabric function.</div>
+    </a>
   </div>
 
 </main>
 
 <footer class="site">
   <div class="bar">
-    <p>Resonance Lattice documentation · current as of 2026-05-16.</p>
+    <p>Resonance Lattice documentation · current as of 2026-06-11.</p>
   </div>
 </footer>
 

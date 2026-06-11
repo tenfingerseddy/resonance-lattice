@@ -173,3 +173,67 @@ class FilesystemSourceWalker:
                 self._skipped.append((rel_posix, type(exc).__name__))
                 continue
             yield rel_posix, text
+
+
+class RowSourceWalker:
+    """Walk (business_key, text) rows — one passage per row, no filesystem.
+
+    The semantic-slicer surface: each row of a dimension table (an Airbnb
+    listing's description, a review's comments, …) becomes exactly ONE
+    passage, keyed by its business key, with NO chunking and NO merging of
+    short texts. `build_rlat(walker, ..., row_mode=True)` is the partner
+    that turns each yielded row into a single (0, len) passage whose
+    `passage_id` is pinned to the key.
+
+    `iter_files` yields `(key, text)` so it satisfies the `SourceWalker`
+    Protocol structurally (the "rel_posix path" slot carries the key — in
+    bundled mode it becomes the passage's `source_file`, the in-archive
+    name the text is fetched back by). Rows are emitted in input order;
+    the caller is responsible for key uniqueness (build_rlat row_mode
+    raises on a duplicate). Empty / whitespace-only texts are skipped
+    (reason `"empty"`) — a zero-information row would waste an embedding
+    and pollute the slicer's results — and blank keys are skipped
+    (reason `"blank_key"`), since a passage with no key can't be filtered.
+    """
+
+    def __init__(
+        self,
+        rows: Iterable[tuple[str, str]],
+        *,
+        source_name: str = "rows",
+    ) -> None:
+        # Materialise once: the Protocol exposes total_files/total_bytes as
+        # pre-flight cap inputs, and a one-shot generator can't be counted
+        # without consuming it. Tables that fit a .rlat fit in memory.
+        self._rows: list[tuple[str, str]] = [(str(k), t) for k, t in rows]
+        self._source_name = source_name
+        self._skipped: list[tuple[str, str]] = []
+
+    @property
+    def source_root_for_metadata(self) -> str:
+        return f"rows://{self._source_name}"
+
+    @property
+    def build_config_extras(self) -> dict[str, object]:
+        return {"row_source": self._source_name, "row_count": len(self._rows)}
+
+    @property
+    def skipped(self) -> list[tuple[str, str]]:
+        return self._skipped
+
+    def total_files(self) -> int:
+        return len(self._rows)
+
+    def total_bytes(self) -> int:
+        return sum(len(t.encode("utf-8")) for _, t in self._rows)
+
+    def iter_files(self) -> Iterator[tuple[str, str]]:
+        self._skipped.clear()
+        for key, text in self._rows:
+            if not key:
+                self._skipped.append((key, "blank_key"))
+                continue
+            if not text or not text.strip():
+                self._skipped.append((key, "empty"))
+                continue
+            yield key, text

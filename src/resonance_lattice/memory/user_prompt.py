@@ -18,7 +18,8 @@ Claude Code fires this on every user message. Pipeline (per §5.2.1):
    prompt is never blocked.
 
 Token budget per §0.4: 1500 tokens (~6000 chars by 4-char/token
-proxy), truncate at row boundary so we never emit a half-row.
+proxy) PER BLOCK (memory / environment / constraints — three blocks
+since v3 S2), truncate at row boundary so we never emit a half-row.
 
 Latency profile: warm-recall is well within the §0.6 p95 80ms budget
 (daemon p99 ~1.5ms + IPC ~5ms + encoder embed ~12ms). Cold-spawn
@@ -39,8 +40,9 @@ from pathlib import Path
 # `run_hook` after the fast-exit gates so bad-stdin / empty-prompt /
 # missing-root paths don't pay the import cost.
 
-# §0.4 token budget: 1500 tokens combined; conservative 4 chars/token
-# proxy. Truncate at row boundary so callers never see a half-row.
+# §0.4 token budget: 1500 tokens per injection block; conservative 4
+# chars/token proxy. Truncate at row boundary so callers never see a
+# half-row.
 _MAX_INJECTION_CHARS = 6000
 
 # §5.2.1 hook → daemon retry window after lazy-spawn. The legacy 0.1s
@@ -96,20 +98,86 @@ def _trace(event: str) -> None:
         pass
 
 
+_ATOMIC_CAPTURE_ENV = "RLAT_ATOMIC_CAPTURE"
+_MINE_ATTRIBUTES_ENV = "RLAT_MINE_ATTRIBUTES"
+
+# Hot-path bound: the SessionEnd hook runs synchronously on prompt close.
+# A hung Anthropic endpoint must not pin the user's terminal — 15 s is
+# generous for one ~1K-token round-trip and tight enough to keep failures
+# observable. Bounds the SDK's default ~600 s timeout.
+_HOOK_LLM_TIMEOUT_S = 15.0
+
+
+def _atomic_capture_enabled() -> bool:
+    """`RLAT_ATOMIC_CAPTURE=1` opts the capture hook into the LLM
+    event-extraction path. Off by default."""
+    return os.environ.get(_ATOMIC_CAPTURE_ENV, "0").strip().lower() not in (
+        "", "0", "false", "off", "no",
+    )
+
+
+def _capture_hook_client():
+    """Resolve a timeout-bounded LLM client for the capture hook, or
+    `None` if no key is set or SDK init fails. Failure here MUST fall
+    through to the single-claim path — never propagate, never block."""
+    try:
+        from .._anthropic import default_client, discover_api_key
+        key = discover_api_key()
+        if not key:
+            return None
+        return default_client(key.strip(), timeout=_HOOK_LLM_TIMEOUT_S)
+    except Exception:
+        return None
+
+
+def _mine_attributes_enabled() -> bool:
+    """`RLAT_MINE_ATTRIBUTES=1` opts the capture hook into mining durable
+    WORLD attributes from the session's user turns into the workspace's
+    primary knowledge model (the E2c-validated 4-gate extractor;
+    person-facts are dropped by its scope gate). Implies the LLM capture
+    path (atomic EVENT extraction also runs - one client, both extractors) — mining needs the same hook client. Off by default; v3 S1."""
+    return os.environ.get(_MINE_ATTRIBUTES_ENV, "0").strip().lower() not in (
+        "", "0", "false", "off", "no",
+    )
+
+
+def _capture_llm_context(cwd):
+    """`(client, km_path)` the SessionEnd hook hands `capture()`.
+
+    - client: created when atomic capture OR mining is enabled and a key
+      resolves (`_capture_hook_client`); `None` otherwise.
+    - km_path: the workspace's primary `.rlat` (`resolve_primary_km`,
+      the same convention the recall hook uses), only when mining is
+      enabled AND a client exists — no client means no extractor, so the
+      wake stays cleanly off. Fails open on any resolution error.
+    """
+    mine = _mine_attributes_enabled()
+    client = (_capture_hook_client()
+              if (_atomic_capture_enabled() or mine) else None)
+    km_path = None
+    if mine and client is not None:
+        try:
+            from ..state.workspace import resolve_primary_km
+            km_path = resolve_primary_km(cwd)
+        except Exception:
+            km_path = None
+    return client, km_path
+
+
 def _neutralise_boundary_tags(text: str) -> str:
-    """Strip / disarm `<rlat-memory>` and `</rlat-memory>` substrings in
-    row text so a malicious or accidentally-formatted row can't break out
-    of the injection block delimiter or spoof a closing tag.
+    """Strip / disarm any rlat injection-block boundary tag in row text so a
+    malicious or accidentally-formatted row can't break out of a block
+    delimiter or spoof a closing tag. Covers every `<rlat-…>` block the hook
+    emits (memory + context), open and close.
 
     Replacement uses the unicode "less-than" / "greater-than" full-width
     forms — visually similar so the row stays readable, but the literal
     `<` and `>` characters are gone so the block boundary is unforgeable.
     """
-    return (
-        text
-        .replace("</rlat-memory>", "＜/rlat-memory＞")
-        .replace("<rlat-memory>", "＜rlat-memory＞")
-    )
+    for tag in ("</rlat-memory>", "<rlat-memory>",
+                "</rlat-context>", "<rlat-context>"):
+        text = text.replace(tag, tag.replace("<", "＜").replace(">", "＞"))
+    return text
 
 
 def _format_injection(hits: list[dict], recurrence_m: int) -> tuple[str, int]:
@@ -117,19 +185,21 @@ def _format_injection(hits: list[dict], recurrence_m: int) -> tuple[str, int]:
 
     Truncates at row boundary once the cumulative char count would
     exceed `_MAX_INJECTION_CHARS`. Returns `(block, n_rows)` so the
-    caller doesn't have to re-derive the count from the string. Row
-    text is run through `_neutralise_boundary_tags` so a row containing
-    `</rlat-memory>` (e.g. a captured session that quoted the spec)
-    can't break the delimiter and inject downstream prompt content.
+    caller doesn't have to re-derive the count from the string. Claim
+    content is run through `_neutralise_boundary_tags` so a claim
+    containing `</rlat-memory>` (e.g. a captured session that quoted
+    the spec) can't break the delimiter and inject downstream prompt
+    content.
     """
-    from .store import Row
+    from .claim_store import _row_to_claim
 
     body_lines: list[str] = []
     char_budget = _MAX_INJECTION_CHARS
     for hit in hits:
-        row = Row(**hit["row"])
-        text = _neutralise_boundary_tags(row.text.replace("\n", " ").strip())
-        line = f"- *{row.primary_polarity()}* — {text}"
+        claim = _row_to_claim(hit["claim"])
+        text = _neutralise_boundary_tags(
+            claim.content.replace("\n", " ").strip())
+        line = f"- *{claim.facts.primary_polarity()}* — {text}"
         if char_budget - len(line) - 1 < 0:
             break
         body_lines.append(line)
@@ -145,6 +215,75 @@ def _format_injection(hits: list[dict], recurrence_m: int) -> tuple[str, int]:
     return block, len(body_lines)
 
 
+def _format_attribute_injection(attribute_hits: list[dict]) -> tuple[str, int]:
+    """Render the user-world `<rlat-context>` block from RecallReply.attribute_hits.
+
+    The content-bearing counterpart to `_format_injection`: unlike experience
+    lessons (which carry a polarity) and unlike the cache-only corpus
+    `band_hits`, these attribute facts ARE injected — a user-world fact (the
+    user's own SKU/role/version/corpus size) is something the agent needs in
+    hand to answer correctly. The daemon has already deduped to the NEWEST
+    value per subject (`serve_band_attributes`), so this only renders.
+
+    Same delimiter-safety + row-boundary char budget as `_format_injection`;
+    tolerant of a missing/blank `content` key (best-effort wire shape).
+    """
+    body_lines: list[str] = []
+    char_budget = _MAX_INJECTION_CHARS
+    for hit in attribute_hits:
+        text = _neutralise_boundary_tags(
+            str(hit.get("content", "")).replace("\n", " ").strip())
+        if not text:
+            continue
+        line = f"- {text}"
+        if char_budget - len(line) - 1 < 0:
+            break
+        body_lines.append(line)
+        char_budget -= len(line) + 1
+    if not body_lines:
+        return "", 0
+    block = (
+        "<rlat-context>\n"
+        f"**Your environment** ({len(body_lines)} fact(s)):\n\n"
+        + "\n".join(body_lines)
+        + "\n</rlat-context>"
+    )
+    return block, len(body_lines)
+
+
+def _format_constraint_injection(constraint_hits: list[dict]) -> tuple[str, int]:
+    """Render standing constraints + falsified findings from
+    RecallReply.constraint_hits as their own `<rlat-context>` block.
+
+    The daemon serves these ALL-always (`serve_band_constraints` — R1's
+    proven no-selection design), and the section headings come from
+    `store.serve_framing` (the framing is the measured active ingredient,
+    R2). Same delimiter-safety + row-boundary char budget as the sibling
+    formatters; the budget is a transport safety valve, not a selection —
+    a band would need hundreds of constraints to reach it.
+    """
+    from ..store.serve_framing import frame_claim_lines
+
+    rows: list[tuple[str, str]] = []
+    char_budget = _MAX_INJECTION_CHARS
+    for hit in constraint_hits:
+        kind = str(hit.get("kind", "constraint"))
+        if kind not in ("constraint", "negation"):
+            continue  # newer-daemon skew — don't count rows framing drops
+        text = _neutralise_boundary_tags(
+            str(hit.get("content", "")).replace("\n", " ").strip())
+        if not text:
+            continue
+        if char_budget - len(text) - 3 < 0:
+            break
+        rows.append((kind, text))
+        char_budget -= len(text) + 3
+    body = frame_claim_lines(rows)
+    if not body:
+        return "", 0
+    return f"<rlat-context>\n{body}\n</rlat-context>", len(rows)
+
+
 def _resolve_active_intent_id(state_root: Path) -> str | None:
     """Look up the most-recently-created active/blocked/proposed intent.
 
@@ -157,7 +296,7 @@ def _resolve_active_intent_id(state_root: Path) -> str | None:
         from ..state import LiveIntentStore
         store = LiveIntentStore(state_root)
         live = [
-            i for i in store.list_active()
+            i for i in store.list_all()
             if i.status in ("active", "blocked", "proposed")
         ]
         if not live:
@@ -425,11 +564,25 @@ def run_hook(
         return 0
     _debug_daemon_log(f"memory_root resolved: {memory_root!s} exists={memory_root.exists()}")
 
+    # S3 d3 — resolve the workspace's primary corpus so the daemon can ALSO
+    # rank its insight band (the corpus-trust loop). Fail-open: a resolution
+    # failure just means no corpus band-recall this turn, never a hook break.
+    km_path: str | None = None
+    try:
+        from ..state import resolve_primary_km
+        km = resolve_primary_km(cwd)
+        km_path = str(km) if km is not None else None
+    except Exception:
+        km_path = None
+
     # First hook fire on a fresh install: don't spawn the daemon for an
     # empty store. Skip silently — but record the no-store status in
     # the diagnostic log so a fresh-workspace blackout is attributable
-    # post-hoc.
-    if not memory_root.exists():
+    # post-hoc. EXCEPTION (S3 d3, full decouple): when a corpus is resolvable
+    # the daemon must still run — it ranks zero experience claims plus the
+    # corpus insight band, so the corpus-trust loop fires even on a workspace
+    # with no experience memory. The spawn path creates the (empty) store.
+    if not memory_root.exists() and km_path is None:
         _log_diagnostic(
             cwd=cwd, prompt=prompt, intent_kind="none",
             status="no_store", n_hits=0, diagnostic=None,
@@ -442,44 +595,10 @@ def run_hook(
     # budget. "none" preserves the v2.1 cosine-only ordering.
     intent_kind = classify_intent_kind(prompt)
 
-    # Session-boundary markers feed rerank's 5-session arm of the
-    # new-principle protection window. Read fail-open: any error →
-    # empty, only the 30-day arm fires. The existence guard keeps the
-    # recall hot path from creating `.rlat-state/ledger/` as a side
-    # effect when the workspace has never written a marker. Markers
-    # older than the protection window can't change any verdict, so
-    # they're dropped here — bounds the IPC payload regardless of how
-    # far the (uncapped) marker ledger has grown.
-    session_markers: tuple[str, ...] = ()
-    try:
-        from datetime import datetime, timedelta, timezone
-
-        from ..state import (
-            SessionMarkerLog,
-            resolve_state_root,
-            sessions_path,
-        )
-        from .rerank import _NEW_PRINCIPLE_PROTECTION_DAYS
-
-        state_root = resolve_state_root(cwd)
-        if sessions_path(state_root).exists():
-            cutoff = (
-                datetime.now(timezone.utc)
-                - timedelta(days=_NEW_PRINCIPLE_PROTECTION_DAYS)
-            ).strftime("%Y-%m-%dT%H:%M:%SZ")
-            session_markers = tuple(
-                m.timestamp
-                for m in SessionMarkerLog(state_root).read_all()
-                if m.timestamp >= cutoff
-            )
-    except Exception as exc:  # noqa: BLE001 — fail-open per §16.5
-        _debug_daemon_log(f"session-marker read failed: {type(exc).__name__}")
-
     request = RecallRequest(
         query=prompt,
         cwd_hash=workspace_hash(str(cwd)),
         intent_kind=intent_kind,
-        session_markers=session_markers,
         # Cold-start auto-relax: when the per-user store has fewer than
         # `recall.COLD_START_ROW_THRESHOLD` rows, the daemon overrides
         # `cosine_floor` and `min_recurrence` to relaxed values so a
@@ -489,6 +608,10 @@ def run_hook(
         # `effective_min_recurrence` so the injection-time gate stays
         # in sync with the daemon's actual filter.
         auto_tune_cold_start=True,
+        # S3 d3 — when set, the daemon ALSO ranks this corpus's insight band
+        # and returns the top corpus claims in `reply.band_hits` (cache-only,
+        # never injected). None → experience-only recall (the pre-d3 path).
+        km_path=km_path,
     )
     try:
         reply = _recall_via_daemon_or_spawn(request, memory_root)
@@ -515,7 +638,16 @@ def run_hook(
         )
         json.dump({}, stdout)
         return 0
-    if not reply.hits:
+    # Decouple the corpus-trust loop from experience state (S3 d3): the daemon
+    # ALSO ranks the workspace's corpus insight band and returns those hits in
+    # `reply.band_hits`. We must cache them — so a resolved intent's
+    # attribution can carry corpus claim ids — even when no experience claim
+    # surfaced. Bail only when NOTHING surfaced — experience hits, corpus band
+    # hits, or content-bearing user-world attribute hits.
+    attribute_hits = getattr(reply, "attribute_hits", []) or []
+    constraint_hits = getattr(reply, "constraint_hits", []) or []
+    if (not reply.hits and not reply.band_hits and not attribute_hits
+            and not constraint_hits):
         _log_diagnostic(
             cwd=cwd, prompt=prompt, intent_kind=intent_kind,
             status="no_hit", n_hits=0, diagnostic=reply.diagnostic,
@@ -523,20 +655,32 @@ def run_hook(
         json.dump({}, stdout)
         return 0
 
-    # Use the daemon's effective_min_recurrence (defaults to _RECURRENCE_M
-    # for back-compat with replies that pre-date the field) so the
-    # injection gate matches the filter the daemon actually applied.
+    # Experience injection block — experience hits ONLY. Corpus claims are
+    # never injected at prompt time (read-back is H2) and `_format_injection`
+    # is `ExperienceFacts`-only (`primary_polarity()`), so corpus rows would
+    # crash it. Empty string when there are no experience hits.
+    # Use the daemon's effective_min_recurrence (defaults to _RECURRENCE_M for
+    # back-compat with replies that pre-date the field) so the injection gate
+    # matches the filter the daemon actually applied.
     injection_recurrence = getattr(
         reply, "effective_min_recurrence", _RECURRENCE_M,
     )
-    block, n_rows = _format_injection(reply.hits, injection_recurrence)
-    if not block:
-        json.dump({}, stdout)
-        return 0
+    block, n_rows = (
+        _format_injection(reply.hits, injection_recurrence)
+        if reply.hits else ("", 0)
+    )
+    # User-world attribute context — content-bearing, newest-per-subject (the
+    # daemon already deduped). Injected alongside the experience block as its
+    # own `<rlat-context>` delimiter.
+    context_block, n_attrs = _format_attribute_injection(attribute_hits)
+    # Standing constraints + falsified findings — served ALL-always by the
+    # daemon, rendered with the proven kind framings.
+    constraint_block, n_constraints = _format_constraint_injection(constraint_hits)
 
     # Persist this recall to the per-workspace cache so PostToolUse and
     # intent resolution can attribute outcomes back to the rows that
-    # surfaced. Best-effort — any failure here must not break the hook.
+    # surfaced — experience hits AND corpus band hits. Best-effort — any
+    # failure here must not break the hook.
     active_intent_id: object = _UNSET
     try:
         from ..state import (
@@ -553,6 +697,33 @@ def run_hook(
         # attribute outcomes to recalls *deterministically* — no timestamp
         # window heuristic.
         active_intent_id = _resolve_active_intent_id(state_root)
+        # Experience hits keep their enumerate() rank.
+        row_metadata = [
+            RecallHitMetadata(
+                claim_id=hit["claim"]["claim_id"],
+                rank=idx,
+                cosine=float(hit.get("cosine", 0.0)),
+                source=hit["claim"].get("source", "experience"),
+            )
+            for idx, hit in enumerate(reply.hits)
+        ]
+        # Corpus band hits — cache-only, each keeping its OWN 0-based rank
+        # from the daemon's corpus ranking (NOT continued from the experience
+        # hits; attribution tiers per source). Built all-or-nothing in its own
+        # try so a malformed band row can never drop the experience stamp.
+        try:
+            band_rows = [
+                RecallHitMetadata(
+                    claim_id=bh["claim_id"],
+                    rank=int(bh["rank"]),
+                    cosine=float(bh.get("cosine", 0.0)),
+                    source=bh.get("source", "corpus"),
+                )
+                for bh in reply.band_hits
+            ]
+        except Exception:
+            band_rows = []
+        row_metadata.extend(band_rows)
         cache = RecallCache(state_root)
         cache.append(RecallEntry(
             turn_id=make_turn_id(prompt),
@@ -560,31 +731,43 @@ def run_hook(
             prompt_hash=hash_prompt(prompt),
             intent_kind=intent_kind,
             intent_id=active_intent_id,  # type: ignore[arg-type]
-            row_metadata=[
-                RecallHitMetadata(
-                    row_id=hit["row"]["row_id"],
-                    rank=idx,
-                    cosine=float(hit.get("cosine", 0.0)),
-                )
-                for idx, hit in enumerate(reply.hits)
-            ],
+            row_metadata=row_metadata,
         ))
     except Exception:
         pass
 
+    # Diagnostic status tracks EXPERIENCE recall (its consumers count
+    # experience hits): "ok" when experience hits surfaced, else "no_hit" —
+    # corpus-only stamping doesn't make experience recall a hit.
     _log_diagnostic(
         cwd=cwd, prompt=prompt, intent_kind=intent_kind,
-        status="ok", n_hits=len(reply.hits),
+        status="ok" if reply.hits else "no_hit",
+        n_hits=len(reply.hits),
         diagnostic=reply.diagnostic, intent_id=active_intent_id,
     )
 
-    print(f"[rlat] Recalled {n_rows} row(s)", file=stderr)
-    json.dump({
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": block,
-        }
-    }, stdout)
+    # Inject whatever surfaced: the experience block, the user-world context
+    # block, the constraint block — each its own delimiter, joined by blank
+    # lines.
+    injected = "\n\n".join(
+        b for b in (block, context_block, constraint_block) if b)
+    if injected:
+        summary = []
+        if n_rows:
+            summary.append(f"{n_rows} claim(s)")
+        if n_attrs:
+            summary.append(f"{n_attrs} env fact(s)")
+        if n_constraints:
+            summary.append(f"{n_constraints} constraint(s)")
+        print(f"[rlat] Recalled {', '.join(summary)}", file=stderr)
+        json.dump({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": injected,
+            }
+        }, stdout)
+    else:
+        json.dump({}, stdout)
     return 0
 
 
@@ -692,8 +875,9 @@ def run_capture_hook(
         return 0
 
     from .capture import GateConfig, capture
+    from .claim_store import ExperienceClaimStore
     from .redaction import Redactor
-    from .store import Memory, path_for_user
+    from .store import path_for_user
 
     try:
         memory_root = path_for_user(user_id=user_id, root=memory_root_base)
@@ -729,22 +913,33 @@ def run_capture_hook(
         return 0
 
     try:
-        store = Memory(root=memory_root)
-        redactor = Redactor(audit_log_path=memory_root / "redaction.log")
+        store = ExperienceClaimStore(root=memory_root)
+        redactor = Redactor.for_memory_root(memory_root)
+        # Atomic event extraction + world-attribute mining are opt-in
+        # (default off). Missing key or SDK init failure resolves to
+        # `None`, which `capture()` takes as the single-claim path.
+        client, km_path = _capture_llm_context(cwd)
         result = capture(transcript, store=store, redactor=redactor,
-                          gate=GateConfig())
+                          gate=GateConfig(), client=client, km_path=km_path)
     except Exception as exc:
         print(f"[rlat] capture failed: {type(exc).__name__}", file=stderr)
         json.dump({}, stdout)
         return 0
 
-    if result.row_id:
-        _trace(f"SessionEnd:captured row_id={result.row_id} redactions={result.redactions}")
-        print(f"[rlat] Captured row {result.row_id} ({result.redactions} "
+    if result.claim_ids:
+        n = len(result.claim_ids)
+        _trace(f"SessionEnd:captured count={n} redactions={result.redactions}")
+        label = "rows" if n != 1 else "row"
+        print(f"[rlat] Captured {n} {label} ({result.redactions} "
               f"redactions)", file=stderr)
     elif result.skip_reason:
         _trace(f"SessionEnd:skipped reason={result.skip_reason}")
         print(f"[rlat] Capture skipped: {result.skip_reason}", file=stderr)
+    if result.attribute_claim_ids and km_path is not None:
+        n_attr = len(result.attribute_claim_ids)
+        _trace(f"SessionEnd:mined attributes={n_attr}")
+        print(f"[rlat] Learned {n_attr} world fact(s) into {km_path.name} "
+              f"(review: rlat lens / rlat profile)", file=stderr)
     json.dump({}, stdout)
     return 0
 

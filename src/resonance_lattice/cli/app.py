@@ -2,8 +2,8 @@
 
 `rlat <command>` is wired here. Each subcommand lives in its own module
 under `cli/` and registers its parser via `add_subparser(sub)` at dispatch
-time — that keeps cold-start fast (an `rlat build` invocation doesn't
-import `cli/optimise` and pull in anthropic).
+time — that keeps cold-start fast (an `rlat build` invocation never
+reaches the lazy `import anthropic` inside the LLM-calling commands).
 
 Phase 3 deliverable.
 """
@@ -19,10 +19,12 @@ import sys
 from . import audit as audit_cmd
 from . import build as build_cmd
 from . import compare as compare_cmd
+from . import consolidate_insights as consolidate_insights_cmd
 from . import convert as convert_cmd
 from . import deep_search as deep_search_cmd
 from . import expertise as expertise_cmd
 from . import fabric as fabric_cmd
+from . import grow as grow_cmd
 from . import init as init_cmd
 from . import install_encoder as install_encoder_cmd
 from . import intent as intent_cmd
@@ -32,13 +34,45 @@ from . import memory as memory_cmd
 from . import profile as profile_cmd
 from . import search as search_cmd
 from . import skill_context as skill_context_cmd
-from . import optimise as optimise_cmd
 from . import probe as probe_cmd
+from . import capture_env as capture_env_cmd
 from . import reverify as reverify_cmd
 from . import summary as summary_cmd
 from . import trace as trace_cmd
 from . import watch as watch_cmd
 from . import workspace as workspace_cmd
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="rlat")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    build_cmd.add_subparser(sub)
+    search_cmd.add_subparser(sub)
+    profile_cmd.add_subparser(sub)
+    compare_cmd.add_subparser(sub)
+    summary_cmd.add_subparser(sub)
+    init_cmd.add_subparser(sub)
+    install_encoder_cmd.add_subparser(sub)
+    maintain_cmd.add_subparser(sub)
+    memory_cmd.add_subparser(sub)
+    skill_context_cmd.add_subparser(sub)
+    convert_cmd.add_subparser(sub)
+    deep_search_cmd.add_subparser(sub)
+    watch_cmd.add_subparser(sub)
+    intent_cmd.add_subparser(sub)
+    workspace_cmd.add_subparser(sub)
+    fabric_cmd.add_subparser(sub)
+    expertise_cmd.add_subparser(sub)
+    audit_cmd.add_subparser(sub)
+    trace_cmd.add_subparser(sub)
+    lens_cmd.add_subparser(sub)
+    reverify_cmd.add_subparser(sub)
+    probe_cmd.add_subparser(sub)
+    capture_env_cmd.add_subparser(sub)
+    consolidate_insights_cmd.add_subparser(sub)
+    grow_cmd.add_subparser(sub)
+    return parser
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,34 +90,7 @@ def main(argv: list[str] | None = None) -> int:
             except (OSError, ValueError):
                 pass  # Detached / non-tty streams; leave alone.
 
-    parser = argparse.ArgumentParser(prog="rlat")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    build_cmd.add_subparser(sub)
-    search_cmd.add_subparser(sub)
-    profile_cmd.add_subparser(sub)
-    compare_cmd.add_subparser(sub)
-    summary_cmd.add_subparser(sub)
-    init_cmd.add_subparser(sub)
-    install_encoder_cmd.add_subparser(sub)
-    maintain_cmd.add_subparser(sub)
-    optimise_cmd.add_subparser(sub)
-    memory_cmd.add_subparser(sub)
-    skill_context_cmd.add_subparser(sub)
-    convert_cmd.add_subparser(sub)
-    deep_search_cmd.add_subparser(sub)
-    watch_cmd.add_subparser(sub)
-    intent_cmd.add_subparser(sub)
-    workspace_cmd.add_subparser(sub)
-    fabric_cmd.add_subparser(sub)
-    expertise_cmd.add_subparser(sub)
-    audit_cmd.add_subparser(sub)
-    trace_cmd.add_subparser(sub)
-    lens_cmd.add_subparser(sub)
-    reverify_cmd.add_subparser(sub)
-    probe_cmd.add_subparser(sub)
-
-    args = parser.parse_args(argv)
+    args = build_parser().parse_args(argv)
     return int(args.func(args))
 
 

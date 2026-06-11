@@ -1,15 +1,16 @@
-"""Lock-protected size-capped JSONL log — base class.
+"""Lock-protected JSONL logs under `<state-root>/ledger/` — base classes.
 
-`RecallCache` and `RecallDiagnosticLog` shared 80% of their implementation
-(lock file + lock acquisition + append + ring-buffer trim + read_recent).
-The simplify review flagged the duplication; this module factors it out.
+`JsonlLog` is the append-only base: lock file + lock acquisition +
+append + JSONL read. `JsonlRingBufferLog` extends it with a ring-buffer
+trim for the size-capped logs.
 
-`SessionMarkerLog` deliberately stays separate: it doesn't cap, and the
-unbounded shape would awkwardly subclass.
+`RecallCache` and `RecallDiagnosticLog` shared 80% of their
+implementation; the simplify review flagged the duplication and this
+module factors it out. `ClaimOutcomeLog` — an uncapped outcome log —
+uses `JsonlLog` directly.
 
-Subclasses declare three class-level constants (`LOCK_FILENAME`,
-`FILE_NAME`, `DEFAULT_CACHE_SIZE`) and provide a `_decode(dict) -> Entry`
-classmethod. The base handles all I/O.
+Subclasses declare `LOCK_FILENAME` + `FILE_NAME` (and, for the ring
+buffer, `DEFAULT_CACHE_SIZE`); the base owns all I/O.
 """
 
 from __future__ import annotations
@@ -21,35 +22,37 @@ from typing import ClassVar, Generic, TypeVar
 
 import portalocker
 
-from .ledger import LEDGER_DIR
+# The `ledger/` subdirectory under a `.rlat-state` root holds every
+# append-only log (outcomes, recall cache + diagnostics, session markers,
+# pending signals). `_jsonl_log` is the base class for all of them, so it
+# owns the layout constant.
+LEDGER_DIR = "ledger"
 
 EntryT = TypeVar("EntryT")
 
 
-class JsonlRingBufferLog(Generic[EntryT]):
-    """Append-only JSONL log under `<state-root>/ledger/`, capped at
-    `DEFAULT_CACHE_SIZE` entries. Trim triggers on append once the file
-    overflows; rewrite is atomic via .tmp + os.replace.
+def ledger_dir(state_root: Path) -> Path:
+    """`<state-root>/ledger/`."""
+    return state_root / LEDGER_DIR
+
+
+class JsonlLog(Generic[EntryT]):
+    """Append-only JSONL log under `<state-root>/ledger/`, lock-protected.
+
+    Uncapped — every appended entry is kept. Writes serialise under a
+    portalocker advisory lock; reads are unlocked and silently drop a
+    partial trailing line.
     """
 
     LOCK_FILENAME: ClassVar[str]
     FILE_NAME: ClassVar[str]
-    DEFAULT_CACHE_SIZE: ClassVar[int]
 
-    def __init__(
-        self,
-        state_root: Path | str,
-        *,
-        cache_size: int | None = None,
-    ):
+    def __init__(self, state_root: Path | str):
         self._root = Path(state_root) / LEDGER_DIR
         self._root.mkdir(parents=True, exist_ok=True)
         self._lock_path = self._root / self.LOCK_FILENAME
         self._lock_path.touch(exist_ok=True)
         self._path = self._root / self.FILE_NAME
-        self._cache_size = (
-            cache_size if cache_size is not None else self.DEFAULT_CACHE_SIZE
-        )
 
     def _lock(self) -> portalocker.Lock:
         return portalocker.Lock(
@@ -57,33 +60,17 @@ class JsonlRingBufferLog(Generic[EntryT]):
         )
 
     def _append_dict(self, payload: dict) -> None:
-        """Append one serialised entry; trim when over cap. Subclasses
-        call this after serialising their typed entry to a dict.
-        """
+        """Append one serialised entry; subclasses call this after
+        serialising their typed entry to a dict."""
         line = json.dumps(payload, sort_keys=True) + "\n"
         with self._lock():
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(line)
-            self._maybe_trim_unlocked()
+            self._post_append_locked()
 
-    def _maybe_trim_unlocked(self) -> None:
-        """Rewrite the file to the most-recent `cache_size` entries.
-
-        Caller holds the lock. No-op when below cap; only triggers the
-        full read+rewrite on overflow.
-        """
-        try:
-            with open(self._path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-        except OSError:
-            return
-        if len(lines) <= self._cache_size:
-            return
-        keep = lines[-self._cache_size:]
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.writelines(keep)
-        os.replace(tmp, self._path)
+    def _post_append_locked(self) -> None:
+        """Hook run under the append lock — a no-op for an uncapped log;
+        `JsonlRingBufferLog` overrides it to trim."""
 
     def _read_dicts(self, *, limit: int | None = None) -> list[dict]:
         """Parse JSONL into a list of payload dicts. Subclasses decode
@@ -103,3 +90,45 @@ class JsonlRingBufferLog(Generic[EntryT]):
         if limit is not None:
             out = out[-limit:]
         return out
+
+
+class JsonlRingBufferLog(JsonlLog[EntryT]):
+    """A `JsonlLog` capped at `DEFAULT_CACHE_SIZE` entries. Trim triggers
+    on append once the file overflows; rewrite is atomic via .tmp +
+    os.replace.
+    """
+
+    DEFAULT_CACHE_SIZE: ClassVar[int]
+
+    def __init__(
+        self,
+        state_root: Path | str,
+        *,
+        cache_size: int | None = None,
+    ):
+        super().__init__(state_root)
+        self._cache_size = (
+            cache_size if cache_size is not None else self.DEFAULT_CACHE_SIZE
+        )
+
+    def _post_append_locked(self) -> None:
+        self._maybe_trim_unlocked()
+
+    def _maybe_trim_unlocked(self) -> None:
+        """Rewrite the file to the most-recent `cache_size` entries.
+
+        Caller holds the lock. No-op when below cap; only triggers the
+        full read+rewrite on overflow.
+        """
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            return
+        if len(lines) <= self._cache_size:
+            return
+        keep = lines[-self._cache_size:]
+        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.writelines(keep)
+        os.replace(tmp, self._path)

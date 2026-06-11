@@ -12,7 +12,6 @@ import datetime as _dt
 import hashlib
 import json
 import os
-import re
 import secrets
 from pathlib import Path
 from typing import Any, Iterable
@@ -87,10 +86,10 @@ def make_ulid() -> str:
     """26-char Crockford base-32 ULID. Stdlib-only.
 
     Encodes 48-bit ms timestamp + 80-bit randomness. Lexicographically
-    sortable, collision-safe across machines. Used for both `Row.row_id`
-    in the memory store and `LiveIntent.intent_id` in the live intent
-    graph — same shape so the two id-spaces are visually distinguishable
-    only by their containers, not their format.
+    sortable, collision-safe across machines. Used for both `Claim.claim_id`
+    in the memory store and `Intent.intent_id` in the intent stores —
+    same shape so the id-spaces are visually distinguishable only by
+    their containers, not their format.
     """
     ts_ms = int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
     rand_bits = secrets.randbits(80)
@@ -111,7 +110,7 @@ def validate_enum(name: str, value: Any, allowed: frozenset[str]) -> None:
 def validate_criterion(c: Any) -> None:
     """Reject anything that isn't `{text: str, measure: str}`. The success
     criterion shape (architecture §"Success criteria") is the same in
-    intent rows and outcome records — one validator covers both."""
+    intents and outcome records — one validator covers both."""
     if not isinstance(c, dict) or set(c.keys()) != {"text", "measure"}:
         raise ValueError(
             f"success_criteria entry must be {{text, measure}}; got {c!r}"
@@ -183,79 +182,27 @@ def parse_llm_json(text: str) -> Any:
     return json.loads(s)
 
 
-_HEDGE_PATTERN = re.compile(
-    r"\b("
-    r"in some cases"
-    r"|sometimes"
-    r"|might"
-    r"|may (?:be|need|want|require|provide|cause|result|lead|help|fail)"
-    r"|could (?:be|potentially)"
-    r"|tends to"
-    r"|often"
-    r"|usually"
-    r")\b",
-    re.IGNORECASE,
-)
-"""Hedge phrases that defeat falsifiability.
-
-The architecture's distil prompts (arrows 1/2/3) already tell the LLM the
-output must be falsifiable — a future event must be able to contradict it
-— and explicitly forbid "in some cases". These are the patterns that, in
-practice, signal the LLM hedged anyway. `_validate_promotion` rejects on
-match so unfalsifiable rows can't reach the store.
-
-Conservative by design: matches obvious hedges only. Won't catch every
-unfalsifiable claim (e.g. tautologies, empty predicates like "is
-important"), but the false-positive rate stays near zero on legitimate
-prescriptive rules. The post-LLM cosine + word-count gates already cover
-other failure modes."""
-
-
-def falsifiability_violation(text: str) -> str | None:
-    """Return a rejection reason if `text` contains a hedge phrase, else
-    None. Shared across `distil_arrow{1,2,3}._validate_promotion`."""
-    match = _HEDGE_PATTERN.search(text)
-    if match is None:
-        return None
-    return f"unfalsifiable hedge phrase: {match.group(0)!r}"
-
-
-def reject_text_quality(
-    text: str,
-    encoded_text: Any,
-    anchor_embedding: Any,
-    *,
-    max_words: int,
-    post_validation_cosine: float,
-) -> str | None:
-    """Run the post-LLM text-quality gates shared across the three arrows:
-    length cap → cosine alignment with the parent anchor → falsifiability.
-
-    Arrow-specific gates (e.g. arrow3's "shorter than parent learning")
-    layer on top of this in the caller's `_validate_promotion`.
-    """
-    word_count = len(text.split())
-    if word_count > max_words:
-        return f"text too long ({word_count} words > {max_words})"
-    cos = float(anchor_embedding @ encoded_text)
-    if cos < post_validation_cosine:
-        return f"post-LLM alignment {cos:.3f} < {post_validation_cosine}"
-    hedge = falsifiability_violation(text)
-    if hedge is not None:
-        return hedge
-    return None
-
-
 def atomic_write_json(target: Path, payload: Any, *, indent: int = 2) -> None:
-    """Atomic JSON write: tmp + os.replace, sorted keys.
+    """Atomic JSON write: per-writer-unique tmp + os.replace, sorted keys.
 
     Used by the live intent graph + workspace declarations + any future
     state file that wants the same single-tmp-file guarantee. Caller is
     responsible for any locking — this helper is lock-agnostic so it can
-    sit inside or outside a portalocker section."""
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(payload, sort_keys=True, indent=indent),
-        encoding="utf-8",
+    sit inside or outside a portalocker section. The tmp filename carries
+    pid + random hex so two unlocked callers don't collide on `{path}.tmp`
+    and silently truncate each other (mirrors `store/archive.py`'s
+    `_unique_tmp_path` contract). On any failure — write, close, or
+    `os.replace` — the tmp is unlinked so an orphan can't be picked up
+    and trusted by a future reader."""
+    tmp = target.with_suffix(
+        f"{target.suffix}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
     )
-    os.replace(tmp, target)
+    try:
+        tmp.write_text(
+            json.dumps(payload, sort_keys=True, indent=indent),
+            encoding="utf-8",
+        )
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise

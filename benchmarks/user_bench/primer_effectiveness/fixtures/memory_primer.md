@@ -1,6 +1,6 @@
 # Memory primer
 
-Layered memory at `benchmarks\user_bench\primer_effectiveness\fixtures\memory` — working=0, episodic=0, semantic=10.
+Frozen primer fixture (10 consolidated entries). Originally generated from tier-store fixtures that were removed with the abandoned working/episodic/semantic model (2026-06 review); the bench reads only this file.
 
 ## Semantic (consolidated knowledge)
 

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .intent import LiveIntent, LiveIntentStore
+from .intent import Intent, LiveIntentStore
 
 # Hard caps from the architecture's bounded-by-design rule.
 _MAX_ACTIVE_PATH_NODES = 4
@@ -32,10 +32,10 @@ _MAX_SIBLINGS = 8
 _MAX_RECENT_RESOLVED = 5
 
 
-def _active_intents(store: LiveIntentStore) -> list[LiveIntent]:
+def _active_intents(store: LiveIntentStore) -> list[Intent]:
     """Live rows in 'active' or 'blocked' status. Resolved/abandoned drop."""
     return [
-        i for i in store.list_active()
+        i for i in store.list_all()
         if i.status in ("active", "blocked")
     ]
 
@@ -68,11 +68,11 @@ def render_trajectory_primer(state_root: Path | str) -> str:
     # updated_at so two equally-deep leaves pick the freshly-touched one.
     # Using parent depth (not just timestamp) makes the choice deterministic
     # under ms-tied timestamps that `utcnow_iso` produces in tight loops.
-    by_id = {i.intent_id: i for i in store.list_active()}
+    by_id = {i.intent_id: i for i in store.list_all()}
 
-    def _depth(intent: LiveIntent) -> int:
+    def _depth(intent: Intent) -> int:
         depth = 0
-        cursor: LiveIntent | None = intent
+        cursor: Intent | None = intent
         seen: set[str] = set()
         while cursor is not None and cursor.parent_ids:
             if cursor.intent_id in seen:
@@ -84,8 +84,8 @@ def render_trajectory_primer(state_root: Path | str) -> str:
 
     most_recent = max(active, key=lambda i: (_depth(i), i.updated_at))
 
-    path: list[LiveIntent] = []
-    cursor: LiveIntent | None = most_recent
+    path: list[Intent] = []
+    cursor: Intent | None = most_recent
     seen: set[str] = set()
     while cursor is not None and len(path) < _MAX_ACTIVE_PATH_NODES:
         if cursor.intent_id in seen:

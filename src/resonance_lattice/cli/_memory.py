@@ -1,19 +1,11 @@
-"""CLI helpers: per-user Memory open + workspace polarity tag.
+"""CLI helpers: per-user store opens.
 
 Lifted out of `cli/intent.py` so other CLI subcommands that touch the
-durable per-user store (or need a workspace-scoped polarity tag for
-manual rows) can reuse the same arg-shape contract:
+per-user stores can reuse the same arg-shape contract:
 
     --memory-root  override base directory (default ~/.rlat/memory/)
     --user         override user_id (default $RLAT_MEMORY_USER / $USER /
                    $USERNAME)
-    --cwd          override workspace cwd (default $PWD)
-
-The leading underscore is preserved on the function names because
-`workspace_polarity_tag` already exists at the `state` layer with a
-different signature (`(workspace_id) -> tag` vs the args-shape wrapper
-here); naming the wrapper distinctly avoids import shadowing in
-callers that pull from both modules.
 """
 
 from __future__ import annotations
@@ -22,17 +14,23 @@ import argparse
 from pathlib import Path
 
 
-def _open_user_memory(args: argparse.Namespace):
-    """Open the per-user Memory store. Durable intents (goals + directions)
-    live here alongside memory rows; live intents (steps + tasks) live in
-    LiveIntentStore. Architecture §"Where intent lives — two homes"."""
-    from ..memory.store import Memory, path_for_user
+def _user_root(args: argparse.Namespace) -> Path:
+    """Resolve the per-user store directory from `--memory-root` / `--user`."""
+    from ..memory.store import path_for_user
     base = Path(args.memory_root) if getattr(args, "memory_root", None) else None
-    return Memory(root=path_for_user(user_id=getattr(args, "user", None), root=base))
+    return path_for_user(user_id=getattr(args, "user", None), root=base)
 
 
-def _workspace_polarity_tag(args: argparse.Namespace) -> str:
-    from ..state import resolve_workspace, workspace_polarity_tag
-    cwd = Path(args.cwd) if args.cwd else Path.cwd()
-    identity = resolve_workspace(cwd)
-    return workspace_polarity_tag(identity.workspace_id)
+def _open_user_memory(args: argparse.Namespace):
+    """Open the per-user experience-claim store — the earned-knowledge claims."""
+    from ..memory.claim_store import ExperienceClaimStore
+    return ExperienceClaimStore(root=_user_root(args))
+
+
+def _open_durable_intents(args: argparse.Namespace):
+    """Open the per-user DurableIntentStore — durable goals and directions.
+
+    Live intents (steps + tasks) live in LiveIntentStore, per workspace;
+    durable intents are per-user (claim-system-design §5)."""
+    from ..state import DurableIntentStore
+    return DurableIntentStore(_user_root(args))

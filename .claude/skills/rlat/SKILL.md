@@ -220,26 +220,31 @@ rlat compare a.rlat b.rlat
 
 Always uses the base band (cross-knowledge-model rule). Outputs centroid cosine + asymmetric mutual coverage (both directions).
 
-**For deeper analysis** of a single KM (cross-passage relationships, contradictions, evidence per claim, drift detection, corpus diff across snapshots), use the RQL ops via the Python API:
+**For deeper analysis** of a single KM (cross-passage relationships, evidence per claim, drift detection, corpus diff across snapshots), use the RQL ops via the Python API:
 
 ```python
-from resonance_lattice.store import archive
-from resonance_lattice.rql import evidence, contradictions, corpus_diff, drift
+from pathlib import Path
+
+from resonance_lattice.field.encoder import Encoder
+from resonance_lattice.rql import corpus_diff, drift, evidence
+from resonance_lattice.store import archive, open_store
 
 contents_a = archive.read("a.rlat")
-contents_b = archive.read("b.rlat")
+store_a = open_store(Path("a.rlat"), contents_a, None)
 
-# Evidence + ConfidenceMetrics for a claim:
-evidence(contents_a, "<claim>")
+# Evidence + ConfidenceMetrics for a claim (embed the claim first):
+claim_emb = Encoder().encode(["<claim>"])[0]
+evidence(contents_a, store_a, claim_emb, top_k=10)
 # Within-KM stale passages:
-drift(contents_a)
+drift(contents_a, store_a)
 # Added / removed / unchanged across two snapshots:
-corpus_diff(contents_a, contents_b)
-# High-similarity, low-Jaccard pair candidates (experimental — heuristic):
-contradictions(contents_a, "<topic>")
+corpus_diff(contents_a, archive.read("b.rlat"))
 ```
 
 These ops are Python-only in v2.0; CLI verbs for them are not in scope.
+For contradiction detection use the `rlat-contradictions` skill (the
+self-audit pairs stored in every .rlat, judged in-session) — the old
+experimental RQL `contradictions` op was removed 2026-06.
 
 ---
 

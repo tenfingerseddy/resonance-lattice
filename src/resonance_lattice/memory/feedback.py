@@ -40,17 +40,3 @@ def log_feedback(
     return entry
 
 
-def read_feedback(memory_root: Path | str) -> list[dict]:
-    """Read every logged vote in write order; skip truncated lines."""
-    p = feedback_log_path(memory_root)
-    if not p.exists():
-        return []
-    out: list[dict] = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out

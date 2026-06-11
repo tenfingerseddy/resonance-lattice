@@ -5,4 +5,9 @@
 #
 # `fabric-user-data-functions` and `azure-functions` are pre-installed in
 # the Fabric runtime; pinning here is for the local emulator only.
-rlat[fabric,ann]>=2.1.0a15
+#
+# No pyarrow: the slicer (`slice_stream`) now streams the band straight out of
+# the `.rlat` (store.streaming) — single file, no parquet sidecar — so the UDF
+# has no parquet dependency. `[ann]` (faiss-cpu) is only needed by the bundled
+# `search`/`slice` path for SMALL corpora; the streaming slicer needs neither.
+rlat[fabric,ann]>=2.1.0a20

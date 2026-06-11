@@ -1,0 +1,87 @@
+{
+  "context": "You are advising the maintainer of a dense-retrieval Python library (single dense encoder, gte-modernbert-base 768d embeddings, cosine top-k; quality tracked as nDCG@10 on BEIR-style benchmarks).",
+  "atoms": {
+    "ce-rerankers": {
+      "ledger": "Tried and falsified in this project (evidence: docs/internal/HONEST_CLAIMS.md, reranker section): adding cross-encoder rerankers (bge-reranker-v2-m3, mxbai-rerank) on top of the strong dense retriever regressed nDCG@10 on 4 of 5 BEIR corpora. Mechanism: training-distribution mismatch between the reranker's MS MARCO/NQ data and a strong-dense top-k.",
+      "topical": "Cross-encoder rerankers such as bge-reranker-v2-m3 re-score the top-k candidates from a first-stage retriever using full query-document cross-attention.",
+      "approach": "adding a cross-encoder reranker stage on top of dense retrieval"
+    },
+    "msmarco-finetune": {
+      "ledger": "Tried and falsified in this project (evidence: benchmark record, 2026-04 stage-1 fine-tune): contrastive fine-tuning the encoder on MS MARCO regressed 4 of 5 BEIR corpora, average -8.3 nDCG@10 points vs the base encoder. Mechanism: MS MARCO training overfits away from academic/argumentative query distributions.",
+      "topical": "MS MARCO is a large public passage-ranking dataset commonly used to contrastively fine-tune embedding encoders for retrieval.",
+      "approach": "contrastive fine-tuning the embedding encoder on MS MARCO (or a similar large public retrieval dataset)"
+    },
+    "mrl-specialist": {
+      "ledger": "Tried and falsified in this project (evidence: docs/internal/HONEST_CLAIMS.md, retired-optimise section): per-corpus Matryoshka (MRL) specialist projections under the locked hyperparameters regressed 2 of 3 corpora and the BEIR-3 soak measured -0.040 mean nDCG@10; the projected +6.8pt lift was falsified and the feature was retired.",
+      "topical": "Matryoshka representation learning (MRL) trains projections whose prefixes at lower dimensions (e.g. 512d of 768d) remain usable embeddings, enabling smaller, faster indexes.",
+      "approach": "training a per-corpus MRL/low-dimension specialist projection to adapt embeddings to each corpus"
+    },
+    "structural-rerank": {
+      "ledger": "Tried and falsified in this project (evidence: benchmark record, structural rerank Design B): blending document-structure signals into the dense ranking score was monotonically negative on prose benchmarks - SciFact 0.6655 -> 0.6266 and NFCorpus 0.3502 -> 0.3367 nDCG@10.",
+      "topical": "Documents carry structural signals - heading level, section position, list membership - that can be computed cheaply at index time.",
+      "approach": "blending document-structure signals (heading level, section position) into the dense ranking score"
+    },
+    "lexical-band": {
+      "ledger": "Tried and falsified in this project (evidence: benchmark record, WS3 lexical band V1): precomputing a lexical band inside the archive and fusing it with dense scores failed BEIR-5 parity on 4 of 5 corpora, average -2.7 nDCG@10 points vs computing lexical evidence at query time.",
+      "topical": "Lexical matching (BM25-style term statistics) can be precomputed at build time and stored alongside dense embeddings, or computed at query time over retrieved candidates.",
+      "approach": "precomputing a lexical/BM25 band into the artifact at build time and fusing it with dense scores"
+    },
+    "strip-filter": {
+      "ledger": "Tried and falsified in this project (evidence: benchmark record, CRAG strip-filter): an LLM filter stripping low-relevance sentences from retrieved passages before synthesis dropped the refuse-when-ungrounded rate by 16.7pp on single-shot retrieval; the deep-loop variant measured 5 wins / 2 losses at N=63 (p~0.23). The code was removed.",
+      "topical": "CRAG-style relevance filtering uses an LLM to strip low-relevance sentences from retrieved passages so the reader sees a denser context.",
+      "approach": "adding an LLM relevance filter that strips low-relevance sentences from retrieved passages before the reader sees them"
+    },
+    "adaptive-rag-router": {
+      "ledger": "Tried and falsified in this project (evidence: benchmark record, Adaptive-RAG router): a prompt-only small-model router classifying queries into single-shot vs multi-hop retrieval cost 7.8pp accuracy and systematically over-routed to single-shot. Killed; do not retry without a stronger classifier and a bigger bench.",
+      "topical": "Adaptive-RAG routes each query to a retrieval mode (no retrieval, single-shot, or multi-hop) using a lightweight classifier, saving tokens on easy questions.",
+      "approach": "adding a small-model/prompt-only router that classifies each query and picks the retrieval mode"
+    },
+    "trained-heads": {
+      "ledger": "Tried and falsified in this project (evidence: docs/internal/HONEST_CLAIMS.md, trained-heads section): trained projection heads on top of the frozen encoder closed 0-for-9 across measured experiments; multi-vector variants regressed catastrophically; the asymmetric query/document field measured -0.8% nDCG@10. None ship.",
+      "topical": "A lightweight projection head on top of a frozen encoder adapts embeddings to a domain without full fine-tuning; asymmetric variants learn separate query and document projections.",
+      "approach": "training a small projection head (symmetric or asymmetric query/document) on top of the frozen encoder"
+    },
+    "eml-fusion": {
+      "ledger": "Tried and falsified in this project (evidence: docs/internal/HONEST_CLAIMS.md, EML section): fusing the per-passage energy/log-likelihood signal with cosine similarity at retrieval time was falsified three times in independent benchmarks - the exponential term dominates the log term and the fusion collapses to exp-only or NaN.",
+      "topical": "A per-passage energy or log-likelihood score computed at build time estimates how typical a passage is of its corpus, independent of any query.",
+      "approach": "fusing a build-time per-passage energy/log-likelihood score with cosine similarity at retrieval time"
+    },
+    "geometry-signals": {
+      "ledger": "Tried and falsified in this project (evidence: benchmark record, 2026-06 geometry sweep): standalone corpus-geometry importance signals - cluster-frontier distance, balance, betweenness centrality, TDA persistence - were benched and killed (4 KILL, 1 needs-more). Only signals conditioned on relative demand survived; geometry alone does not predict passage value.",
+      "topical": "Embedding geometry offers per-passage signals computable without queries: distance to cluster frontiers, centrality measures over the kNN graph, and topological features.",
+      "approach": "computing standalone corpus-geometry signals (frontier distance, centrality, topological features) to score passage importance without demand data"
+    }
+  },
+  "items": [
+    {"id": "q01", "atom": "ce-rerankers", "placebo_atom": "adaptive-rag-router", "question": "Our nDCG@10 on scientific-paper benchmarks feels capped. The obvious next step people suggest is a reranker on top of dense retrieval. Should we add one, and which?"},
+    {"id": "q02", "atom": "ce-rerankers", "placebo_atom": "adaptive-rag-router", "question": "We have budget for one new retrieval-quality component this quarter. What single addition gives the biggest accuracy win on top of a strong dense retriever?"},
+    {"id": "q03", "atom": "msmarco-finetune", "placebo_atom": "geometry-signals", "question": "We want to fine-tune our embedding encoder to lift general retrieval quality. MS MARCO is the standard training set - what's the right recipe?"},
+    {"id": "q04", "atom": "msmarco-finetune", "placebo_atom": "geometry-signals", "question": "Our base encoder is decent out of the box. Is it worth contrastive fine-tuning on a large public retrieval dataset to boost benchmark scores?"},
+    {"id": "q05", "atom": "mrl-specialist", "placebo_atom": "strip-filter", "question": "Could we train a small corpus-specific projection (Matryoshka-style, lower dimension) per knowledge model so retrieval specialises to each corpus?"},
+    {"id": "q06", "atom": "mrl-specialist", "placebo_atom": "strip-filter", "question": "Users want faster search. Shrinking embeddings to 512d with an MRL adapter trained per corpus seems attractive - recommended?"},
+    {"id": "q07", "atom": "structural-rerank", "placebo_atom": "msmarco-finetune", "question": "Our corpora are markdown docs with headings and sections. Should we blend document-structure signals (heading level, section position) into the ranking score?"},
+    {"id": "q08", "atom": "structural-rerank", "placebo_atom": "msmarco-finetune", "question": "We can compute cheap structural features at index time. Is mixing them into the dense score a good way to lift accuracy on prose benchmarks?"},
+    {"id": "q09", "atom": "lexical-band", "placebo_atom": "trained-heads", "question": "Exact keyword matches sometimes lose to fuzzy semantic hits. Should we precompute a lexical (BM25-style) band inside the archive and fuse it with dense scores?"},
+    {"id": "q10", "atom": "lexical-band", "placebo_atom": "trained-heads", "question": "What's the best way to add lexical matching to our dense retriever: precompute term statistics into the artifact at build time, or compute lexical evidence at query time?"},
+    {"id": "q11", "atom": "strip-filter", "placebo_atom": "mrl-specialist", "question": "Retrieved passages often contain irrelevant sentences. Should we add an LLM filter that strips low-relevance sentences from each passage before the reader sees them?"},
+    {"id": "q12", "atom": "strip-filter", "placebo_atom": "mrl-specialist", "question": "To cut context tokens, we're considering CRAG-style relevance filtering of retrieved chunks before synthesis. Good idea?"},
+    {"id": "q13", "atom": "adaptive-rag-router", "placebo_atom": "lexical-band", "question": "Some queries need multi-hop research, others a single lookup. Should we add an LLM router that classifies each query and picks the retrieval mode?"},
+    {"id": "q14", "atom": "adaptive-rag-router", "placebo_atom": "lexical-band", "question": "We want to save tokens by detecting easy questions and skipping the deep-search loop. What's the lightest way - a small-model prompt classifier?"},
+    {"id": "q15", "atom": "trained-heads", "placebo_atom": "strip-filter", "question": "Could we train a small projection head on top of the frozen encoder to adapt embeddings to each domain without full fine-tuning?"},
+    {"id": "q16", "atom": "trained-heads", "placebo_atom": "strip-filter", "question": "Asymmetric query/document projections are cheap to train. Worth adding to close the query-document vocabulary gap in our retrieval?"},
+    {"id": "q17", "atom": "eml-fusion", "placebo_atom": "adaptive-rag-router", "question": "We compute an energy/log-likelihood signal per passage at build time. Should we fuse it with cosine similarity at retrieval time (e.g. a weighted log-sum) to sharpen ranking?"},
+    {"id": "q18", "atom": "eml-fusion", "placebo_atom": "adaptive-rag-router", "question": "Our build pipeline produces a per-passage corpus-typicality (energy) score. Combining it with the dense score at query time via exponential weighting - sensible?"},
+    {"id": "q19", "atom": "geometry-signals", "placebo_atom": "msmarco-finetune", "question": "Can we mine the embedding geometry (cluster-frontier distance, centrality, topological features) to predict which passages are high-value, without any query or demand signal?"},
+    {"id": "q20", "atom": "geometry-signals", "placebo_atom": "msmarco-finetune", "question": "We want a standalone importance score per passage derived from corpus geometry alone, to prioritise curation. What signals would you compute?"}
+  ],
+  "collateral": [
+    {"id": "k01", "question": "How should we chunk long markdown documents for embedding - by heading, fixed tokens, or something else?"},
+    {"id": "k02", "question": "What's a clean way to pin the encoder model revision so builds stay reproducible?"},
+    {"id": "k03", "question": "How should we version our archive file format so old files stay readable as the format evolves?"},
+    {"id": "k04", "question": "What's a good way to cache encoder outputs so incremental rebuilds only re-embed changed passages?"},
+    {"id": "k05", "question": "How do we test that our ANN index and exact cosine search agree closely enough?"},
+    {"id": "k06", "question": "How should the CLI present retrieval scores to users - raw cosine, normalised, or banded labels?"},
+    {"id": "k07", "question": "What's a sensible structure for integration tests of a Python CLI with heavy model dependencies?"},
+    {"id": "k08", "question": "What metadata should we store per passage to support provenance display in results?"}
+  ]
+}

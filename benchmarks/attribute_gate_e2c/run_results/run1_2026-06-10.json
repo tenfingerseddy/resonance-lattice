@@ -1,0 +1,275 @@
+{
+ "summary": {
+  "model": "production default_client (Sonnet)",
+  "precision": 0.8636363636363636,
+  "recall": 1.0,
+  "emitted": 22,
+  "matched": 19,
+  "gt_total": 19,
+  "gt_recalled": 19,
+  "person_leaks": 0,
+  "person_leak_detail": [],
+  "false_positives_by_class": {
+   "hypothetical": 1,
+   "corpus_fact": 2
+  },
+  "per_domain": {
+   "software": {
+    "precision": 0.8,
+    "recall": 1.0,
+    "emitted": 10
+   },
+   "garden": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "emitted": 6
+   },
+   "legal": {
+    "precision": 0.8333333333333334,
+    "recall": 1.0,
+    "emitted": 6
+   }
+  },
+  "bars": {
+   "precision_ge_083": true,
+   "recall_ge_085": true,
+   "person_leaks_eq_0": true,
+   "all_domains_precision_ge_075": true
+  }
+ },
+ "per_session": [
+  {
+   "id": "s01",
+   "domain": "software",
+   "emitted": [
+    "The capacity is an F8 and is fixed for the year with no budget increase.",
+    "The tenant is EU-only for data residency \u2014 no data leaves the EU, enforced by compliance."
+   ],
+   "matched": [
+    {
+     "emitted": "The capacity is an F8 and is fixed for the year with no budget increase.",
+     "matches": "capacity is fixed at F8"
+    },
+    {
+     "emitted": "The tenant is EU-only for data residency \u2014 no data leaves the EU, enforced by compliance.",
+     "matches": "tenant is EU-only for data residency"
+    }
+   ],
+   "false_positives": [],
+   "gt_total": 2,
+   "gt_recalled": 2,
+   "missed": []
+  },
+  {
+   "id": "s02",
+   "domain": "software",
+   "emitted": [
+    "All automation in the deployment pipelines authenticates as a service principal; user-delegated authentication flows are not permitted.",
+    "The production workspace is named WS-FIN-PROD.",
+    "The current Fabric capacity is below F64."
+   ],
+   "matched": [
+    {
+     "emitted": "All automation in the deployment pipelines authenticates as a service principal; user-delegated authentication flows are not permitted.",
+     "matches": "automation is service-principal only"
+    },
+    {
+     "emitted": "The production workspace is named WS-FIN-PROD.",
+     "matches": "prod workspace is WS-FIN-PROD"
+    }
+   ],
+   "false_positives": [
+    {
+     "emitted": "The current Fabric capacity is below F64.",
+     "trap_class": "hypothetical"
+    }
+   ],
+   "gt_total": 2,
+   "gt_recalled": 2,
+   "missed": []
+  },
+  {
+   "id": "s03",
+   "domain": "software",
+   "emitted": [
+    "The project pins Python 3.11 as the minimum supported version.",
+    "The CI runs on both Ubuntu and Windows for every push, and both must remain green."
+   ],
+   "matched": [
+    {
+     "emitted": "The project pins Python 3.11 as the minimum supported version.",
+     "matches": "Python 3.11 is the minimum"
+    },
+    {
+     "emitted": "The CI runs on both Ubuntu and Windows for every push, and both must remain green.",
+     "matches": "CI runs on Ubuntu and Windows"
+    }
+   ],
+   "false_positives": [],
+   "gt_total": 2,
+   "gt_recalled": 2,
+   "missed": []
+  },
+  {
+   "id": "s04",
+   "domain": "software",
+   "emitted": [
+    "The tenant is air-gapped with no public internet calls permitted from any component, ever.",
+    "Every report must use the corporate theme palette, per company policy.",
+    "UDF payload size is capped at approximately 200MB, requiring chunking to be planned accordingly."
+   ],
+   "matched": [
+    {
+     "emitted": "The tenant is air-gapped with no public internet calls permitted from any component, ever.",
+     "matches": "the tenant is air-gapped, no external calls"
+    },
+    {
+     "emitted": "Every report must use the corporate theme palette, per company policy.",
+     "matches": "reports must use the corporate theme palette"
+    }
+   ],
+   "false_positives": [
+    {
+     "emitted": "UDF payload size is capped at approximately 200MB, requiring chunking to be planned accordingly.",
+     "trap_class": "corpus_fact"
+    }
+   ],
+   "gt_total": 2,
+   "gt_recalled": 2,
+   "missed": []
+  },
+  {
+   "id": "s05",
+   "domain": "garden",
+   "emitted": [
+    "The garden is strictly organic \u2014 no synthetic sprays are ever used.",
+    "The garden is on permanent water restrictions, excluding water-thirsty plants."
+   ],
+   "matched": [
+    {
+     "emitted": "The garden is strictly organic \u2014 no synthetic sprays are ever used.",
+     "matches": "the garden is strictly organic"
+    },
+    {
+     "emitted": "The garden is on permanent water restrictions, excluding water-thirsty plants.",
+     "matches": "permanent water restrictions apply"
+    }
+   ],
+   "false_positives": [],
+   "gt_total": 2,
+   "gt_recalled": 2,
+   "missed": []
+  },
+  {
+   "id": "s06",
+   "domain": "garden",
+   "emitted": [
+    "The garden requires all plants to be dog-safe, no exceptions.",
+    "The garden uses only native plants as a firm standing rule for the whole plot."
+   ],
+   "matched": [
+    {
+     "emitted": "The garden requires all plants to be dog-safe, no exceptions.",
+     "matches": "dogs roam, plants must be dog-safe"
+    },
+    {
+     "emitted": "The garden uses only native plants as a firm standing rule for the whole plot.",
+     "matches": "natives-only planting rule"
+    }
+   ],
+   "false_positives": [],
+   "gt_total": 2,
+   "gt_recalled": 2,
+   "missed": []
+  },
+  {
+   "id": "s07",
+   "domain": "garden",
+   "emitted": [
+    "The garden soil is heavy clay across the whole block.",
+    "The garden is located in USDA hardiness zone 8b."
+   ],
+   "matched": [
+    {
+     "emitted": "The garden soil is heavy clay across the whole block.",
+     "matches": "soil is heavy clay across the block"
+    },
+    {
+     "emitted": "The garden is located in USDA hardiness zone 8b.",
+     "matches": "the garden is in zone 8b"
+    }
+   ],
+   "false_positives": [],
+   "gt_total": 2,
+   "gt_recalled": 2,
+   "missed": []
+  },
+  {
+   "id": "s08",
+   "domain": "legal",
+   "emitted": [
+    "The practice only takes NSW matters; all other matters are referred out with no exceptions.",
+    "The practice bills fixed-fee only and never charges hourly rates."
+   ],
+   "matched": [
+    {
+     "emitted": "The practice only takes NSW matters; all other matters are referred out with no exceptions.",
+     "matches": "the practice takes NSW matters only"
+    },
+    {
+     "emitted": "The practice bills fixed-fee only and never charges hourly rates.",
+     "matches": "billing is fixed-fee only"
+    }
+   ],
+   "false_positives": [],
+   "gt_total": 2,
+   "gt_recalled": 2,
+   "missed": []
+  },
+  {
+   "id": "s09",
+   "domain": "legal",
+   "emitted": [
+    "The practice does not handle family law matters under any circumstances.",
+    "In employment matters, the practice acts for employers only, not employees."
+   ],
+   "matched": [
+    {
+     "emitted": "The practice does not handle family law matters under any circumstances.",
+     "matches": "the practice does not handle family law"
+    },
+    {
+     "emitted": "In employment matters, the practice acts for employers only, not employees.",
+     "matches": "employment matters: employers only"
+    }
+   ],
+   "false_positives": [],
+   "gt_total": 2,
+   "gt_recalled": 2,
+   "missed": []
+  },
+  {
+   "id": "s10",
+   "domain": "legal",
+   "emitted": [
+    "The practice handles transactional work only; any dispute matters are referred out to litigation counsel and are never run in-house.",
+    "Closed files must be kept for seven years per Law Society requirements."
+   ],
+   "matched": [
+    {
+     "emitted": "The practice handles transactional work only; any dispute matters are referred out to litigation counsel and are never run in-house.",
+     "matches": "transactional work only, disputes referred out"
+    }
+   ],
+   "false_positives": [
+    {
+     "emitted": "Closed files must be kept for seven years per Law Society requirements.",
+     "trap_class": "corpus_fact"
+    }
+   ],
+   "gt_total": 1,
+   "gt_recalled": 1,
+   "missed": []
+  }
+ ]
+}

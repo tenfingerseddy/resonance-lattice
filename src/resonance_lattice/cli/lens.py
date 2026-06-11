@@ -5,6 +5,13 @@ Subcommands:
   rlat lens create --name N --scope user|role|team|project --id ID [--stance FILE]
   rlat lens show <lens.lens>
   rlat lens compose <lens1.lens> <lens2.lens> ... -o <out.lens> --id ID --name N
+  rlat lens set-trust <lens.lens> <pattern> <weight> [--remove]
+
+`set-trust` is the write surface the 2026-06 review added — the lens layer
+shipped read-complete but write-blind (no production path ever wrote a
+TrustWeight), making the portable-perspective story a demo users could not
+exercise. One command makes it real: boost (`>1`), suppress (`<1`), or
+effectively exclude (`0`) sources by glob pattern.
 """
 
 from __future__ import annotations
@@ -40,10 +47,6 @@ def _cmd_show(args: argparse.Namespace) -> int:
             "declared_stance_chars": len(lens.declared_stance) if lens.declared_stance else 0,
             "trust_weights": [asdict(tw) for tw in lens.trust_weights],
             "insight_preferences": len(lens.insight_preferences),
-            "memory_rows": len(lens.memory),
-            "intent_history": len(lens.intent_history),
-            "verdict_log": len(lens.verdict_log),
-            "private_insights": len(lens.private_insights),
         }, indent=2, sort_keys=True))
     else:
         m = lens.manifest
@@ -54,7 +57,6 @@ def _cmd_show(args: argparse.Namespace) -> int:
         print(f"  created:         {m.created_at}")
         print(f"  last_active:     {m.last_active}")
         print(f"  schema_version:  {m.schema_version}")
-        print(f"  encoder_version: {m.encoder_version or '(none)'}")
         if lens.declared_stance:
             print(f"  declared stance: {len(lens.declared_stance)} chars")
         if lens.trust_weights:
@@ -63,14 +65,41 @@ def _cmd_show(args: argparse.Namespace) -> int:
                 print(f"    {tw.pattern}  -> {tw.weight}")
         if lens.insight_preferences:
             print(f"  insight prefs:   {len(lens.insight_preferences)} entr(ies)")
-        if lens.memory:
-            print(f"  memory rows:     {len(lens.memory)}")
-        if lens.intent_history:
-            print(f"  intent history:  {len(lens.intent_history)}")
-        if lens.verdict_log:
-            print(f"  verdict log:     {len(lens.verdict_log)} signal(s)")
-        if lens.private_insights:
-            print(f"  private insights: {len(lens.private_insights)}")
+    return 0
+
+
+def _cmd_set_trust(args: argparse.Namespace) -> int:
+    path = Path(args.lens_path)
+    lens = lens_mod.load(path)
+    if args.remove:
+        kept = [tw for tw in lens.trust_weights if tw.pattern != args.pattern]
+        if len(kept) == len(lens.trust_weights):
+            print(f"error: no trust weight for pattern {args.pattern!r} — nothing to remove", file=sys.stderr)
+            return 1
+        lens.trust_weights[:] = kept
+        lens_mod.save(lens, path)
+        print(f"[lens] removed trust weight for {args.pattern!r} "
+              f"({len(kept)} pattern(s) remain)")
+        return 0
+    if args.weight is None:
+        print("error: a weight is required (or pass --remove)", file=sys.stderr)
+        return 1
+    if args.weight < 0:
+        print(f"error: weight must be >= 0 (got {args.weight}); 0 excludes, "
+              f"1 is identity, >1 boosts", file=sys.stderr)
+        return 1
+    new_tw = lens_mod.TrustWeight(pattern=args.pattern, weight=args.weight)
+    for i, tw in enumerate(lens.trust_weights):
+        if tw.pattern == args.pattern:
+            lens.trust_weights[i] = new_tw
+            verb = "updated"
+            break
+    else:
+        lens.trust_weights.append(new_tw)
+        verb = "added"
+    lens_mod.save(lens, path)
+    print(f"[lens] {verb} {args.pattern!r} -> {args.weight} "
+          f"({len(lens.trust_weights)} pattern(s) total)")
     return 0
 
 
@@ -116,3 +145,14 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
                         default="team")
     compose.add_argument("-o", "--output", required=True, help="Output .lens path")
     compose.set_defaults(func=_cmd_compose)
+
+    set_trust = lens_sub.add_parser(
+        "set-trust",
+        help="Add/update (or --remove) a source-pattern trust weight in a lens")
+    set_trust.add_argument("lens_path", help="Path to a .lens file")
+    set_trust.add_argument("pattern", help="Glob over source-file paths (e.g. 'docs/external/*')")
+    set_trust.add_argument("weight", nargs="?", type=float, default=None,
+                           help=">1 boosts, <1 suppresses, 0 excludes; identity 1.0")
+    set_trust.add_argument("--remove", action="store_true",
+                           help="Remove the pattern's trust weight instead")
+    set_trust.set_defaults(func=_cmd_set_trust)

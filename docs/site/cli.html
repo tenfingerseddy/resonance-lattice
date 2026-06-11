@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLI reference — Resonance Lattice</title>
+  <link rel="stylesheet" href="rlat-docs.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="bar">
+    <a class="logo" href="index.html"><img src="assets/lockup-horizontal.svg" alt="Resonance Lattice"></a>
+  </div>
+  <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="explainer.html">What is rlat?</a>
+      <a href="self-improvement.html">Self-improvement</a>
+      <a href="getting-started.html">Getting started</a>
+      <a href="core-features.html">Core features</a>
+      <a href="claim-system.html">Claims</a>
+      <a href="encoder.html">Encoder</a>
+      <a href="storage-modes.html">Storage modes</a>
+      <a href="cli.html" aria-current="page">CLI</a>
+      <a href="api-keys.html">API keys</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="skills.html">Skills</a>
+      <a href="fabric.html">Fabric</a>
+      <a href="faq.html">FAQ</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="tagline">Resonance Lattice · Docs</div>
+  <h1>CLI reference</h1>
+  <p class="lede">
+    <code>rlat</code> is the command-line interface to a knowledge model.
+    Every subcommand below is wired and ships — this page is rebuilt
+    directly from the command parser.
+  </p>
+
+  <section id="command-map">
+    <div class="section-num">01 — The surface</div>
+    <h2>Command map</h2>
+    <p>
+      <code>rlat</code> dispatches the following top-level commands. They
+      group into seven jobs: <em>build</em> a model, <em>query</em> it,
+      <em>inspect</em> it, keep it <em>fresh</em>, work the
+      <em>insight / trust</em> layer, drive <em>memory and intent</em>,
+      and <em>share</em> it.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Command</th><th>Job</th><th>Needs an LLM key?</th></tr></thead>
+      <tbody>
+        <tr><td><code>install-encoder</code></td><td>one-time: stage the encoder cache</td><td>no</td></tr>
+        <tr><td><code>build</code></td><td>build a knowledge model from text sources</td><td>no</td></tr>
+        <tr><td><code>init-project</code></td><td>one-command project setup (build + primer)</td><td>no</td></tr>
+        <tr><td><code>search</code></td><td>single-shot top-k retrieval over source + insight layers</td><td>no</td></tr>
+        <tr><td><code>deep-search</code></td><td>multi-hop research loop returning a grounded answer</td><td><strong>yes</strong></td></tr>
+        <tr><td><code>profile</code></td><td>corpus shape / bands / drift summary</td><td>no</td></tr>
+        <tr><td><code>compare</code></td><td>cross-knowledge-model comparison (base band)</td><td>no</td></tr>
+        <tr><td><code>summary</code></td><td>generate an extractive context primer</td><td>no</td></tr>
+        <tr><td><code>skill-context</code></td><td>markdown context block for an Anthropic skill</td><td>no</td></tr>
+        <tr><td><code>refresh</code></td><td>local-mode incremental delta-apply</td><td>no</td></tr>
+        <tr><td><code>watch</code></td><td>live, debounced refresh loop</td><td>no</td></tr>
+        <tr><td><code>sync</code></td><td>remote-mode incremental delta-apply</td><td>no</td></tr>
+        <tr><td><code>freshness</code></td><td>remote-mode read-only drift check</td><td>no</td></tr>
+        <tr><td><code>convert</code></td><td>change storage mode in place</td><td>no</td></tr>
+        <tr><td><code>audit</code></td><td>read-only trust-contract audit of the insight layer</td><td>no</td></tr>
+        <tr><td><code>trace</code></td><td>full provenance chain for an insight or source</td><td>no</td></tr>
+        <tr><td><code>reverify</code></td><td>LLM re-judge of stale insights</td><td><strong>yes</strong></td></tr>
+        <tr><td><code>grow</code></td><td>opt-in self-improvement pass: fill the archive's most-demanded, worst-covered gaps from its own telemetry</td><td><strong>yes</strong></td></tr>
+        <tr><td><code>probe</code></td><td>idle-cycle self-probe of weak-zone queries</td><td><strong>yes</strong></td></tr>
+        <tr><td><code>memory</code></td><td>per-user flat memory (17 subcommands)</td><td>some subcommands</td></tr>
+        <tr><td><code>intent</code></td><td>declare and resolve the live intent graph</td><td>some subcommands</td></tr>
+        <tr><td><code>expertise</code></td><td>build the expertise primer (memory + intent synthesis)</td><td>no</td></tr>
+        <tr><td><code>lens</code></td><td>manage <code>.lens</code> perspective artefacts</td><td>no</td></tr>
+        <tr><td><code>workspace</code></td><td>resolve / declare the workspace identity</td><td>no</td></tr>
+        <tr><td><code>fabric</code></td><td>manage <code>fabric://</code> aliases for hosted UDFs</td><td>no</td></tr>
+        <tr><td><code>capture-env</code></td><td>auto-probe machine-readable environment attributes into the insight band</td><td>no</td></tr>
+        <tr><td><code>capture-attribute</code></td><td>record one fact, constraint, or falsified belief about your world</td><td>no</td></tr>
+        <tr><td><code>consolidate-insights</code></td><td>fold accumulated outcome signals into each insight's confidence</td><td>no</td></tr>
+      </tbody>
+    </table>
+    <div class="callout callout-note">
+      <p>An <em>insight</em> is an earned, cited summary stored alongside
+      the raw source passages. <code>rlat search</code> retrieves over
+      both the <strong>source layer</strong> and the <strong>insight
+      layer</strong>; <code>deep-search</code> plus the insight layer
+      produce faithfully-grounded answers — every claim traces back to
+      the corpus. See the <a href="claim-system.html">claim system</a> page for the full
+      model.</p>
+    </div>
+  </section>
+
+  <section id="build">
+    <div class="section-num">02 — Build</div>
+    <h2><code>rlat build</code></h2>
+    <p>Build a knowledge model from one or more source paths.</p>
+    <pre><code>rlat build &lt;sources...&gt; -o knowledge_model.rlat \
+  [--store-mode bundled|local|remote] \
+  [--remote-url-base URL] \
+  [--kind corpus|intent] \
+  [--source-root PATH] \
+  [--runtime auto|openvino|onnx|torch] \
+  [--min-chars N] [--max-chars N] \
+  [--batch-size N] \
+  [--ext EXT ...]</code></pre>
+
+    <h3 id="build-examples">Examples</h3>
+    <pre><code># Default: local mode — smallest .rlat, source stays on disk
+rlat build ./docs ./src -o my-corpus.rlat
+
+# Bundled — self-contained, ship anywhere
+rlat build ./docs ./src -o my-corpus.rlat --store-mode bundled
+
+# Remote — source pinned at canonical URLs
+rlat build ./docs -o my-corpus.rlat \
+  --store-mode remote --remote-url-base https://example.com/corpus/v1
+
+# Restrict to specific extensions (override the default text allowlist)
+rlat build ./notebooks -o nb.rlat --ext .ipynb --ext .md</code></pre>
+
+    <h3 id="build-flags">Flags</h3>
+    <table class="compact">
+      <thead><tr><th>Flag</th><th>Default</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>&lt;sources...&gt;</code></td><td>(required)</td><td>One or more files or directories. Directories are walked recursively.</td></tr>
+        <tr><td><code>-o</code>, <code>--output</code></td><td>(required)</td><td>Output <code>.rlat</code> path.</td></tr>
+        <tr><td><code>--store-mode</code></td><td><code>local</code></td><td>How the model resolves source files at query time. See the <a href="storage-modes.html">Storage modes</a> page.</td></tr>
+        <tr><td><code>--remote-url-base</code></td><td>(none)</td><td>URL prefix joined with each relative <code>source_file</code>. Required when <code>--store-mode remote</code>.</td></tr>
+        <tr><td><code>--kind</code></td><td><code>corpus</code></td><td>Knowledge-model kind tag (<code>corpus</code> or <code>intent</code>).</td></tr>
+        <tr><td><code>--source-root</code></td><td>common ancestor of sources</td><td>Root for the <code>source_file</code> paths recorded in the registry.</td></tr>
+        <tr><td><code>--runtime</code></td><td><code>auto</code></td><td>Encoder runtime. <code>auto</code> = OpenVINO on Intel CPUs, ONNX elsewhere; <code>torch</code> needs the <code>[build]</code> extra.</td></tr>
+        <tr><td><code>--min-chars</code></td><td><code>200</code></td><td>Chunker minimum chunk size.</td></tr>
+        <tr><td><code>--max-chars</code></td><td><code>3200</code></td><td>Chunker maximum chunk size.</td></tr>
+        <tr><td><code>--batch-size</code></td><td><code>32</code></td><td>Encoder batch size. Smaller for tight RAM, larger for GPU throughput.</td></tr>
+        <tr><td><code>--ext EXT</code></td><td>built-in allowlist</td><td>Override the file-extension allowlist. Repeatable; the leading dot is optional.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="build-pipeline">What gets built</h3>
+    <ul class="checklist">
+      <li>Sources are walked recursively and sorted for cross-platform stability.</li>
+      <li>Each file is decoded as UTF-8 (newlines normalised); non-UTF-8 files are skipped with a one-line summary.</li>
+      <li>Each file is chunked: paragraph splits, then sentence splits, then hard splits at <code>--max-chars</code>. Chunks below <code>--min-chars</code> merge into neighbours.</li>
+      <li>Passages are encoded by <code>Alibaba-NLP/gte-modernbert-base</code> (CLS-pooled, L2-normalised, 768d).</li>
+      <li>A FAISS HNSW index is built when there are more than 5,000 passages.</li>
+      <li>With <code>--store-mode bundled</code>, source files are zstd-framed and stored under <code>source/</code> inside the ZIP.</li>
+      <li>The <code>.rlat</code> is written atomically (temp file, then rename).</li>
+    </ul>
+
+    <h3 id="build-exit-codes">Exit codes</h3>
+    <table class="compact">
+      <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>0</code></td><td>Build succeeded.</td></tr>
+        <tr><td><code>1</code></td><td>Runtime error (no text files found, chunker produced no passages).</td></tr>
+        <tr><td><code>2</code></td><td>Usage error (missing <code>&lt;sources&gt;</code>).</td></tr>
+      </tbody>
+    </table>
+    <div class="callout callout-note">
+      <span class="callout-tag">Big corpus, no GPU?</span>
+      <p>CPU encoding runs at ~80&ndash;150 passages/sec; a CUDA T4 runs
+      at ~1,500&ndash;2,500. For corpora over ~10K passages, the
+      <code>rlat-build-on-kaggle</code> skill walks through using a free
+      T4 GPU.</p>
+    </div>
+  </section>
+
+  <section id="init-project">
+    <div class="section-num">03 — Setup shortcuts</div>
+    <h2><code>rlat init-project</code></h2>
+    <p>
+      One-command project setup. Auto-detects source directories in the
+      current working directory, builds a knowledge model with sensible
+      defaults, and (unless <code>--no-primer</code>) writes a context
+      primer to <code>.claude/resonance-context.md</code>.
+    </p>
+    <pre><code>cd my-project/
+rlat init-project                                  # auto-detect docs/, src/, README.md, etc.
+rlat init-project -o custom.rlat                    # override the output path
+rlat init-project --source ./notes --source ./code  # explicit sources, skip auto-detect
+rlat init-project --no-primer                       # skip .claude/resonance-context.md</code></pre>
+    <p>It is equivalent to:</p>
+    <pre><code>rlat build &lt;detected-sources&gt; -o &lt;cwd&gt;.rlat
+rlat summary &lt;cwd&gt;.rlat -o .claude/resonance-context.md</code></pre>
+    <p>
+      Auto-detection looks for <code>docs/</code>, <code>src/</code>,
+      <code>lib/</code>, <code>notebooks/</code>, <code>examples/</code>
+      and top-level <code>*.md</code> / <code>*.rst</code> /
+      <code>*.txt</code>. If none exist, the command errors and asks you
+      to be explicit with <code>--source</code> rather than producing an
+      empty knowledge model.
+    </p>
+
+    <h2 id="install-encoder"><code>rlat install-encoder</code></h2>
+    <p>
+      Pre-stage the <code>gte-modernbert-base</code> encoder cache. Most
+      users never run this directly — the first <code>rlat build</code>
+      triggers it automatically. Useful for offline-build environments
+      and CI.
+    </p>
+    <pre><code>rlat install-encoder                   # default pinned revision
+rlat install-encoder --force           # re-download and re-convert even if cached
+rlat install-encoder --revision &lt;sha&gt;  # pin to a different HuggingFace revision</code></pre>
+    <p>
+      The cache lives at
+      <code>~/.cache/rlat/encoders/&lt;revision&gt;/</code>. ONNX is
+      always exported; OpenVINO IR is exported additionally on Intel
+      CPUs.
+    </p>
+  </section>
+
+  <section id="search">
+    <div class="section-num">04 — Query</div>
+    <h2><code>rlat search</code></h2>
+    <p>
+      Top-k retrieval against a knowledge model. Single recipe — no
+      rerank flag, no hybrid mode, no cascade. Retrieval runs against the
+      base band. <code>search</code> retrieves over both the source layer
+      and the insight layer; every hit is labelled with the layer it came
+      from.
+    </p>
+    <pre><code>rlat search km.rlat "&lt;query&gt;" \
+  [--top-k N] \
+  [--format text|json|context] \
+  [--mode augment|knowledge|constrain] \
+  [--source-only] \
+  [--lens FILE] \
+  [--include-stale] \
+  [--source-root DIR] \
+  [--verified-only] \
+  [--strict-names] \
+  [-q | --quiet]</code></pre>
+
+    <h3 id="search-examples">Examples</h3>
+    <pre><code># Quick top-10 (default), human-readable
+rlat search my-corpus.rlat "how does retrieval work"
+
+# Synthesis-ready context block — pipe straight into your LLM call
+rlat search my-corpus.rlat "auth flow" --format context --top-k 5
+
+# JSON for scripts; suppress the stderr banner
+rlat search my-corpus.rlat "..." --format json -q
+
+# Only return hits whose source has not drifted since build
+rlat search my-corpus.rlat "..." --verified-only
+
+# Source passages only — bypass the insight layer
+rlat search my-corpus.rlat "..." --source-only
+
+# Apply a saved perspective
+rlat search my-corpus.rlat "..." --lens ./team.lens</code></pre>
+
+    <h3 id="search-flags">Flags</h3>
+    <table class="compact">
+      <thead><tr><th>Flag</th><th>Default</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>--top-k</code></td><td><code>10</code></td><td>Number of hits to return.</td></tr>
+        <tr><td><code>--format</code></td><td><code>text</code></td><td><code>text</code>, <code>json</code>, or <code>context</code> (see below).</td></tr>
+        <tr><td><code>--mode</code></td><td><code>augment</code></td><td>Grounding mode for the consumer LLM (<code>--format context</code> only). See grounding modes below.</td></tr>
+        <tr><td><code>--source-only</code></td><td>off</td><td>Bypass the insight layer; return source passages only.</td></tr>
+        <tr><td><code>--lens FILE</code></td><td>(none)</td><td>Path to a <code>.lens</code> file. Applies its trust weights to the ranking.</td></tr>
+        <tr><td><code>--include-stale</code></td><td>off</td><td>Include insight rows whose cited source has drifted (<code>verdict_state=stale</code>).</td></tr>
+        <tr><td><code>--source-root DIR</code></td><td>(recorded)</td><td>Override the recorded <code>source_root</code> (local mode only).</td></tr>
+        <tr><td><code>--verified-only</code></td><td>off</td><td>Drop hits whose source has drifted or gone missing.</td></tr>
+        <tr><td><code>--strict-names</code></td><td>off</td><td>(<code>--format context</code> only) Exit non-zero when a distinctive query token appears in no retrieved passage.</td></tr>
+        <tr><td><code>-q</code>, <code>--quiet</code></td><td>off</td><td>Suppress the <code>[search]</code> banner on stderr.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="search-formats">Output formats</h3>
+    <ul class="checklist">
+      <li><code>text</code> (default): <code>score &nbsp;source_file:offset+length &nbsp;[drift_status] &nbsp;preview</code></li>
+      <li><code>json</code>: a list of objects with all hit fields, including <code>text</code> and <code>content_hash</code>.</li>
+      <li><code>context</code>: passages concatenated up to a token budget, prefixed by a grounding-mode directive. Designed to be pasted or piped into a downstream LLM as primer context.</li>
+    </ul>
+
+    <h3 id="grounding-modes">Grounding modes</h3>
+    <p>
+      <code>--mode</code> (with <code>--format context</code>) controls
+      <em>how the consumer LLM should treat the retrieved passages</em>.
+      The mode stamps a directive at the top of the output and pairs it
+      with a confidence gate that suppresses the body on weak retrieval.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Mode</th><th>Behaviour</th><th>Use for</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>augment</code> <em>(default)</em></td>
+          <td>Passages are primary context blended with the LLM's training. The body is replaced by a "no confident evidence" marker on weak retrieval. Single-shot benchmark: 76.5% accuracy / 3.9% hallucination on Microsoft Fabric docs.</td>
+          <td>Broad documentation corpora where the LLM already has solid prior knowledge.</td>
+        </tr>
+        <tr>
+          <td><code>constrain</code></td>
+          <td>Passages are the only source of truth; the LLM is told to refuse when evidence is thin. No gate. Single-shot: 66.7% / 2.0% / 91.7% distractor refusal.</td>
+          <td>Fact extraction, compliance, regulatory, and audit work where wrong-but-confident is worse than no answer.</td>
+        </tr>
+        <tr>
+          <td><code>knowledge</code></td>
+          <td>Passages supplement training; lighter gate. Single-shot: 70.6% / 5.9%; under <code>deep-search</code> it ties augment at 0% hallucination.</td>
+          <td>Partial-coverage corpora where the LLM knows the surrounding domain well.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Every hit carries a <code>drift_status</code> of
+      <code>verified</code>, <code>drifted</code>, or <code>missing</code>,
+      derived by re-hashing the slice against the hash recorded at build.
+    </p>
+
+    <h3 id="search-fabric">The <code>fabric://</code> URL form</h3>
+    <p>
+      <code>rlat search</code> also accepts
+      <code>fabric://&lt;alias&gt;[/&lt;km&gt;]</code> as the
+      knowledge-model argument. The alias is resolved against the local
+      Fabric config (written by <code>rlat fabric add</code>); the
+      request is sent to a hosted Fabric UDF endpoint. All flags work
+      identically — formatting is client-side.
+    </p>
+    <pre><code>rlat search fabric://team                  # discovery: list KMs on this UDF
+rlat search fabric://team/team-docs "..."  # search a specific KM</code></pre>
+  </section>
+
+  <section id="deep-search">
+    <div class="section-num">05 — Deep search</div>
+    <h2><code>rlat deep-search</code></h2>
+    <div class="callout callout-warn">
+      <span class="callout-tag">Needs an API key</span>
+      <p>This CLI verb calls Sonnet 4.6 through the Anthropic API for the
+      planner / refiner / synthesizer hops; each invocation costs
+      ~$0.009&ndash;0.025. For interactive Claude Code use, the
+      <code>deep-research</code> skill runs the same loop natively in your
+      session with no extra cost — your Claude subscription covers the
+      LLM hops. Prefer the skill in nearly every Claude Code scenario;
+      this CLI verb is the right pick for non-Claude-Code agents, CI
+      pipelines, and batch jobs. See the
+      <a href="api-keys.html">API keys</a> page.</p>
+    </div>
+    <p>
+      A multi-hop research loop: plan &rarr; search &rarr; refine &rarr;
+      synthesize. It returns a faithfully-grounded answer plus an
+      evidence union with anchors, in one call.
+    </p>
+    <pre><code>rlat deep-search km.rlat "&lt;question&gt;" \
+  [--max-hops N]                 # default 4
+  [--top-k K]                    # default 5 per hop
+  [--format text|json|markdown]  # default text
+  [--source-root DIR]
+  [--strict-names]               # non-zero exit on a name-aliasing refusal</code></pre>
+
+    <h3 id="deep-search-loop">What it does</h3>
+    <ul class="checklist">
+      <li><strong>Plan</strong> — Sonnet generates an initial 6&ndash;15 word query from the question.</li>
+      <li><strong>Search</strong> — <code>rlat</code> retrieves top-k passages for the current query.</li>
+      <li><strong>Refine</strong> — Sonnet sees the question plus accumulated evidence and decides: <code>answer</code> (final answer ready), <code>search</code> (next query), or <code>give_up</code> (corpus does not cover the question).</li>
+      <li><strong>Repeat</strong> until the refiner picks <code>answer</code> or <code>max_hops</code> is exhausted.</li>
+      <li><strong>Name-check</strong> runs across the union of all hops' evidence; missing distinctive tokens trigger a refusal directive.</li>
+    </ul>
+
+    <h3 id="deep-search-bench">Benchmark</h3>
+    <p>Microsoft Fabric corpus, 63 questions, Sonnet 4.6, relaxed rubric:</p>
+    <table class="compact">
+      <thead><tr><th>Approach</th><th>Accuracy</th><th>Hallucination</th><th>Mean cost / q</th></tr></thead>
+      <tbody>
+        <tr><td>LLM alone (no retrieval)</td><td>56.9%</td><td>19.6%</td><td>$0.002</td></tr>
+        <tr><td>Single-shot <code>search --format context</code> (augment)</td><td>76.5%</td><td>3.9%</td><td>$0.004</td></tr>
+        <tr><td><code>deep-search</code> (4-hop, augment)</td><td>92.2%</td><td>2.0%</td><td>$0.010</td></tr>
+        <tr><td><code>deep-search --mode knowledge</code></td><td>92.2%</td><td>0.0%</td><td>$0.009</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="profile">
+    <div class="section-num">06 — Inspect</div>
+    <h2><code>rlat profile</code></h2>
+    <p>
+      Knowledge-model diagnostics — what is in the <code>.rlat</code>
+      without running a query. Reports the backbone, bands, store mode,
+      build config, ANN parameters, and a drift summary.
+    </p>
+    <pre><code>rlat profile km.rlat [--format text|json] [--source-root DIR] [--no-drift]</code></pre>
+    <p>
+      The drift walk re-hashes every passage and reads every distinct
+      source file. <code>--no-drift</code> returns immediately with
+      metadata only — useful for scripted dumps or sanity checks on huge
+      models. In JSON, the <code>drift</code> field carries an explicit
+      <code>status</code> tag (<code>computed</code> /
+      <code>skipped</code>) so consumers branch on the status rather than
+      sniffing for keys.
+    </p>
+
+    <h2 id="compare"><code>rlat compare</code></h2>
+    <p>
+      Cross-knowledge-model comparison. Uses the <strong>base
+      band</strong> on both sides — the band every knowledge model
+      shares, so the numbers are always directly comparable.
+    </p>
+    <pre><code>rlat compare a.rlat b.rlat [--format text|json] [--sample N]</code></pre>
+    <table class="compact">
+      <thead><tr><th>Metric</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>centroid_cosine</code></td><td>Cosine of the two corpora's mean vectors — a single thematic-alignment number.</td></tr>
+        <tr><td><code>coverage_a_in_b</code></td><td>Mean max-cosine for a sample of A's rows against all of B: "how well are A's passages mirrored in B?"</td></tr>
+        <tr><td><code>coverage_b_in_a</code></td><td>The same direction reversed. Asymmetric — corpora differ in size and focus.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Coverage sampling uses a fixed seed, so identical inputs produce
+      identical numbers across runs.
+    </p>
+
+    <h2 id="summary"><code>rlat summary</code></h2>
+    <p>
+      Extractive primer generation. Produces a structured markdown
+      document capturing what is in a knowledge model — designed to be
+      loaded into an AI assistant's system prompt so it knows the corpus
+      shape without spending tokens on a full search.
+    </p>
+    <pre><code>rlat summary km.rlat [-o output.md] [--query "..." ...] [--source-root DIR]
+
+# The canonical assistant-integration pattern:
+rlat summary my-corpus.rlat -o .claude/resonance-context.md</code></pre>
+    <table class="compact">
+      <thead><tr><th>Section</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Landscape</strong></td><td>top hits against the corpus centroid — "what is this model about?"</td></tr>
+        <tr><td><strong>Structure</strong></td><td>source-file breakdown sorted by passage count</td></tr>
+        <tr><td><strong>Evidence</strong></td><td>per-query top hits (only when <code>--query</code> is given; repeatable)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="skill-context"><code>rlat skill-context</code></h2>
+    <p>
+      Markdown context block for the Anthropic skill <code>!command</code>
+      dynamic-injection primitive. The shell command runs before the
+      model sees the skill; its stdout replaces the placeholder.
+    </p>
+    <pre><code>rlat skill-context km.rlat --query "..." [--query "..." ...] \
+  [--top-k N] [--token-budget T] \
+  [--mode augment|knowledge|constrain] \
+  [--source-root DIR] [--strict] [--strict-names]</code></pre>
+    <p>
+      Output carries citation anchors, a per-passage drift status, and a
+      confidence-metrics header so the model can self-judge. Multiple
+      <code>--query</code> flags emit one block per query, in submission
+      order — useful for pairing a fixed preset query with the user's
+      query. <code>--strict</code> exits with code 2 if any passage has
+      drifted; <code>--strict-names</code> exits with code 3 on a
+      name-aliasing refusal.
+    </p>
+  </section>
+
+  <section id="freshness-commands">
+    <div class="section-num">07 — Keep it fresh</div>
+    <h2><code>rlat refresh</code></h2>
+    <p>
+      Bring a local-mode knowledge model back in sync after you edit
+      source files. Incremental — unchanged passages keep their band
+      rows untouched; only modified and added passages are re-encoded.
+    </p>
+    <pre><code>rlat refresh my-corpus.rlat                  # apply all deltas
+rlat refresh my-corpus.rlat --dry-run        # report counts only</code></pre>
+    <p>
+      Local mode only. Bundled archives are immutable post-build (re-run
+      <code>rlat build</code>); remote archives route to
+      <code>rlat sync</code>.
+      After a refresh, any insight whose cited source content hash
+      changed is flagged <code>stale</code> by the drift cascade.
+      Override flags: <code>--source</code> (repeatable),
+      <code>--source-root</code>, <code>--ext</code> (repeatable), and
+      <code>--batch-size</code>.
+    </p>
+
+    <h2 id="watch"><code>rlat watch</code></h2>
+    <p>
+      A live, silent, self-discovering refresh loop. It sits on top of
+      <code>rlat refresh</code> — running the incremental delta-apply
+      pipeline on every save after a debounce window, so the archive
+      stays current as you edit.
+    </p>
+    <pre><code>rlat watch                     # zero-arg: discover *.rlat in cwd, watch all
+rlat watch my-corpus.rlat      # explicit single archive
+rlat watch --once              # CI / pre-commit: synchronous one-shot reconcile
+rlat watch --verbose           # print one line per refresh (default: silent)</code></pre>
+    <p>
+      The default UX is silent — errors are loud, success is invisible. A
+      short startup line confirms what is being watched, then the loop
+      falls quiet. <code>--once</code> is the CI / pre-commit shape: a
+      synchronous one-shot reconciliation with no observer, since in CI
+      the files have already changed before the command runs. Watch
+      requires the <code>[watch]</code> extra:
+      <code>pip install rlat[watch]</code>.
+    </p>
+
+    <h2 id="sync"><code>rlat sync</code></h2>
+    <p>
+      Bring a remote-mode knowledge model back in sync against upstream.
+      The same incremental delta-apply as <code>refresh</code>, with the
+      upstream-state oracle replaced by a network poll.
+    </p>
+    <pre><code>rlat sync my-corpus.rlat                            # poll mode (default)
+rlat sync my-corpus.rlat --upstream-manifest &lt;url&gt;  # catalog mode
+rlat sync my-corpus.rlat --dry-run                  # list paths only</code></pre>
+    <p>
+      <strong>Catalog mode</strong> (<code>--upstream-manifest</code>)
+      diffs an upstream JSON catalog against the archive's pinned
+      manifest and detects added, modified, and removed paths.
+      <strong>Poll mode</strong> (default) re-fetches every URL in the
+      existing manifest and detects modified and removed paths only — it
+      cannot enumerate new files. If poll-mode requests hit a network
+      error, sync aborts rather than silently deleting corpus content;
+      <code>--treat-unreachable-as-removed</code> is the explicit opt-in
+      to drop those paths.
+    </p>
+
+    <h2 id="freshness"><code>rlat freshness</code></h2>
+    <p>
+      Remote mode only — bundled and local archives print a friendly
+      error pointing at <code>rlat build</code> / <code>rlat refresh</code>.
+    </p>
+    <pre><code>rlat freshness my-corpus.rlat                 # text report (per-entry status)
+rlat freshness my-corpus.rlat --format json   # structured counts + per-entry map</code></pre>
+    <p>
+      It walks every manifest entry, downloads the upstream bytes, hashes
+      them, and reports per-entry status (<code>verified</code> /
+      <code>drifted</code> / <code>missing</code>). Read-only; exits with
+      code 2 if any entry is non-verified — suitable for CI gating before
+      deciding to run <code>rlat sync</code>.
+    </p>
+
+    <h2 id="convert"><code>rlat convert</code></h2>
+    <p>
+      Switch a knowledge model between storage modes
+      (<code>bundled</code> / <code>local</code> / <code>remote</code>)
+      <strong>without rebuilding embeddings</strong>. The band,
+      registry, and ANN index are
+      storage-mode-independent — conversion is a metadata and payload
+      shuffle, atomic in place by default.
+    </p>
+    <pre><code>rlat convert km.rlat --to {bundled|local|remote} \
+  [--source-root DIR] \
+  [--remote-url-base URL] \
+  [-o output.rlat] \
+  [--dry-run]</code></pre>
+    <table class="compact">
+      <thead><tr><th>From &rarr; To</th><th>Required flags</th></tr></thead>
+      <tbody>
+        <tr><td><code>local &rarr; bundled</code></td><td>(none)</td></tr>
+        <tr><td><code>local &rarr; remote</code></td><td><code>--remote-url-base</code></td></tr>
+        <tr><td><code>bundled &rarr; local</code></td><td><code>--source-root</code></td></tr>
+        <tr><td><code>bundled &rarr; remote</code></td><td><code>--remote-url-base</code></td></tr>
+        <tr><td><code>remote &rarr; local</code></td><td><code>--source-root</code></td></tr>
+        <tr><td><code>remote &rarr; bundled</code></td><td>(none)</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <code>--to &lt;current_mode&gt;</code> is a friendly idempotent
+      no-op. Before writing, every kept passage's content hash is
+      re-validated against live bytes; if any passage has drifted,
+      conversion aborts with the drift report — run <code>rlat refresh</code>
+      or <code>rlat sync</code> first, then retry. <code>passage_id</code>
+      and <code>content_hash</code> are preserved across every
+      conversion.
+    </p>
+  </section>
+
+  <section id="insight-layer">
+    <div class="section-num">08 — Insight &amp; trust</div>
+    <h2><code>rlat audit</code></h2>
+    <p>
+      Read-only inspection of the source/insight provenance state. It
+      surfaces layer sizes and the insight verdict states.
+    </p>
+    <pre><code>rlat audit km.rlat              # summary (layer sizes, verdict states)
+rlat audit km.rlat --stale      # list insights flagged stale by the drift cascade
+rlat audit km.rlat --orphans    # list insights whose cited source was removed
+rlat audit km.rlat --format json</code></pre>
+    <p>
+      The audit also surfaces the corpus's own <strong>self-audit</strong> — the
+      LLM-free shape report computed at build/refresh: under-served demand gaps and
+      same-topic cross-document <em>contradiction candidates</em> (high-cosine pairs
+      worth a stance check). <code>--with-text</code> / <code>--min-cosine</code>
+      recompute the candidates live at a chosen cosine floor with resolved text
+      (judge-ready, demand-ranked); <code>--external</code> lists web-fetched claims
+      and their source URLs — the input to a world-freshness re-check.
+    </p>
+    <pre><code>rlat audit km.rlat --shape                          # demand gaps + contradiction candidates (stored)
+rlat audit km.rlat --shape --min-cosine 0.85 --with-text   # live, judge-ready candidate pairs
+rlat audit km.rlat --external --format json         # web-fetched claims + their source URLs</code></pre>
+
+    <h2 id="trace"><code>rlat trace</code></h2>
+    <p>
+      The full provenance chain for an insight or a source passage. Given
+      an <code>insight_id</code>, it prints the cited source passages
+      with hash and char span, plus any lineage chain. Given a source
+      <code>passage_id</code>, it prints every insight that cites that
+      passage (a reverse trace).
+    </p>
+    <pre><code>rlat trace km.rlat &lt;insight_id-or-passage_id&gt; [--format text|json]</code></pre>
+
+    <h2 id="reverify"><code>rlat reverify</code></h2>
+    <p>
+      After <code>rlat refresh</code> flags insights as <code>stale</code>
+      (because their cited source content hash changed), <code>reverify</code>
+      asks an LLM whether the updated source still supports each insight.
+      Survivors flip back to <code>accepted</code> with refreshed
+      citations; failures retire. LLM-driven — needs an Anthropic API key
+      (~1 call per stale row).
+    </p>
+    <pre><code>rlat reverify km.rlat [--limit N] [--model ID] [--verbose]</code></pre>
+
+    <h2 id="grow"><code>rlat grow</code></h2>
+    <p>
+      One opt-in pass of the self-improvement loop. Reads the archive's
+      own persisted telemetry for confirmed-recurring intents the corpus
+      answers relatively worst, authors a grounded fill for the top
+      <code>--max-fills</code> of them, and lands each through the
+      faithfulness gate + compression test into the insight band.
+      <code>--dry-run</code> previews the candidates with no LLM call and
+      no writes. Opt-in by design — it spends LLM calls and writes to the
+      archive, so it never runs implicitly. Telemetry accrues when
+      sessions run with <code>RLAT_CAPTURE_PERSIST=1</code>; with no
+      telemetry the command is a clean no-op.
+    </p>
+    <pre><code>rlat grow km.rlat [--max-fills N] [--dry-run] [--source-root DIR] [--model ID]</code></pre>
+
+    <h2 id="probe"><code>rlat probe</code></h2>
+    <p>
+      An idle-cycle self-probe. Between active sessions it scans the
+      workspace event ledger for weak zones — queries that previously
+      failed to ground, or repeated queries that never received a
+      positive verdict — and re-attempts <code>deep-search</code> against
+      the current corpus. Successful re-runs write synthesis candidates
+      automatically. LLM-driven — needs an Anthropic API key.
+    </p>
+    <pre><code>rlat probe km.rlat [--limit N] [--max-hops N] [--top-k N] [--dry-run]</code></pre>
+
+    <h2 id="capture-env"><code>rlat capture-env</code></h2>
+    <p>
+      Auto-probe the machine-readable environment and land every observed
+      attribute in the knowledge model's insight band — shell version,
+      operating system, account type, execution policy, domain
+      membership, proxy, plus the corpus size read from the archive
+      itself. One command, zero questions, zero confabulation: a probe
+      only writes a value it actually read, so a captured fact can never
+      be invented. Each attribute lands keyed, so re-running updates in
+      place rather than duplicating.
+    </p>
+    <pre><code>rlat capture-env km.rlat [--no-corpus-size]</code></pre>
+    <table class="compact">
+      <thead><tr><th>Flag</th><th>Default</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>--no-corpus-size</code></td><td>off</td><td>Skip the corpus-size attribute (the passage count read from the archive).</td></tr>
+      </tbody>
+    </table>
+    <pre><code>$ rlat capture-env my-project.rlat
+  + The user is running PowerShell 7.4.6 (Core edition).
+  + The user's operating system is Windows 11 Pro.
+  + The user's knowledge model contains 39 passages.
+[rlat capture-env] captured 3 attribute(s) into my-project.rlat</code></pre>
+
+    <h2 id="capture-attribute"><code>rlat capture-attribute</code></h2>
+    <p>
+      Manually record one fact about your world — the fallback for facts
+      no probe can read. The claim lands in the knowledge model's insight
+      band, born active, and is served alongside retrieval from then on.
+    </p>
+    <pre><code>rlat capture-attribute km.rlat "&lt;text&gt;" \
+  [--kind attribute|constraint|falsified] \
+  [--criticality low|normal|high|critical] \
+  [--attribute-key KEY]</code></pre>
+    <table class="compact">
+      <thead><tr><th>Flag</th><th>Default</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>&lt;text&gt;</code></td><td>(required)</td><td>The fact, or <code>-</code> to read it from stdin.</td></tr>
+        <tr><td><code>--kind</code></td><td><code>attribute</code></td><td><code>attribute</code> — a fact about your environment. <code>constraint</code> — a standing rule, always served rather than retrieved by similarity. <code>falsified</code> — something proven wrong, stored as a negation claim.</td></tr>
+        <tr><td><code>--criticality</code></td><td><code>high</code></td><td>How decisive the fact is for answers: <code>low</code> / <code>normal</code> / <code>high</code> / <code>critical</code>.</td></tr>
+        <tr><td><code>--attribute-key</code></td><td>(none)</td><td>Normalized subject for serve-time dedup (e.g. <code>workspace capacity</code>). Within the same kind, the newest value for a key wins at serve time. Omit to leave unkeyed — never deduped.</td></tr>
+      </tbody>
+    </table>
+    <pre><code># A fact about your environment — keyed, so a newer value replaces it
+rlat capture-attribute my-project.rlat \
+  "The team's Fabric capacity is an F64 SKU." --attribute-key "fabric capacity"
+
+# A standing rule — always served, never lost to a similarity miss
+rlat capture-attribute my-project.rlat \
+  "Deploys to prod happen Tuesday only." --kind constraint
+
+# Something proven wrong — put the evidence in the text
+rlat capture-attribute my-project.rlat \
+  "Tried caching encoder weights in OneLake; falsified by the 2026-05 latency benchmark." \
+  --kind falsified</code></pre>
+  </section>
+
+  <section id="memory">
+    <div class="section-num">09 — Memory</div>
+    <h2><code>rlat memory &lt;subcommand&gt;</code></h2>
+    <p>
+      Per-user flat memory. Memory is a flat, polarity-tagged,
+      confidence-graded row store — one embedding band plus one row file
+      per user, at <code>~/.rlat/memory/&lt;user-id&gt;/</code>. Rows
+      carry a primary polarity (<code>prefer</code> / <code>avoid</code> /
+      <code>factual</code>) and a workspace scope tag. The
+      <a href="claim-system.html">claim system</a> page is the full guide; the
+      subcommand surface is:
+    </p>
+    <table class="compact">
+      <thead><tr><th>Subcommand</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>add</code></td><td>Append a manual row; auto-stamps the cwd workspace tag.</td></tr>
+        <tr><td><code>list</code></td><td>Tabular view of the row store, with optional filters.</td></tr>
+        <tr><td><code>recall</code></td><td>Gated retrieval. Synchronous one-shot by default; <code>--daemon</code> boots the long-lived recall server.</td></tr>
+        <tr><td><code>feedback</code></td><td>Log a good/bad vote on the most recent recall injection.</td></tr>
+        <tr><td><code>consolidate</code></td><td>Run the session-end pass: confidence raise &rarr; forget. Fully mechanical — no LLM, no key. Flags: <code>--cwd</code>, <code>--dry-run</code>.</td></tr>
+        <tr><td><code>verify</code></td><td>Check high-criticality rows against a corpus. <em>Needs an API key.</em></td></tr>
+        <tr><td><code>corroborate</code></td><td>User corroboration — raise a row's confidence one step.</td></tr>
+        <tr><td><code>eval</code></td><td>Print the longitudinal scorecard (useful + effortless axes).</td></tr>
+        <tr><td><code>rollup</code></td><td>Weekly digest — this week versus the prior week.</td></tr>
+        <tr><td><code>dedup</code></td><td>Retroactively collapse same-text, same-workspace rows.</td></tr>
+        <tr><td><code>session-mark</code></td><td>Record a session-boundary timestamp.</td></tr>
+        <tr><td><code>train</code></td><td>Mutate a row (<code>--bad-vote</code> / <code>--good-vote</code> / <code>--corroborate</code>); the full training loop runs via the <code>/rlat-train</code> slash command.</td></tr>
+        <tr><td><code>gc</code></td><td>Manual escape-hatch deletion; requires at least one filter, never automatic.</td></tr>
+        <tr><td><code>doctor</code></td><td>Probe the per-user store, the recall daemon, and the encoder revision.</td></tr>
+        <tr><td><code>hook</code></td><td><code>UserPromptSubmit</code> hook entry point — wired via <code>settings.json</code>.</td></tr>
+        <tr><td><code>install-hooks</code></td><td>Wire the recall + capture hooks into Claude Code <code>settings.json</code>. <code>--user</code> targets <code>~/.claude/settings.json</code>; <code>--project-dir</code> sets the project root containing <code>.claude/</code> (default: cwd); <code>--mine</code> also sets <code>RLAT_MINE_ATTRIBUTES=1</code> to opt into passive world-fact mining. Idempotent; preserves foreign hooks.</td></tr>
+        <tr><td><code>capture</code></td><td><code>SessionEnd</code> hook entry point — wired via <code>settings.json</code>.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout callout-warn">
+      <span class="callout-tag">Exit codes</span>
+      <p><code>0</code> success · <code>1</code> usage / runtime error ·
+      <code>2</code> deprecated subcommand (<code>primer</code> — replaced
+      by the per-prompt <code>UserPromptSubmit</code> hook) ·
+      <code>3</code> a surface that runs as a Claude Code slash command
+      rather than a CLI body (<code>train &lt;task&gt;</code> &rarr;
+      <code>/rlat-train</code>).</p>
+    </div>
+    <pre><code># Add a manual row — defaults to polarity=factual + the cwd workspace tag
+rlat memory add "prefer pytest -xvs &lt;path&gt; for debugging" --polarity prefer
+
+# Cross-workspace habit — visible in any cwd
+rlat memory add "prefer Sonnet 4.6 over Haiku 4.5" --polarity prefer --scope cross-workspace
+
+# Inspect and recall
+rlat memory list --polarity prefer
+rlat memory recall "how do I run the tests" --top-k 5 --explain
+
+# Garbage collect — requires a filter; --dry-run previews
+rlat memory gc --is-bad --dry-run</code></pre>
+  </section>
+
+  <section id="intent">
+    <div class="section-num">10 — Intent &amp; expertise</div>
+    <h2><code>rlat intent &lt;subcommand&gt;</code></h2>
+    <p>
+      Declare and resolve the live intent graph at
+      <code>.rlat-state/intent/</code> — the goals, tasks, and steps the
+      agent is working toward.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Subcommand</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>add</code></td><td>Declare a new live intent (a <code>step</code> or <code>task</code>).</td></tr>
+        <tr><td><code>list</code></td><td>List live intents, optionally filtered by status.</td></tr>
+        <tr><td><code>path</code></td><td>Print the parent chain (root &rarr; leaf) for an intent.</td></tr>
+        <tr><td><code>accept</code></td><td>Record a user-source <em>satisfied</em> verdict on an intent.</td></tr>
+        <tr><td><code>reject</code></td><td>Record a user-source <em>not satisfied</em> verdict on an intent.</td></tr>
+        <tr><td><code>activate</code></td><td>Flip a proposed intent to active.</td></tr>
+        <tr><td><code>what-next</code></td><td>Recommend the next move from the live intent graph.</td></tr>
+        <tr><td><code>decompose</code></td><td>Decompose a task intent into step children via an LLM.</td></tr>
+        <tr><td><code>declare-durable</code></td><td>Declare a durable goal or direction, written to the per-user store.</td></tr>
+        <tr><td><code>durable</code></td><td>List durable goals and directions.</td></tr>
+        <tr><td><code>capture-plan</code></td><td>Capture plan-mode output as a proposed task plus steps.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout callout-note">
+      <p><code>accept</code> and <code>reject</code> here are
+      <em>intent</em> verdicts — the user telling the agent whether an
+      intent was satisfied. They are not a memory or insight promotion
+      gate; insight promotion is faithfulness-gated and outcome-driven.</p>
+    </div>
+
+    <h2 id="expertise"><code>rlat expertise build</code></h2>
+    <p>
+      Render the <em>expertise primer</em> — the earned synthesis of the
+      memory and intent layers — to disk (default
+      <code>.claude/expertise.md</code>) so the agent reads it on session
+      start.
+    </p>
+    <pre><code>rlat expertise build [--out PATH] [--max-intents N] [--max-memory-rows N]</code></pre>
+
+    <h2 id="workspace"><code>rlat workspace</code></h2>
+    <p>
+      Resolve or declare the per-project workspace identity the harness
+      uses for memory and intent tagging.
+    </p>
+    <pre><code>rlat workspace status                  # show the resolved identity + its source
+rlat workspace declare --name my-proj  # write a workspace declaration override</code></pre>
+  </section>
+
+  <section id="lens">
+    <div class="section-num">11 — Lens</div>
+    <h2><code>rlat lens &lt;subcommand&gt;</code></h2>
+    <p>
+      Manage <code>.lens</code> artefacts — a saved perspective that
+      reweights retrieval. The <a href="claim-system.html">claim system</a> page is the
+      full guide.
+    </p>
+    <table class="compact">
+      <thead><tr><th>Subcommand</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>create</code></td><td>Create a new empty lens (<code>--id</code>, <code>--name</code>, <code>--scope</code>, optional <code>--stance</code> file).</td></tr>
+        <tr><td><code>show</code></td><td>Inspect a <code>.lens</code> file.</td></tr>
+        <tr><td><code>compose</code></td><td>Combine two or more lenses into one.</td></tr>
+      </tbody>
+    </table>
+    <pre><code>rlat lens create --id team-a --name "Team A" --scope team -o team-a.lens
+rlat lens set-trust team-a.lens "docs/external/*" 0.2   # suppress external docs
+rlat lens set-trust team-a.lens "src/*" 2.0             # boost first-party source
+rlat lens set-trust team-a.lens "src/*" --remove        # drop a weight again
+rlat lens show team-a.lens
+rlat search my-corpus.rlat "..." --lens team-a.lens</code></pre>
+  </section>
+
+  <section id="fabric">
+    <div class="section-num">12 — Fabric</div>
+    <h2><code>rlat fabric</code></h2>
+    <p>
+      Manage the <code>fabric://&lt;alias&gt;</code> aliases used by
+      <code>rlat search fabric://...</code>. Each alias maps to a
+      Microsoft Fabric User Data Function endpoint URL.
+    </p>
+    <pre><code>rlat fabric add team=https://&lt;udf-endpoint-url&gt;   # register an alias + scaffold the skill
+rlat fabric list                                   # show all registered aliases
+rlat fabric remove team                            # drop an alias
+rlat fabric publish-rlat ./team-docs.rlat \        # maintainer: upload .rlat + update the manifest
+    --workspace &lt;ws-id&gt; --lakehouse &lt;lh-id&gt;</code></pre>
+    <p>
+      Each <code>add</code> / <code>remove</code> rewrites a
+      <code>rlat-fabric-search</code> skill under
+      <code>.claude/skills/</code> so Claude Code's skill list reflects
+      the current alias set. The first <code>fabric://</code> query mints
+      a Microsoft Entra token — device-code flow by default, with a
+      service-principal fallback when the Azure environment variables are
+      set. See the <a href="fabric.html">Fabric</a> page for the
+      end-to-end setup.
+    </p>
+  </section>
+
+  <section id="next">
+    <h2>What's next</h2>
+    <div class="next">
+      <a href="getting-started.html">
+        <span class="next-label">Next</span><br>
+        <span class="next-title">Getting started</span>
+      </a>
+      <a href="storage-modes.html">
+        <span class="next-label">Then</span><br>
+        <span class="next-title">Storage modes</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="bar">
+    <p>Resonance Lattice documentation · current as of 2026-06-11 ·
+    <a href="index.html">all docs</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

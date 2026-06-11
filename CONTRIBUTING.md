@@ -22,9 +22,9 @@ rlat install-encoder
 ```
 
 The `[dev]` extra pulls `pytest`, `ruff`, and `pyright`. The `[bench]`
-extra pulls the user-bench reproducibility harness. The `[build]` and
-`[optimise]` extras pull `transformers + torch` (only needed for
-`rlat build` / `rlat optimise`, not for read-side workflows).
+extra pulls the user-bench reproducibility harness. The `[build]` extra
+pulls `transformers + torch` (only needed for `rlat build`, not for
+read-side workflows).
 
 Re-run `pip install -e .` after changing CLI argparse wiring or extras
 — editable installs cache console-script entry points.

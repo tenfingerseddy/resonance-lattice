@@ -11,16 +11,21 @@
 my-corpus.rlat                    (ZIP archive, no internal compression)
 ├── metadata.json                 -- Metadata (see below)
 ├── passages.jsonl                -- one PassageCoord per line, in passage_idx order
+├── insight.jsonl                 -- one insight Claim per line             (optional)
 ├── bands/
 │   ├── base.npz                  -- (N, 768) float32, L2-normalised
-│   ├── optimised.npz            -- (N, 512) float32, L2-normalised   (optional)
-│   └── optimised_W.npz          -- (512, 768) float32 MRL projection (paired with optimised)
+│   └── insight.npz               -- (M, 768) float32, L2-normalised        (optional)
 ├── ann/
 │   ├── base.faiss                -- FAISS HNSW index for base band
-│   └── optimised.faiss          -- FAISS HNSW index for optimised band (when present)
+│   └── insight.faiss             -- FAISS HNSW index for insight band      (when present)
 └── source/                       -- only if metadata.store_mode == "bundled"
     └── ...                       -- zstd-framed source files, flat layout
 ```
+
+There are exactly two bands. `base` is always present. `insight` is the
+optional per-corpus insight/claims layer — added by the insight pass, cleared
+when empty. When an insight layer is present the archive also carries
+`insight.jsonl` (one insight `Claim` per line, in band-row order).
 
 ZIP internal compression is **disabled** — NPZ files are already deflate-compressed and ZIP-on-ZIP is wasted CPU. Central-directory overhead is a few KB.
 
@@ -48,21 +53,17 @@ The example below is **shown logically**; on disk `to_json` emits keys in alpha-
       "l2_norm": true,
       "passage_count": 39235
     },
-    "optimised": {
-      "role": "in_corpus_retrieval",
-      "dim": 512,
+    "insight": {
+      "role": "insight_layer",
+      "dim": 768,
       "l2_norm": true,
-      "passage_count": 39235,
-      "dim_native": 512,
-      "w_shape": [512, 768],
-      "nested_mrl_dims": [64, 128, 256, 512],
-      "trained_from": "bands/base.npz"
+      "passage_count": 412
     }
   },
   "store_mode": "bundled",
   "ann": {
-    "base":       { "type": "hnsw", "M": 32, "efConstruction": 200, "efSearch": 128 },
-    "optimised": { "type": "hnsw", "M": 32, "efConstruction": 200, "efSearch": 128 }
+    "base":    { "type": "hnsw", "M": 32, "efConstruction": 200, "efSearch": 128 },
+    "insight": { "type": "hnsw", "M": 32, "efConstruction": 200, "efSearch": 128 }
   },
   "build_config": {
     "chunker": "passage_v1",
@@ -80,8 +81,7 @@ The example below is **shown logically**; on disk `to_json` emits keys in alpha-
 
 - **`format_version`** — single integer, bumped only for breaking on-disk-layout changes. v4 is current.
 - **`backbone.revision`** — 40-char HF commit hash, populated from `install.encoder.PINNED_REVISION` at build. **Cross-knowledge-model retrieval depends on this matching across models** (the base bands must be byte-comparable). Two knowledge models built at different revisions can both load, but `rlat compare` should refuse them or downgrade — Phase 3 #29 nails the exact policy.
-- **`bands.<name>`** — keyed by band name. `base` is required for any usable knowledge model. `optimised` is absent when `rlat optimise` hasn't run; reader code branches on dict presence, not on a flag.
-- **`bands.optimised.w_shape`** — recorded explicitly so the W matrix shape is authoritative. JSON has no tuple type; `from_json` restores `tuple` from the JSON array invariant.
+- **`bands.<name>`** — keyed by band name. `base` is required for any usable knowledge model. `insight` is absent until a corpus has an insight layer; reader code branches on dict presence, not on a flag. `BandInfo` carries only `role`, `dim`, `l2_norm`, `passage_count` (`store/metadata.py`); unknown per-band keys round-trip through `BandInfo._extras` so a future band slot can't be dropped by an older reader.
 - **`store_mode`** — single string per the three options. Mode-switching after build requires rewriting the file.
 - **`ann.<band>`** — present iff `bands.<band>.passage_count > ANN_THRESHOLD_N` (=5000). Phase 1 #14 audit locked `{type: "hnsw", M: 32, efC: 200, efS: 128}`; the field stays declarative so a future ANN swap (Phase 7+) can record different params per band.
 - **`build_config`** — `dict[str, Any]` for forward-compat. Phase 2 audits 03 + 05 will populate the canonical chunker / format keys; future build-time options land here without bumping the format.
@@ -99,7 +99,7 @@ np.savez_compressed(
 
 The L2-normalisation invariant is enforced at write time (`store.bands.write_band` runs `_runtime_common.l2_normalize` defensively on a copy of the caller's array); it's not re-checked at load to keep the load path fast. Consumers can `assert np.allclose(np.linalg.norm(band, axis=1), 1.0, atol=1e-5)` if they want to verify.
 
-The optimised W matrix lives in its own NPZ at `bands/optimised_W.npz` so `store.bands.load_optimised` can return `(band, W)` atomically — both are needed for query-time projection.
+`store.bands` exports exactly two entry points — `load_base` (read `bands/base.npz`) and `write_band` (write any band slot). The optional `insight` band is written through the same `write_band` path under `bands/insight.npz`; there is no separate loader or projection matrix.
 
 ## passages.jsonl format
 

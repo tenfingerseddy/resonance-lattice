@@ -8,7 +8,6 @@ insight, and doesn't bloat the layer past the growth cap.
 Architecture §7. Applied at every promotion interface:
 
   memory synthesis_candidate → corpus insight (this module)
-  lens private_insights → shared corpus insight (this module)
   insight kind → higher kind (this module, future)
 
 This module is a pure-function test. The promotion pipeline (sibling
@@ -18,21 +17,33 @@ writes the survivors back to the .rlat via `write_insight_layer_in_place`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, Sequence
 
 import numpy as np
 
 from ..field.dense import topk_indices
-from .insight import InsightPassage
+from ..state.claim import Claim
 from .registry import PassageCoord
 
 # Default parameters — tunable from the engineering spec once empirical
 # data from the validation wave informs the right values.
 DEFAULT_TOP_K = 10
-DEFAULT_GROWTH_CAP = 0.001          # ≤ 0.1% layer growth per promotion
-DEFAULT_MIN_DISTINCT_SOURCES = 2    # anti-paraphrase guard
-DEFAULT_DUPLICATE_THRESHOLD = 0.95  # semantic-duplicate cosine cutoff
+# Size cap is CORPUS-RELATIVE: the insight layer may hold up to a fraction of the
+# source corpus as distilled claims, with an absolute floor so small corpora aren't
+# starved. (The prior band-self-relative ratio cap of 0.001 throttled any fresh band
+# to exactly ONE claim — every claim after the first failed as `bloat` because
+# growing 1→2 is +100% — confirmed deterministically 2026-06-04. Corpus-relative
+# means small corpora stay small, big ones scale, and it is never the binding gate;
+# the paraphrase + duplicate guards do the real quality control.)
+DEFAULT_BAND_CORPUS_FRACTION = 0.25  # band ≤ 25% of source passages …
+DEFAULT_BAND_MIN_CLAIMS = 128        # … but always allow at least this many
+# These are deliberately GENEROUS: the size cap is a runaway-growth backstop, never a
+# quality gate (the paraphrase + duplicate + coverage guards decide what is worth
+# keeping). On any realistic corpus the loop's cloud-authoring cost and the duplicate
+# guard bind long before this cap, so it never hampers results.
+DEFAULT_MIN_DISTINCT_SOURCES = 2     # anti-paraphrase guard
+DEFAULT_DUPLICATE_THRESHOLD = 0.95   # semantic-duplicate cosine cutoff
 
 # Outcome reasons returned in CompressionTestResult.reason. Centralised so
 # callers can match on them without typo risk; the promotion pipeline's
@@ -66,7 +77,7 @@ class CompressionTestResult:
     coverage_delta: float           # with - without
     distinct_sources: int
     nearest_duplicate_score: float  # max cosine vs existing insight band; -inf if none
-    growth_ratio: float             # |layer_with| / max(1, |layer_without|)
+    growth_ratio: float             # band share of corpus: (band_size + 1) / corpus_size
 
 
 def _recall_at_k(
@@ -96,13 +107,15 @@ def _top_k_source(
 
 def _top_k_insight_supporting_ids(
     query: np.ndarray, insight_band: np.ndarray | None,
-    insights: list[InsightPassage], top_k: int,
+    insights: list[Claim], top_k: int,
 ) -> frozenset[str]:
-    """Top-K insight rows' supporting source passage_ids.
+    """Top-K corpus claims' supporting source passage_ids.
 
-    An insight contributes the union of its cited source passages —
+    A corpus claim contributes the union of its cited source passages —
     that's how it "covers" a query. Used to merge insight reach into the
-    coverage calculation.
+    coverage calculation. An experience claim in the unified band has no
+    citations and contributes no source coverage, so it is skipped (its
+    `facts` carries no `citations` field to read).
     """
     if insight_band is None or insight_band.shape[0] == 0:
         return frozenset()
@@ -110,7 +123,10 @@ def _top_k_insight_supporting_ids(
     top_idx = topk_indices(scores, min(top_k, insight_band.shape[0]))
     out: set[str] = set()
     for i in top_idx:
-        for c in insights[int(i)].citations:
+        claim = insights[int(i)]
+        if claim.source != "corpus":
+            continue
+        for c in claim.facts.citations:
             out.add(c.passage_id)
     return frozenset(out)
 
@@ -120,7 +136,7 @@ def _measure_coverage(
     source_band: np.ndarray,
     source_registry: list[PassageCoord],
     insight_band: np.ndarray | None,
-    insights: list[InsightPassage],
+    insights: list[Claim],
     top_k: int,
 ) -> float:
     """Mean recall@K over all queries — source top-K ∪ insight-citation reach."""
@@ -138,18 +154,20 @@ def _measure_coverage(
 
 
 def run_compression_test(
-    candidate: InsightPassage,
+    candidate: Claim,
     candidate_embedding: np.ndarray,
     source_band: np.ndarray,
     source_registry: list[PassageCoord],
     insight_band: np.ndarray | None,
-    insights: list[InsightPassage],
+    insights: list[Claim],
     queries: list[QueryRecord],
     *,
     top_k: int = DEFAULT_TOP_K,
-    growth_cap: float = DEFAULT_GROWTH_CAP,
+    band_corpus_fraction: float = DEFAULT_BAND_CORPUS_FRACTION,
+    band_min_claims: int = DEFAULT_BAND_MIN_CLAIMS,
     min_distinct_sources: int = DEFAULT_MIN_DISTINCT_SOURCES,
     duplicate_threshold: float = DEFAULT_DUPLICATE_THRESHOLD,
+    require_lift: bool = True,
 ) -> CompressionTestResult:
     """Decide whether a candidate insight earns promotion.
 
@@ -161,15 +179,28 @@ def run_compression_test(
     2. semantic-duplicate — `candidate_embedding` cosine vs every
        existing insight in the layer must stay below
        `duplicate_threshold`
-    3. growth cap — layer growth ratio after add must be ≤ 1 + growth_cap
+    3. size cap — the band may hold at most
+       `max(band_min_claims, band_corpus_fraction × corpus_size)` claims
+       (corpus-relative + floor; never the binding gate in practice)
     4. coverage delta — coverage_with ≥ coverage_without on the
        provided query records
     5. signed coverage — coverage_delta ≥ 0 (no regression)
 
     Pure — does not mutate inputs. Returns a structured result so the
     caller (the promotion pipeline) can log reasons for rejection.
+
+    Corpus-only: the test is a citation-coverage gate, so the candidate must
+    be a corpus claim. Experience claims earn `active` through their own
+    recurrence + outcome gate (`state.claim_lifecycle.consolidate_experience`),
+    never this one — a non-corpus candidate is a routing error and raises.
     """
-    distinct_sources = len({c.passage_id for c in candidate.citations})
+    if candidate.source != "corpus":
+        raise TypeError(
+            f"run_compression_test gates corpus claims only; got candidate "
+            f"source={candidate.source!r} (experience claims earn promotion "
+            f"via consolidate_experience)"
+        )
+    distinct_sources = len({c.passage_id for c in candidate.facts.citations})
 
     # Guard 1 — anti-paraphrase
     if distinct_sources < min_distinct_sources:
@@ -195,14 +226,36 @@ def run_compression_test(
                 growth_ratio=1.0,
             )
 
-    # Guard 3 — growth cap
+    # Guard 3 — size cap (corpus-relative + floor). The band may hold up to
+    # `band_corpus_fraction` of the source corpus as distilled claims, but always at
+    # least `band_min_claims` so a small corpus isn't starved. `growth_ratio` is now
+    # the band's share of the corpus (band_size / corpus_size) for reporting.
     existing_count = insight_band.shape[0] if insight_band is not None else 0
-    growth = (existing_count + 1) / max(1, existing_count)
-    # A first-ever promotion has growth ratio 2.0 (1/1). Treat the empty
-    # layer as a special case so the cap doesn't reject the first row.
-    if existing_count > 0 and (growth - 1.0) > growth_cap:
+    n_source = max(1, source_band.shape[0])
+    max_band = max(band_min_claims, int(band_corpus_fraction * n_source))
+    growth = (existing_count + 1) / n_source
+    if existing_count + 1 > max_band:
         return CompressionTestResult(
             passed=False, reason="bloat",
+            coverage_with=0.0, coverage_without=0.0, coverage_delta=0.0,
+            distinct_sources=distinct_sources,
+            nearest_duplicate_score=nearest,
+            growth_ratio=growth,
+        )
+
+    # External fills fill a TRUE gap: their citations are non-corpus sources (URLs),
+    # so the corpus-COVERAGE guards (4+5) are inapplicable — they measure recall of
+    # cited passages WITHIN the corpus, which a hole-filler covers by ~0 design, so
+    # they would always reject it. Such a claim earns promotion on the diversity +
+    # novelty + size guards alone (guards 1-3, just cleared), being already
+    # faithfulness-gated to its ≥2 AGREEING external sources upstream (external_fill).
+    # This mirrors the "pass on diversity alone" branch below (the no-coverage-data
+    # case). Triggers ONLY when every citation is external — corpus claims stay fully
+    # coverage-gated.
+    from .insight import all_external
+    if all_external(candidate.facts.citations):
+        return CompressionTestResult(
+            passed=True, reason="passed_external",
             coverage_with=0.0, coverage_without=0.0, coverage_delta=0.0,
             distinct_sources=distinct_sources,
             nearest_duplicate_score=nearest,
@@ -239,7 +292,15 @@ def run_compression_test(
     # We treat that as a "pass on diversity alone" — the test can't reject
     # for lack of coverage data, but the candidate has cleared the
     # paraphrase, duplicate, and bloat guards.
-    if delta == 0 and queries:
+    #
+    # `require_lift=False` relaxes only the no-lift rejection (regression
+    # still fails above): with a verdict-anchored PRIOR-demand query set
+    # (roadmap 4.3), delta == 0 is the expected case for a novel-topic
+    # fill — it covers demand the set doesn't contain yet. Demanding lift
+    # there would reject legitimate synthesis whose sources are already
+    # retrievable (synthesis value != routing value; the measured +0.082
+    # full-doc authoring lift exists even when sources rank in top-K).
+    if delta == 0 and queries and require_lift:
         return CompressionTestResult(
             passed=False, reason="no_lift",
             coverage_with=cov_with, coverage_without=cov_without,

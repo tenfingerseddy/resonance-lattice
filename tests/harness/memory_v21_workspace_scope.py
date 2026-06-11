@@ -46,6 +46,43 @@ from ._testutil import FixedEncoder, ZeroEncoder, patch_zero_encoder
 _COLLISION_CACHE = Path(__file__).resolve().parent / "_fixtures" / "workspace_collision.json"
 
 
+def _write_claim(store, *, idx: int, text: str, polarity: list[str],
+                 embedding: np.ndarray, recurrence: int = 5) -> str:
+    """Write one experience `Claim` with a planted embedding.
+
+    The successor to the suite's old `add_row(...) + update_row(...,
+    recurrence_count=...)` pair, over `ExperienceClaimStore`.
+    """
+    from resonance_lattice.memory.store import seed_tallies_for_rung
+    from resonance_lattice.state.claim import Claim, ExperienceFacts
+
+    corr, fals = seed_tallies_for_rung("medium")
+    claim = Claim(
+        claim_id=f"01HZWORKSPACEFIXTURE{idx:08d}",
+        source="experience",
+        kind="event",
+        content=text,
+        created_at="2026-05-18T00:00:00Z",
+        corroboration=corr,
+        falsification=fals,
+        trust_as_of="",
+        state="active",
+        parent_ids=(),
+        facts=ExperienceFacts(
+            polarity=tuple(polarity),
+            recurrence_count=recurrence,
+            criticality="normal",
+            created_under_intent_kind="none",
+            transcript_hash="manual",
+            origin="manual",
+            last_corroborated_at="2026-05-18T00:00:00Z",
+            is_bad=False,
+        ),
+    )
+    store.write(claim, embedding=embedding)
+    return claim.claim_id
+
+
 # ---------------------------------------------------------------------------
 # (a) Capture stamps workspace:<sha256[:6](cwd)>
 # ---------------------------------------------------------------------------
@@ -57,7 +94,7 @@ def _check_capture_stamp() -> int:
     )
     from resonance_lattice.memory._common import workspace_hash
     from resonance_lattice.memory.redaction import Redactor
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     cwd = "/home/test/proj-alpha"
     expected_tag = f"workspace:{workspace_hash(cwd)}"
@@ -73,23 +110,23 @@ def _check_capture_stamp() -> int:
     )
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u", encoder=ZeroEncoder())
+        memory = ExperienceClaimStore(root=Path(td) / "u", encoder=ZeroEncoder())
         redactor = Redactor()
         result = capture(transcript, store=memory, redactor=redactor)
-        if not result.row_id:
+        if not result.claim_ids:
             print(f"[memory_v21_workspace_scope] FAIL (a): capture skipped: "
                   f"{result.skip_reason}", file=sys.stderr)
             return 1
-        rows, _ = memory.read_all()
-        captured = next(r for r in rows if r.row_id == result.row_id)
-        if expected_tag not in captured.polarity:
+        claims = memory.read_all()
+        captured = next(c for c in claims if c.claim_id == result.claim_ids[0])
+        if expected_tag not in captured.facts.polarity:
             print(f"[memory_v21_workspace_scope] FAIL (a): expected tag "
-                  f"{expected_tag} in polarity; got {captured.polarity}",
+                  f"{expected_tag} in polarity; got {captured.facts.polarity}",
                   file=sys.stderr)
             return 1
         # Tag must use the canonical 6-char hex shape — falsifies
         # accidental collisions of `workspace:<full-hash>` vs `[:6]`.
-        for tag in captured.polarity:
+        for tag in captured.facts.polarity:
             if tag.startswith("workspace:") and len(tag) != len("workspace:") + 6:
                 print(f"[memory_v21_workspace_scope] FAIL (a): tag has "
                       f"non-canonical length: {tag!r} (expected "
@@ -107,49 +144,48 @@ def _check_capture_stamp() -> int:
 
 def _check_recall_scope() -> int:
     from resonance_lattice.memory.recall import rank
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
+        memory = ExperienceClaimStore(root=Path(td) / "u", encoder=None)
         # Two rows in different workspaces, both above all gates.
         rng = np.random.default_rng(0)
         query = rng.standard_normal(768).astype("float32")
         query /= np.linalg.norm(query)
 
-        for tag, text in [
+        for i, (tag, text) in enumerate([
             ("workspace:aaaaaa", "alpha workspace row"),
             ("workspace:bbbbbb", "bravo workspace row"),
-        ]:
+        ]):
             ortho = rng.standard_normal(768).astype("float32")
             ortho -= (ortho @ query) * query
             ortho /= np.linalg.norm(ortho)
             emb = 0.85 * query + (1 - 0.85**2)**0.5 * ortho
             emb /= np.linalg.norm(emb)
-            rid = memory.add_row(text=text, polarity=["prefer", tag],
-                                  transcript_hash=text, embedding=emb)
-            memory.update_row(rid, recurrence_count=5)
+            _write_claim(memory, idx=i, text=text,
+                         polarity=["prefer", tag], embedding=emb)
 
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
         # Caller scoped to alpha — only alpha row should survive.
-        alpha_hits = rank("q", rows=rows, band=band, encoder=FixedEncoder(query),
+        alpha_hits = rank("q", claims=claims, band=band, encoder=FixedEncoder(query),
                            cwd_hash="aaaaaa")
-        if len(alpha_hits) != 1 or alpha_hits[0].row.text != "alpha workspace row":
+        if len(alpha_hits) != 1 or alpha_hits[0].claim.content != "alpha workspace row":
             print(f"[memory_v21_workspace_scope] FAIL (b): cwd=aaaaaa "
                   f"expected only alpha; got "
-                  f"{[h.row.text for h in alpha_hits]}", file=sys.stderr)
+                  f"{[h.claim.content for h in alpha_hits]}", file=sys.stderr)
             return 1
 
         # Caller scoped to bravo — only bravo row should survive.
-        bravo_hits = rank("q", rows=rows, band=band, encoder=FixedEncoder(query),
+        bravo_hits = rank("q", claims=claims, band=band, encoder=FixedEncoder(query),
                            cwd_hash="bbbbbb")
-        if len(bravo_hits) != 1 or bravo_hits[0].row.text != "bravo workspace row":
+        if len(bravo_hits) != 1 or bravo_hits[0].claim.content != "bravo workspace row":
             print(f"[memory_v21_workspace_scope] FAIL (b): cwd=bbbbbb "
                   f"expected only bravo; got "
-                  f"{[h.row.text for h in bravo_hits]}", file=sys.stderr)
+                  f"{[h.claim.content for h in bravo_hits]}", file=sys.stderr)
             return 1
 
         # Caller scoped to a third workspace — no rows survive.
-        empty_hits = rank("q", rows=rows, band=band, encoder=FixedEncoder(query),
+        empty_hits = rank("q", claims=claims, band=band, encoder=FixedEncoder(query),
                            cwd_hash="cccccc")
         if empty_hits:
             print(f"[memory_v21_workspace_scope] FAIL (b): cwd=cccccc "
@@ -168,10 +204,10 @@ def _check_recall_scope() -> int:
 
 def _check_cross_workspace_bypass() -> int:
     from resonance_lattice.memory.recall import rank
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
+        memory = ExperienceClaimStore(root=Path(td) / "u", encoder=None)
         rng = np.random.default_rng(1)
         query = rng.standard_normal(768).astype("float32")
         query /= np.linalg.norm(query)
@@ -182,22 +218,21 @@ def _check_cross_workspace_bypass() -> int:
              "cross plus workspace"),
             (["prefer", "workspace:aaaaaa"], "workspace-only"),
         ]
-        for polarity, text in cases:
+        for i, (polarity, text) in enumerate(cases):
             ortho = rng.standard_normal(768).astype("float32")
             ortho -= (ortho @ query) * query
             ortho /= np.linalg.norm(ortho)
             emb = 0.90 * query + (1 - 0.90**2)**0.5 * ortho
             emb /= np.linalg.norm(emb)
-            rid = memory.add_row(text=text, polarity=polarity,
-                                  transcript_hash=text, embedding=emb)
-            memory.update_row(rid, recurrence_count=5)
+            _write_claim(memory, idx=i, text=text,
+                         polarity=polarity, embedding=emb)
 
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
         # Caller in unrelated workspace — only cross-workspace rows
         # should bypass.
-        unrelated = rank("q", rows=rows, band=band, encoder=FixedEncoder(query),
+        unrelated = rank("q", claims=claims, band=band, encoder=FixedEncoder(query),
                           cwd_hash="zzzzzz", top1_top2_gap=0.0)
-        text_set = {h.row.text for h in unrelated}
+        text_set = {h.claim.content for h in unrelated}
         if "cross-only" not in text_set:
             print(f"[memory_v21_workspace_scope] FAIL (c): cross-only row "
                   f"didn't bypass workspace filter; got {text_set}",
@@ -255,7 +290,7 @@ def _find_collision_pair() -> tuple[str, str, str]:
 def _check_collision_behaviour() -> int:
     from resonance_lattice.memory._common import workspace_hash
     from resonance_lattice.memory.recall import rank
-    from resonance_lattice.memory.store import Memory
+    from resonance_lattice.memory.claim_store import ExperienceClaimStore
 
     path_a, path_b, shared_hash = _find_collision_pair()
     # Sanity-check the collision still holds.
@@ -270,34 +305,34 @@ def _check_collision_behaviour() -> int:
         return 1
 
     with tempfile.TemporaryDirectory() as td:
-        memory = Memory(root=Path(td) / "u")
+        memory = ExperienceClaimStore(root=Path(td) / "u", encoder=None)
         rng = np.random.default_rng(7)
         query = rng.standard_normal(768).astype("float32")
         query /= np.linalg.norm(query)
 
         # Two rows with the colliding workspace tag — both stamped from
         # different cwd paths but landing on the same hash.
-        for label in ("from-path-a", "from-path-b"):
+        for i, label in enumerate(("from-path-a", "from-path-b")):
             ortho = rng.standard_normal(768).astype("float32")
             ortho -= (ortho @ query) * query
             ortho /= np.linalg.norm(ortho)
             emb = 0.85 * query + (1 - 0.85**2)**0.5 * ortho
             emb /= np.linalg.norm(emb)
-            rid = memory.add_row(
-                text=label, polarity=["prefer", f"workspace:{shared_hash}"],
-                transcript_hash=label, embedding=emb,
+            _write_claim(
+                memory, idx=i, text=label,
+                polarity=["prefer", f"workspace:{shared_hash}"],
+                embedding=emb,
             )
-            memory.update_row(rid, recurrence_count=5)
 
-        rows, band = memory.read_all()
+        claims, band = memory.read_all_with_band()
         # Caller from path_a sees both rows (since the hash collides).
         # The §18.3 contract for MVP is "no silent bleed beyond the
         # cwd_hash equality check" — under collision, hash equality
         # *does* match, so both rows surface. Diagnostic detection of
         # the underlying-cwd mismatch is post-MVP.
-        hits = rank("q", rows=rows, band=band, encoder=FixedEncoder(query),
+        hits = rank("q", claims=claims, band=band, encoder=FixedEncoder(query),
                      cwd_hash=shared_hash, top1_top2_gap=0.0)
-        text_set = {h.row.text for h in hits}
+        text_set = {h.claim.content for h in hits}
         if text_set != {"from-path-a", "from-path-b"}:
             print(f"[memory_v21_workspace_scope] FAIL (d): expected both "
                   f"colliding rows to surface under shared hash; got "

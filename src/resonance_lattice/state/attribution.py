@@ -17,9 +17,12 @@ cheap heuristic (per-tool body cosine probe) or LLM judgement, both
 deferred behind the rank-based first cut. The architecture's tier rule
 collapses cleanly when alignment is unknown:
 
-  rank ≤ 2  → primary    (architecture: AND alignment high)
-  rank ≤ 5  → secondary  (architecture: AND alignment non-trivial)
+  rank < 2  → primary    (ranks {0,1}; architecture: AND alignment high)
+  rank < 5  → secondary  (ranks {2,3,4}; architecture: AND alignment non-trivial)
   else      → incidental
+
+(Strict `<` against the cutoffs below — `_tier_for_rank` is the source of
+truth; the 0-based ranks make top-2 = primary, matching the band ranker.)
 
 Without alignment evidence the attribution is "best-effort upper bound" —
 a row that ranked high but didn't shape the action gets primary credit
@@ -30,7 +33,7 @@ threshold; one misattributed primary doesn't move the needle.
 
 from __future__ import annotations
 
-from .ledger import Attribution
+from .claim_outcome import Attribution
 from .recall_cache import RecallEntry
 
 # Tier cutoffs — rank-based v1; engineering-spec tunable.
@@ -64,17 +67,17 @@ def attribution_from_entries(
     for entry in entries:
         for hit in entry.row_metadata:
             tier = _tier_for_rank(hit.rank)
-            current = best_tier.get(hit.row_id)
+            current = best_tier.get(hit.claim_id)
             if current is None or tier_priority[tier] > tier_priority[current]:
-                best_tier[hit.row_id] = tier
-                best_rank[hit.row_id] = hit.rank
-                best_cosine[hit.row_id] = hit.cosine
+                best_tier[hit.claim_id] = tier
+                best_rank[hit.claim_id] = hit.rank
+                best_cosine[hit.claim_id] = hit.cosine
     return [
         Attribution(
-            row_id=row_id,
-            tier=best_tier[row_id],
-            recall_rank=best_rank[row_id],
-            cosine=best_cosine[row_id],
+            claim_id=claim_id,
+            tier=best_tier[claim_id],
+            recall_rank=best_rank[claim_id],
+            cosine=best_cosine[claim_id],
         )
-        for row_id in best_tier
+        for claim_id in best_tier
     ]

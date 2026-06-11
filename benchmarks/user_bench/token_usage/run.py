@@ -13,7 +13,7 @@ Compares four real-world approaches an AI-assistant developer might pick:
 LLM judge (Sonnet 4.6 with locked rubric) scores each answer correct/partial/
 wrong. Headline metric: tokens-per-correct-answer, $-per-correct-answer.
 
-Reuses `discover_api_key` from synth_queries for env-var resolution.
+Reuses `discover_api_key` from `_anthropic` for env-var resolution.
 
 Usage:
   export CLAUDE_API=sk-ant-...
@@ -72,8 +72,8 @@ class Trial:
 
 
 def _client():
-    """Reuse the same env-var resolution chain the optimise pipeline uses."""
-    from resonance_lattice.optimise.synth_queries import discover_api_key
+    """Reuse the same env-var resolution chain the LLM commands use."""
+    from resonance_lattice._anthropic import discover_api_key
     import anthropic
     key = discover_api_key()
     if not key:

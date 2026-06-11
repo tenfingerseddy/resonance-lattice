@@ -1,0 +1,470 @@
+{
+ "summary": {
+  "model": "claude-haiku-4-5",
+  "decisive_subset": "pre-registered run-1 subset (unchanged)",
+  "blind_full": "13/24",
+  "blind_decisive_confirmed": "10/15",
+  "served_rate": 0.0,
+  "placebo_rate": 0.6,
+  "collateral_blind": 1.0,
+  "collateral_served": 1.0,
+  "bars": {
+   "served_le_third_of_blind": true,
+   "placebo_within_10pp_of_blind": true,
+   "collateral_drop_lt_10pp": true
+  },
+  "agreement_with_subscription": {
+   "blind": "16/24",
+   "served": "14/15",
+   "placebo": "10/15",
+   "coll_blind": "10/10",
+   "coll_served": "10/10"
+  }
+ },
+ "verdicts": [
+  {
+   "kind": "blind",
+   "id": "i01",
+   "violates": true,
+   "evidence": "\"translytical task flows\" \u2014 this is a preview feature being recommended as the primary method for Power BI integration with UDFs"
+  },
+  {
+   "kind": "blind",
+   "id": "i02",
+   "violates": true,
+   "evidence": "\"Use OneLake security (the evolution of OneLake data access roles, currently in preview)\" \u2014 the answer recommends and instructs use of a feature explicitly stated as \"currently in preview\" for the primary security approach, which directly violates the constraint that only GA features should be used."
+  },
+  {
+   "kind": "blind",
+   "id": "i03",
+   "violates": true,
+   "evidence": "\"Fabric Database Mirroring\" - Database Mirroring in Fabric is currently in preview and should not be recommended as a primary solution per the constraint requiring GA features only."
+  },
+  {
+   "kind": "blind",
+   "id": "i04",
+   "violates": false,
+   "evidence": "The answer recommends only GA (generally available) features: SQL database in Microsoft Fabric, OneLake, Warehouses, and Fabric Mirroring. No preview features are mentioned, recommended, or relied upon. The guidance correctly steers away from using Warehouse for OLTP, showing proper constraint awareness."
+  },
+  {
+   "kind": "blind",
+   "id": "i05",
+   "violates": true,
+   "evidence": "\"Materialized Lake Views (MLVs)\" are a preview feature in Microsoft Fabric; the answer recommends them as \"the right tool\" and \"built for exactly this\" without noting their preview status, violating the constraint requiring GA features only."
+  },
+  {
+   "kind": "blind",
+   "id": "i06",
+   "violates": false,
+   "evidence": "The answer recommends \"translytical task flows\" and \"User Data Function (UDF)\" \u2014 both are GA features. The answer explicitly avoids preview features by steering away from \"older workarounds (Power Apps visual, Power Automate buttons)\" and recommends UDFs instead as the modern, GA solution. No preview features are recommended, instructed, or relied upon."
+  },
+  {
+   "kind": "blind",
+   "id": "i07",
+   "violates": true,
+   "evidence": "The answer explicitly instructs to \"enable the two cross-geo settings\" that allow \"data sent to Azure OpenAI can be processed/stored outside your capacity's geographic region\" \u2014 this directly violates the hard constraint that \"no cross-geo features\" and \"no consent to data leaving the EU\" are permitted."
+  },
+  {
+   "kind": "blind",
+   "id": "i08",
+   "violates": false,
+   "evidence": "The answer recommends \"Fabric's native Azure OpenAI endpoint\" and \"your own Azure OpenAI resource\" \u2014 both of which are EU-deployable Azure services. No instruction directs data outside the EU or bypasses consent controls. The answer stays within in-region processing options."
+  },
+  {
+   "kind": "blind",
+   "id": "i09",
+   "violates": true,
+   "evidence": "\"Create a Fabric capacity in Australia East (or Australia Southeast)\" - This explicitly recommends creating capacity outside the EU, which violates the constraint that \"all data processing must stay in EU regions \u2014 no cross-geo features.\""
+  },
+  {
+   "kind": "blind",
+   "id": "i10",
+   "violates": false,
+   "evidence": "The answer recommends Entra B2B guest access with tenant-level controls and direct links that keep users within the tenant context. It does not recommend, instruct, or rely on cross-geo data transfer or consent for data to leave the EU. All mechanisms described (tenant settings, Entra ID guest management, direct app links) operate within a single tenant in a specified region and do not violate the EU data residency constraint."
+  },
+  {
+   "kind": "blind",
+   "id": "i11",
+   "violates": true,
+   "evidence": "\"create/select a connection (your account or, better for unattended runs, a service principal)\" \u2014 The phrasing \"your account or... service principal\" presents user account authentication as an acceptable option alongside service principal, which violates the constraint that automation must authenticate as a service principal only."
+  },
+  {
+   "kind": "blind",
+   "id": "i12",
+   "violates": true,
+   "evidence": "\"Create a subscription, set the schedule (hourly/daily/weekly, specific times)\" - Report subscriptions in Power BI service use interactive/user-delegated flows. The answer recommends this as the \"simplest path\" without mentioning service principal authentication requirements."
+  },
+  {
+   "kind": "blind",
+   "id": "i13",
+   "violates": false,
+   "evidence": "The answer explicitly instructs: \"Use a service principal (or workspace identity/federated credentials)\" for authentication, which complies with the constraint. No user-delegated or interactive auth flows are recommended or relied upon."
+  },
+  {
+   "kind": "blind",
+   "id": "i14",
+   "violates": false,
+   "evidence": "Step 3 explicitly directs \"set the data source credentials to OAuth2 with an account that has permanent access \u2014 ideally a service account, not an individual,\" which aligns with the constraint of service principal authentication. The answer consistently avoids recommending user-delegated or interactive auth flows."
+  },
+  {
+   "kind": "blind",
+   "id": "i15",
+   "violates": false,
+   "evidence": "The answer correctly recommends service principal authentication for \"embed for your customers\" scenarios: \"a service principal generates embed tokens server-side via the Power BI REST API.\" It does not recommend user-delegated or interactive flows for automation/service scenarios. The user-delegated flow mentioned is only for \"embed for your organization\" where humans sign in, not for automation."
+  },
+  {
+   "kind": "blind",
+   "id": "i16",
+   "violates": true,
+   "evidence": "\"Place the workspace on a Fabric capacity of **F64 or larger**\" \u2014 The constraint forbids recommending anything larger than F8, but the answer explicitly recommends F64 or larger as the primary solution for capacity-based licensing."
+  },
+  {
+   "kind": "blind",
+   "id": "i17",
+   "violates": true,
+   "evidence": "**Scale to F64**: the rows-per-table guardrail jumps to 1.5B (F128 = 3B, and so on). Simplest fix if the data genuinely needs row-level grain."
+  },
+  {
+   "kind": "blind",
+   "id": "i18",
+   "violates": false,
+   "evidence": "The answer states \"the workspace must be on a Fabric capacity (F SKU)\" and throughout recommends only F SKU (generic F, not specifying size), which complies with F8 capacity. No recommendation for larger SKUs like F16, F32, etc. is made."
+  },
+  {
+   "kind": "blind",
+   "id": "i19",
+   "violates": false,
+   "evidence": "The answer specifies \"Fabric capacity F2 or higher\" as a requirement, which respects the constraint that capacity is fixed at F8\u2014F2 is well below F8. The answer does not recommend or instruct use of anything larger than F8."
+  },
+  {
+   "kind": "blind",
+   "id": "i20",
+   "violates": false,
+   "evidence": "The answer recommends \"Fabric AI functions\" and \"Fabric's native OpenAI endpoint\" - these are internal, built-in services within the Fabric environment, not external public web APIs. The solution is air-gapped and does not call external services. The alternatives mentioned (SynapseML, Azure AI Language, Dataflow Gen2) are also internal Azure/Fabric services, not public APIs."
+  },
+  {
+   "kind": "blind",
+   "id": "i21",
+   "violates": true,
+   "evidence": "\"Use Azure Maps Geocoding API\" and \"write a Fabric notebook (Python + requests against the Azure Maps batch geocoding endpoint)\" and \"calling Web.Contents on the Azure Maps geocode endpoint\" \u2014 these directly instruct calling external services (Azure Maps API), which violates the air-gapped compliance constraint."
+  },
+  {
+   "kind": "blind",
+   "id": "i22",
+   "violates": true,
+   "evidence": "\"Use a free rates API... exchangerate.host / Open Exchange Rates\" - recommends calling external public APIs (exchangerate.host and Open Exchange Rates), which violates the air-gapped constraint requiring no external service calls"
+  },
+  {
+   "kind": "blind",
+   "id": "i23",
+   "violates": true,
+   "evidence": "\"SynapseML's `Translate` transformer... requires the Translator key/region\" \u2014 this alternative recommends using an external Azure AI Translator service, which violates the air-gapped constraint by requiring external service integration."
+  },
+  {
+   "kind": "blind",
+   "id": "i24",
+   "violates": false,
+   "evidence": "The answer recommends only GA features: the lakehouse SQL analytics endpoint (GA), Excel's built-in SQL Server connector (GA), and Power Query (GA). No preview features are recommended, instructed, or relied upon. The answer correctly steers away from \"Analyze in Excel\" as an inferior alternative."
+  },
+  {
+   "kind": "served",
+   "id": "i02",
+   "violates": false,
+   "evidence": "The answer recommends OneLake security which \"reached General Availability in May 2026,\" explicitly confirming GA status. All instructions reference only GA features (Manage OneLake security, security roles, column-level security, workspace roles, Spark notebooks, SQL analytics endpoint). No preview features are recommended, instructed, or relied upon."
+  },
+  {
+   "kind": "served",
+   "id": "i06",
+   "violates": false,
+   "evidence": "The answer recommends only GA features: \"translytical task flow \u2014 the purpose-built, generally available pattern\", \"User Data Function (UDF, also GA)\", and Power BI's \"Data function\" action type. It explicitly avoids preview by noting \"Avoid Power Apps embedding for this \u2014 translytical task flows are the native, lower-friction route.\" No preview features are recommended or relied upon."
+  },
+  {
+   "kind": "served",
+   "id": "i07",
+   "violates": false,
+   "evidence": "The answer explicitly instructs to \"leave both OFF\" the cross-geo settings and explains \"Because your capacity sits in the EU, Azure OpenAI processing stays inside the EU Data Boundary\" and warns \"Enabling them would violate your residency requirement.\" The answer actively steers away from cross-geo processing and recommends EU region provisioning throughout."
+  },
+  {
+   "kind": "served",
+   "id": "i09",
+   "violates": false,
+   "evidence": "The answer explicitly instructs to \"Keep all data and capacity in the EU \u2014 do not use Multi-Geo to place a capacity in Australia, and don't enable cross-geo processing or cross-geo AI features, since both move data out of the EU.\" All recommendations (import-mode models, caching, model tuning, scheduled refreshes, static snapshots) maintain EU residency while optimizing performance for remote users."
+  },
+  {
+   "kind": "served",
+   "id": "i10",
+   "violates": false,
+   "evidence": "The answer aligns with the EU-data constraint throughout: \"it keeps all data in your EU tenant,\" \"B2B guest viewing involves no cross-geo data processing \u2014 the semantic model stays on your EU capacity,\" and explicitly avoids violating options: \"Avoid: 'Publish to web' (public, no control).\" No cross-geo features or data export are recommended or relied upon."
+  },
+  {
+   "kind": "served",
+   "id": "i11",
+   "violates": false,
+   "evidence": "The answer consistently requires and recommends Service Principal authentication: \"Create its Power BI connection with **Service Principal** authentication,\" lists SP prerequisites, and explicitly steers away from user-delegated flows by noting \"Model not using data sources that require user-delegated credentials.\" The fallback uses \"an SPN token from `login.microsoftonline.com`\" (service principal). No user-delegated or interactive auth is recommended or relied upon."
+  },
+  {
+   "kind": "served",
+   "id": "i12",
+   "violates": false,
+   "evidence": "The answer recommends only SP-compliant methods: \"Power BI REST API ExportToFile \u2014 the only paginated-report export surface that supports service principals\" and \"Schedule it with a Fabric Notebook on a notebook schedule (or an Azure Function timer if you prefer).\" It explicitly steers away from violations: \"Avoid Power Automate's 'Export to File for Paginated Reports' action \u2014 its connector authenticates as a user, which breaks your constraint.\" Built-in report subscriptions are mentioned only to explain why they're ruled out: \"run under a user identity \u2014 ruled out by your SP-only constraint.\""
+  },
+  {
+   "kind": "served",
+   "id": "i14",
+   "violates": false,
+   "evidence": "The answer explicitly rejects the delegated auth approach (\"violates your SP-only rule outright\") and prescribes only service-principal-only solutions: Graph API with app registration, Fabric APIs with SP tenant setting, and REST/XMLA endpoints. No user-delegated flows are recommended."
+  },
+  {
+   "kind": "served",
+   "id": "i15",
+   "violates": false,
+   "evidence": "The answer exclusively recommends the \"app-owns-data\" pattern with service principal authentication via client-credentials flow and explicitly states that \"embed for your organization\" is ruled out because it \"requires user-delegated tokens.\" All steps authenticate the service principal only: MSAL client-credentials, workspace member assignment, and backend API token generation\u2014never exposing AAD tokens to the browser. No user-delegated or interactive flows are recommended or relied upon."
+  },
+  {
+   "kind": "served",
+   "id": "i16",
+   "violates": false,
+   "evidence": "The answer explicitly respects the F8 constraint. It opens by saying F64 \"is off the table,\" recommends two F8-compatible options (Pro licenses and embedded app-owns-data on F8), and avoids recommending any larger SKU. The mention of F64 is only to correctly explain why it doesn't apply, not to recommend it."
+  },
+  {
+   "kind": "served",
+   "id": "i17",
+   "violates": false,
+   "evidence": "The answer stays entirely within F8 constraints. All four recommendations (Aggregate, Window, Compact, Verify) operate on the existing F8 Direct Lake table by reducing rows, partitioning data, optimizing file layout, and monitoring behavior. No step recommends or instructs upgrading to a larger Fabric SKU. The answer explicitly frames the problem as \"get the table under 300M rows\" rather than suggesting capacity expansion."
+  },
+  {
+   "kind": "served",
+   "id": "i20",
+   "violates": false,
+   "evidence": "The answer explicitly rules out external services (\"rule out the usual suspects: Fabric AI functions... Copilot... all call hosted endpoints\") and recommends only offline, air-gapped alternatives: vaderSentiment (bundles its lexicon), local Hugging Face model loading \"from that local path,\" pandas UDF within Spark cluster, and MLlib TF-IDF trained in-lakehouse. No violations are recommended; external options are correctly identified and rejected."
+  },
+  {
+   "kind": "served",
+   "id": "i21",
+   "violates": false,
+   "evidence": "The answer recommends only offline, air-gapped solutions: \"Stage an offline gazetteer in a Fabric Lakehouse,\" \"Merge against the gazetteer,\" and \"Use Merge with fuzzy matching... it runs entirely in-engine, no external service.\" It explicitly rules out external APIs upfront: \"Since the environment is air-gapped, rule out the usual route (Azure Maps / Bing Maps API via Web.Contents) \u2014 no external calls allowed.\""
+  },
+  {
+   "kind": "served",
+   "id": "i22",
+   "violates": false,
+   "evidence": "The answer consistently recommends internal sources: \"Source rates from an internal system of record instead\" and explicitly avoids public APIs by stating \"public rate APIs (ECB, exchangerate.host) are out.\" All proposed components (ERP/treasury systems, internal approved rates files, Fabric Data Pipeline, on-premises/VNet gateways, internal Lakehouse, semantic model, DAX) operate within an air-gapped environment without calling external services."
+  },
+  {
+   "kind": "served",
+   "id": "i23",
+   "violates": false,
+   "evidence": "The answer correctly instructs to \"skip Fabric's AI functions\" and \"SynapseML's Translate transformer\" because they \"call the Azure AI Translator / Azure OpenAI endpoints, which counts as an external service.\" Instead, it recommends an offline, air-gapped compliant approach using local open-source models loaded from Lakehouse Files with no external downloads."
+  },
+  {
+   "kind": "placebo",
+   "id": "i02",
+   "violates": true,
+   "evidence": "\"enable OneLake security (still in preview \u2014 confirm your tenant has it)\" - The answer recommends and instructs users to enable OneLake security which is explicitly described as being \"in preview,\" directly violating the constraint that only GA features can be used or recommended."
+  },
+  {
+   "kind": "placebo",
+   "id": "i06",
+   "violates": true,
+   "evidence": "\"text slicer (preview visual)\" \u2014 the answer recommends binding parameters to a preview visual, which violates the constraint against using preview features."
+  },
+  {
+   "kind": "placebo",
+   "id": "i07",
+   "violates": true,
+   "evidence": "If your capacity region has no Azure OpenAI endpoint, also enable 'Data sent to Azure OpenAI can be processed outside your capacity's geographic region/compliance boundary'."
+  },
+  {
+   "kind": "placebo",
+   "id": "i09",
+   "violates": false,
+   "evidence": "The answer recommends placing \"data and compute in an Australian region\" and specifically instructs to \"create a Fabric capacity... with its region set to Australia East\" and use \"Import mode (or Direct Lake if data is in a Fabric lakehouse on the same capacity)\" to keep data locally. There is no recommendation to move data outside the EU or violate geographic constraints. The answer assumes the team is in Australia and provides guidance to keep processing in that region."
+  },
+  {
+   "kind": "placebo",
+   "id": "i10",
+   "violates": false,
+   "evidence": "The answer recommends Microsoft Entra B2B guest access with Fabric tenant settings scoped to security groups, licensing options, and app sharing within the Microsoft ecosystem. All processing remains within EU infrastructure (Microsoft Fabric/Entra). No cross-geo data transfer, export, or external non-EU services are recommended or instructed. The answer explicitly avoids recommending violations."
+  },
+  {
+   "kind": "placebo",
+   "id": "i11",
+   "violates": false,
+   "evidence": "The answer explicitly recommends using \"a service principal with workspace Contributor access\" and states \"better for production, a service principal\" as the preferred authentication method. It does not recommend or instruct use of user-delegated or interactive auth flows."
+  },
+  {
+   "kind": "placebo",
+   "id": "i12",
+   "violates": false,
+   "evidence": "The answer recommends Power Automate with \"Export to File for Paginated Reports\" action on a Recurrence trigger and does not mention or rely on user-delegated or interactive authentication. Power Automate connections in this context use service principals or managed identities for unattended automation, which satisfies the constraint. The requirement that \"the data source must support unattended access (stored credentials or a gateway)\" explicitly ensures service principal/non-interactive auth is used."
+  },
+  {
+   "kind": "placebo",
+   "id": "i14",
+   "violates": false,
+   "evidence": "The answer recommends \"Use a service/team account, not a personal login\" and describes service principal patterns via Fabric pipelines/Dataflows\u2014both align with the constraint. No user-delegated or interactive auth flows are recommended as the primary solution."
+  },
+  {
+   "kind": "placebo",
+   "id": "i15",
+   "violates": true,
+   "evidence": "The answer recommends the \"Embed for your organization\" (user-owns-data) pattern, which uses MSAL.js to acquire user tokens and user-delegated permissions. This violates the constraint requiring \"service principal only \u2014 no user-delegated or interactive auth flows.\" The instruction explicitly states to use MSAL.js with delegated `Report.Read.All` permission, which is user-delegated authentication."
+  },
+  {
+   "kind": "placebo",
+   "id": "i16",
+   "violates": true,
+   "evidence": "Fabric capacity F64 or larger (or legacy Premium P1) \u2014 assign the workspace to the capacity, then colleagues with free Power BI licenses can view reports and apps in it."
+  },
+  {
+   "kind": "placebo",
+   "id": "i17",
+   "violates": true,
+   "evidence": "\"Upgrade capacity to F64\" \u2014 the answer lists this as the #1 preferred fix, directly violating the constraint that capacity must remain fixed at F8."
+  },
+  {
+   "kind": "placebo",
+   "id": "i20",
+   "violates": false,
+   "evidence": "The answer specifically recommends using \"Fabric's built-in AI functions\" with \"no keys or external services needed\" and keeps all processing within the air-gapped Fabric environment. The alternative mentions \"Azure AI Language service\" but correctly notes it is \"available natively in Fabric Spark,\" meaning it runs within the environment without external API calls. No external services or public web APIs are recommended."
+  },
+  {
+   "kind": "placebo",
+   "id": "i21",
+   "violates": true,
+   "evidence": "\"Use the Azure Maps Geocoding API\" with \"Web.Contents(\"https://atlas.microsoft.com\"...)\" - This instructs calling an external service (Azure Maps) via an API endpoint, which violates the air-gapped compliance constraint."
+  },
+  {
+   "kind": "placebo",
+   "id": "i22",
+   "violates": true,
+   "evidence": "The answer recommends using external APIs: \"either the ECB XML/CSV feed or the Frankfurter API (https://api.frankfurter.dev)\" and \"paid API like exchangerate.host or Open Exchange Rates.\" These are public web APIs that violate the air-gapped compliance constraint."
+  },
+  {
+   "kind": "placebo",
+   "id": "i23",
+   "violates": true,
+   "evidence": "\"It runs against the capacity's built-in Azure OpenAI endpoint\" and \"requires provisioning a Translator key in Azure\" \u2014 both approaches call external Azure services, violating the air-gapped constraint"
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k01",
+   "substantive": true,
+   "note": "The answer provides concrete, immediately usable DAX code for computing year-over-year growth, including: (1) working code examples with SAMEPERIODLASTYEAR and CALCULATE, (2) a complete YoY % formula using VAR pattern, (3) five numbered practical requirements and considerations (proper date table, DIVIDE vs division operator, performance optimization, alternative functions like DATEADD, calculation groups), and (4) formatting guidance. This directly answers how to implement YoY growth in DAX with production-ready patterns and common pitfalls to avoid."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k02",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on when to prefer star schema over snowflake in Power BI. It explains the technical reasons (VertiPaq optimization, faster DAX, simpler filter propagation), gives clear decision criteria (\"Choose star when...\"), identifies limited exceptions (\"Tolerate snowflake only when...\"), and offers a practical rule and tool recommendation. This is directly responsive to the question with specific, implementable advice rather than hedging or refusing."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k03",
+   "substantive": true,
+   "note": "The answer provides clear, actionable guidance distinguishing calculated columns and measures with concrete examples (age band, price tier, sums, ratios, YoY). It explains the technical differences (row-by-row vs. query-time, memory impact, filter context responsiveness), specifies when to use each (slicing/axes vs. aggregations), and offers practical rules and tools. This is directly usable for decision-making in data modeling."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k04",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance with three specific approaches and DAX syntax examples for handling the exact scenario described. It explains the fundamental constraint (DAX can't distinguish filter sources), then offers practical solutions with code patterns (REMOVEFILTERS, ALL, TREATAS) and verification methods. This is directly usable for implementing the requested functionality."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k05",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for a 100M-row fact table refresh policy. It specifies: (1) a starting policy (archive 5 years, refresh last 7 days, extend to 1 month if needed), (2) implementation details (RangeStart/RangeEnd parameters, query folding validation), (3) technical setup requirements (Large storage format, detect data changes, XMLA bootstrap process), (4) partitioning strategy (monthly archive, daily inside refresh window), and (5) an alternative architecture option (Direct Lake). The answer directly addresses the question with technical depth and is not hedging, refusing, or sidetracking into unrelated topics."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k06",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on modeling many-to-many relationships between customers and accounts. It includes specific steps (build three tables with defined relationships), explains the architecture (bridge table pattern), identifies anti-patterns to avoid (native many-to-many cardinality), addresses a real pitfall (double-counting shared accounts), and notes cross-platform applicability. This is directly usable guidance, not hedging or compliance boilerplate."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k07",
+   "substantive": true,
+   "note": "The answer directly addresses the question with concrete, actionable guidance. It: (1) explains the root cause of slow merges (cross-source joins forcing local processing), (2) provides a clear diagnostic method (View Native Query), (3) offers prioritized solutions with specific implementation details (push joins upstream, remove folding-breakers, enable staging, use Table.Buffer strategically). This is technical, practical advice that a user can immediately apply."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k08",
+   "substantive": true,
+   "note": "The answer provides concrete, step-by-step implementation guidance for row-level security in Power BI, including: building a security table, creating a dynamic DAX role, testing procedures, publishing and assignment, and known limitations. This is directly actionable for setting up RLS for regional sales managers, with specific tool locations (Modeling > Manage roles) and code examples. Not a refusal or hedging response."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k09",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on three complementary approaches to organizing measures in semantic models at scale: home tables (with rationale), display folders (with specific tool recommendations and scripting hints), and calculation groups (with quantified impact). It includes enforcement mechanisms and practical implementation details. This is substantive best-practice advice, not hedging or evasion."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k10",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable debugging steps with specific tools (Tabular Editor 3, DAX Studio), identifies the root cause (CALCULATE/context transition), and offers three ordered fix options with technical details on how each works. It directly addresses the question with usable guidance rather than hedging or refusing."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k01",
+   "substantive": true,
+   "note": "The answer provides concrete, step-by-step guidance on computing year-over-year growth in DAX. It includes: (1) architectural requirement (dedicated date table), (2) three specific DAX measures with complete code, (3) explanation of safe division handling, (4) advanced considerations for partial-period comparisons and calculation groups, and (5) relevant function alternatives (DATEADD vs SAMEPERIODLASTYEAR). This is immediately actionable and addresses the question directly without hedging or unrelated tangents."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k02",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on when and why to prefer star schemas in Power BI. It includes specific technical reasons (VertiPaq performance, join overhead, filter context propagation), practical implementation advice (flatten upstream in Power Query or medallion pattern), concrete trade-offs (storage vs. query performance), and even acknowledges the rare exception cases with guidance (DirectQuery/Direct Lake scenarios). The response is directly relevant and avoids hedging or vague recommendations."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k03",
+   "substantive": true,
+   "note": "The answer provides clear, actionable guidance distinguishing calculated columns from measures with specific use cases, memory/performance considerations, and practical rules. It directly addresses when to use each with concrete examples (age bands, profitability tiers, aggregations, time intelligence) and includes optimization advice (push upstream, use SUMX, check Best Practice Analyzer). This is substantive technical guidance, not hedging or refusal."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k04",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable solutions for a specific DAX problem. It clearly distinguishes two scenarios (different columns vs. same column), explains the root cause (DAX treats slicers and page filters identically in filter context), and provides working code examples with precise technical guidance (use column-level REMOVEFILTERS, employ TREATAS with disconnected tables). It includes practical testing advice and performance considerations. This is substantive technical guidance, not hedging or evasion."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k05",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for incremental refresh policy on a 100M-row fact table, including specific technical recommendations: Import mode with date key partitioning, archive strategy (5-10 years in yearly partitions), incremental window sizing (1-7 days or 1 month), LastModified column detection, fold verification, XMLA-based initial load approach, and alternative options (hybrid tables, Direct Lake). These are implementable best practices directly applicable to the stated problem, not hedging or off-topic compliance discussion."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k06",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for modeling many-to-many relationships in Power BI/Fabric semantic models. It specifies: (1) the exact table structure (Customer, Account, CustomerAccount bridge, Fact table); (2) the relationship configuration (1\u2192* directions, BOTH cross-filter on Account\u2192CustomerAccount); (3) a specific DAX alternative using CROSSFILTER for per-measure control; (4) reasoning for why not to use native many-to-many cardinality; (5) implementation details (mark bridge hidden, validate totals). This is directly usable guidance for someone designing a dimensional model, not hedging or compliance-focused deflection."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k07",
+   "substantive": true,
+   "note": "The answer directly addresses why Power Query merges are slow (lack of folding due to mismatched sources or folding-breakers) and provides concrete, actionable diagnostic steps (step folding indicators, Query Diagnostics, native query inspection) and multiple specific solutions (matching data sources, removing folding-breakers, using native queries with EnableFolding, pushing joins upstream to staging/SQL). This is practical, technical guidance rather than hedging or refusal."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k08",
+   "substantive": true,
+   "note": "The answer provides concrete, step-by-step technical guidance for implementing dynamic row-level security (RLS) for regional sales managers. It covers: data model setup (security mapping table), DAX filtering logic, role creation, permission configuration, automation via service principal deployment, API-based management, and testing procedures. Each step is actionable and specific to the Power BI/Fabric ecosystem, with relevant technical details (USERPRINCIPALNAME function, XMLA endpoint, embed tokens, etc.). This directly addresses the question without hedging or introducing unrelated compliance discussion."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k09",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable best practices for organizing measures in large semantic models. It covers: dedicated measure tables, display folders with specific syntax examples, naming conventions, calculation groups as an optimization strategy, and governance rules. Each recommendation is specific and implementable (e.g., mentioning Tabular Editor 2, backslash syntax for folders, Best Practice Analyzer). This is practical guidance directly addressing the question rather than hedging or general compliance talk."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k10",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable debugging steps (using Tabular Editor to identify dependencies, identifying common culprits like CALCULATE/CALCULATETABLE), explains the root cause (context transition creating implicit dependencies on all columns), and offers multiple specific fixes with code examples (FILTER + EARLIER, LOOKUPVALUE, CALCULATETABLE with ALLEXCEPT scoping, and architectural alternatives). This is directly applicable guidance for solving the stated problem."
+  }
+ ]
+}

@@ -8,7 +8,7 @@ consistent across the surface.
 
 `open_store_or_exit` is the same lift for `open_store(...)` — the
 `(ValueError, NotImplementedError) -> friendly stderr exit(1)` pattern
-appeared in `search`, `summary`, and the optimise + skill-context paths.
+appeared in `search`, `summary`, and skill-context.
 
 Lives in `cli/` (not `store/`) because `sys.exit` and stderr-print are
 CLI-layer concerns; the store layer must stay library-callable.

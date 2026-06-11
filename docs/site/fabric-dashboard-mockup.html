@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>rlat-analytics — Power BI mockup</title>
+<style>
+  :root {
+    --bg:        #f5f5f5;
+    --tile:      #ffffff;
+    --border:    #e1dfdd;
+    --ink:       #252423;
+    --muted:     #605e5c;
+    --line:      #c8c6c4;
+    --primary:   #118dff;
+    --primary-2: #4cb1ff;
+    --green:     #107c10;
+    --amber:     #fcb900;
+    --red:       #d83b01;
+    --grid:      #f3f2f1;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    font-family: "Segoe UI", "SegoeUI", "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .canvas {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+  header.page {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 8px 18px;
+  }
+  header.page h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: 0.1px;
+  }
+  header.page .sub {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 2px;
+  }
+  .filters {
+    display: flex;
+    gap: 8px;
+  }
+  .chip {
+    background: var(--tile);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: var(--ink);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .chip .caret { color: var(--muted); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 12px;
+  }
+  .tile {
+    background: var(--tile);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+  }
+  .tile h2 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .tile .desc {
+    color: var(--muted);
+    font-size: 11px;
+    margin-bottom: 10px;
+  }
+  .span-3  { grid-column: span 3; }
+  .span-4  { grid-column: span 4; }
+  .span-6  { grid-column: span 6; }
+  .span-8  { grid-column: span 8; }
+  .span-12 { grid-column: span 12; }
+
+  /* KPI cards */
+  .kpi { padding: 16px 18px; min-height: 96px; }
+  .kpi .label {
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .kpi .value {
+    font-size: 30px;
+    font-weight: 600;
+    color: var(--ink);
+    margin-top: 6px;
+    line-height: 1;
+  }
+  .kpi .delta {
+    font-size: 11px;
+    margin-top: 6px;
+    color: var(--muted);
+  }
+  .kpi .delta.up   { color: var(--green); }
+  .kpi .delta.down { color: var(--red); }
+
+  /* Top queries bar list */
+  .bar-row {
+    display: grid;
+    grid-template-columns: 1fr 80px 36px;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+  }
+  .bar-row + .bar-row { border-top: 1px solid var(--grid); }
+  .bar-row .label { color: var(--ink); }
+  .bar-track {
+    background: var(--grid);
+    height: 14px;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    background: var(--primary);
+    height: 100%;
+  }
+  .bar-row .num { text-align: right; color: var(--muted); }
+
+  /* SVG charts */
+  svg { display: block; width: 100%; height: 100%; }
+  .axis-line { stroke: var(--line); stroke-width: 1; }
+  .grid-line { stroke: var(--grid); stroke-width: 1; }
+  .axis-text { fill: var(--muted); font-size: 10px; }
+  .series-p50 { stroke: var(--primary); stroke-width: 2; fill: none; }
+  .series-p95 { stroke: var(--red); stroke-width: 2; stroke-dasharray: 4 3; fill: none; }
+  .series-fill { fill: var(--primary); fill-opacity: 0.10; }
+  .marker-p50 { fill: var(--primary); }
+  .marker-p95 { fill: var(--red); }
+
+  .pareto-bar { fill: var(--primary); }
+  .pareto-line { stroke: var(--amber); stroke-width: 2; fill: none; }
+  .pareto-marker { fill: var(--amber); }
+
+  .verified-line { stroke: var(--green); stroke-width: 2; fill: none; }
+  .verified-marker { fill: var(--green); }
+
+  /* Latency split mini-cards */
+  .latency-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .mini {
+    background: var(--grid);
+    border-radius: 4px;
+    padding: 10px 12px;
+  }
+  .mini .label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .mini .value {
+    font-size: 22px;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .mini.cold .value { color: var(--red); }
+  .mini.warm .value { color: var(--green); }
+
+  .legend {
+    display: flex;
+    gap: 14px;
+    margin-top: 6px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .legend .swatch {
+    display: inline-block;
+    width: 10px; height: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+  .legend .swatch.dashed { border-top: 2px dashed var(--red); height: 0; }
+
+  footer.page {
+    margin-top: 18px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  footer.page .live-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+
+  .caveat {
+    background: #fff8e7;
+    border: 1px solid #f4d58a;
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin: 0 8px 14px;
+    color: #6a4f00;
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+<div class="canvas">
+
+  <header class="page">
+    <div>
+      <h1>rlat-analytics</h1>
+      <div class="sub">Resonance Lattice on Microsoft Fabric — Direct Lake</div>
+    </div>
+    <div class="filters">
+      <span class="chip">Date: Last 30 days <span class="caret">▾</span></span>
+      <span class="chip">KM: rlat-self-test <span class="caret">▾</span></span>
+    </div>
+  </header>
+
+  <div class="caveat">
+    Mockup. KPI values are real (3 calls, 15 hits, 1 cold call from your 2026-05-10 run). Time-series visuals project plausible trends from one day's data — they'll fill in for real after a few demo runs across more days.
+  </div>
+
+  <div class="grid">
+
+    <!-- KPI strip -->
+    <div class="tile kpi span-3">
+      <div class="label">Total Calls</div>
+      <div class="value">3</div>
+      <div class="delta">single run · 2026-05-10</div>
+    </div>
+    <div class="tile kpi span-3">
+      <div class="label">Refusal Rate</div>
+      <div class="value">0.0%</div>
+      <div class="delta up">all queries returned hits</div>
+    </div>
+    <div class="tile kpi span-3">
+      <div class="label">Verified Rate</div>
+      <div class="value">100%</div>
+      <div class="delta up">no drift detected</div>
+    </div>
+    <div class="tile kpi span-3">
+      <div class="label">p50 Latency</div>
+      <div class="value">507<span style="font-size:14px;font-weight:400;color:var(--muted)"> ms</span></div>
+      <div class="delta">p95 5,081 ms · cold-influenced</div>
+    </div>
+
+    <!-- Top queries -->
+    <div class="tile span-6">
+      <h2>Top queries</h2>
+      <div class="desc">By call count, this period. Slice with the Date filter to see week-over-week shift.</div>
+
+      <div class="bar-row">
+        <div class="label">how do I configure storage modes</div>
+        <div class="bar-track"><div class="bar-fill" style="width: 100%"></div></div>
+        <div class="num">1</div>
+      </div>
+      <div class="bar-row">
+        <div class="label">what is verified retrieval drift status</div>
+        <div class="bar-track"><div class="bar-fill" style="width: 100%"></div></div>
+        <div class="num">1</div>
+      </div>
+      <div class="bar-row">
+        <div class="label">how does the encoder cache work</div>
+        <div class="bar-track"><div class="bar-fill" style="width: 100%"></div></div>
+        <div class="num">1</div>
+      </div>
+
+      <div class="legend" style="margin-top: 14px">
+        <span><span class="swatch" style="background:var(--primary)"></span>Total Calls</span>
+        <span style="color:var(--muted)">Drill-through: dim_query → call timeline</span>
+      </div>
+    </div>
+
+    <!-- Latency p50/p95 over time -->
+    <div class="tile span-6">
+      <h2>Latency p50 / p95</h2>
+      <div class="desc">Median and tail latency by day. Cold-call days drive the p95 spike.</div>
+
+      <svg viewBox="0 0 480 180" preserveAspectRatio="xMidYMid meet" style="height: 200px">
+        <!-- y-axis labels -->
+        <text x="6"  y="22"  class="axis-text">5k</text>
+        <text x="6"  y="62"  class="axis-text">3k</text>
+        <text x="6"  y="102" class="axis-text">1k</text>
+        <text x="6"  y="142" class="axis-text">0</text>
+        <line x1="32" y1="20"  x2="470" y2="20"  class="grid-line"/>
+        <line x1="32" y1="60"  x2="470" y2="60"  class="grid-line"/>
+        <line x1="32" y1="100" x2="470" y2="100" class="grid-line"/>
+        <line x1="32" y1="140" x2="470" y2="140" class="axis-line"/>
+
+        <!-- p95 line (dashed red) — peaks on cold-restart days -->
+        <polyline class="series-p95" points="
+          50,80   100,90   150,70   200,55   250,30   300,90   350,75   400,40   450,60
+        "/>
+
+        <!-- p50 fill -->
+        <polyline class="series-fill" points="
+          50,135  100,130  150,128  200,125  250,118  300,128  350,120  400,115  450,118
+          450,140 50,140
+        "/>
+        <!-- p50 line -->
+        <polyline class="series-p50" points="
+          50,135  100,130  150,128  200,125  250,118  300,128  350,120  400,115  450,118
+        "/>
+
+        <!-- markers on last point -->
+        <circle cx="450" cy="118" r="3" class="marker-p50"/>
+        <circle cx="450" cy="60"  r="3" class="marker-p95"/>
+
+        <!-- x-axis labels (week labels) -->
+        <text x="46"  y="158" class="axis-text">W1</text>
+        <text x="146" y="158" class="axis-text">W3</text>
+        <text x="246" y="158" class="axis-text">W5</text>
+        <text x="346" y="158" class="axis-text">W7</text>
+        <text x="442" y="158" class="axis-text">now</text>
+      </svg>
+
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--primary)"></span>p50</span>
+        <span><span class="swatch dashed"></span>p95</span>
+      </div>
+    </div>
+
+    <!-- Source file Pareto -->
+    <div class="tile span-6">
+      <h2>Source file Pareto</h2>
+      <div class="desc">Hits per source file, ranked. Cumulative line shows the corpus concentration — the top few files do most of the load-bearing work.</div>
+
+      <svg viewBox="0 0 480 220" preserveAspectRatio="xMidYMid meet" style="height: 240px">
+        <!-- grid -->
+        <line x1="40"  y1="20"  x2="470" y2="20"  class="grid-line"/>
+        <line x1="40"  y1="70"  x2="470" y2="70"  class="grid-line"/>
+        <line x1="40"  y1="120" x2="470" y2="120" class="grid-line"/>
+        <line x1="40"  y1="170" x2="470" y2="170" class="axis-line"/>
+
+        <!-- y-axis labels (left = hits, right = % cumulative) -->
+        <text x="8"   y="24"  class="axis-text">3</text>
+        <text x="8"   y="74"  class="axis-text">2</text>
+        <text x="8"   y="124" class="axis-text">1</text>
+        <text x="8"   y="174" class="axis-text">0</text>
+
+        <text x="450" y="24"  class="axis-text" text-anchor="end">100%</text>
+        <text x="450" y="74"  class="axis-text" text-anchor="end">75%</text>
+        <text x="450" y="124" class="axis-text" text-anchor="end">50%</text>
+        <text x="450" y="174" class="axis-text" text-anchor="end">0%</text>
+
+        <!-- bars (7 source files) — heights mapped: hits=3 -> y=20, hits=2 -> y=70, hits=1 -> y=120, baseline y=170 -->
+        <rect class="pareto-bar" x="55"  y="20"  width="40" height="150"/>
+        <rect class="pareto-bar" x="115" y="20"  width="40" height="150"/>
+        <rect class="pareto-bar" x="175" y="70"  width="40" height="100"/>
+        <rect class="pareto-bar" x="235" y="70"  width="40" height="100"/>
+        <rect class="pareto-bar" x="295" y="70"  width="40" height="100"/>
+        <rect class="pareto-bar" x="355" y="70"  width="40" height="100"/>
+        <rect class="pareto-bar" x="415" y="120" width="40" height="50"/>
+
+        <!-- cumulative pareto line: 3 -> 6 -> 8 -> 10 -> 12 -> 14 -> 15 of 15
+             percentages: 20 -> 40 -> 53 -> 67 -> 80 -> 93 -> 100
+             y mapping: 20% -> 140, 40% -> 110, 53% -> 90, 67% -> 70, 80% -> 50, 93% -> 30, 100% -> 20 -->
+        <polyline class="pareto-line" points="
+          75,140  135,110  195,90  255,70  315,50  375,30  435,20
+        "/>
+        <circle cx="75"  cy="140" r="3" class="pareto-marker"/>
+        <circle cx="135" cy="110" r="3" class="pareto-marker"/>
+        <circle cx="195" cy="90"  r="3" class="pareto-marker"/>
+        <circle cx="255" cy="70"  r="3" class="pareto-marker"/>
+        <circle cx="315" cy="50"  r="3" class="pareto-marker"/>
+        <circle cx="375" cy="30"  r="3" class="pareto-marker"/>
+        <circle cx="435" cy="20"  r="3" class="pareto-marker"/>
+
+        <!-- x-axis labels -->
+        <text x="75"  y="190" class="axis-text" text-anchor="middle">CLI.md</text>
+        <text x="135" y="190" class="axis-text" text-anchor="middle">ENCODER.md</text>
+        <text x="195" y="190" class="axis-text" text-anchor="middle">GLOSSARY</text>
+        <text x="255" y="190" class="axis-text" text-anchor="middle">STORAGE</text>
+        <text x="315" y="190" class="axis-text" text-anchor="middle">FAQ.md</text>
+        <text x="375" y="190" class="axis-text" text-anchor="middle">CORE_FEAT</text>
+        <text x="435" y="190" class="axis-text" text-anchor="middle">FABRIC.md</text>
+      </svg>
+
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--primary)"></span>Hits</span>
+        <span><span class="swatch" style="background:var(--amber)"></span>Cumulative %</span>
+      </div>
+    </div>
+
+    <!-- Cold vs Warm latency split -->
+    <div class="tile span-6">
+      <h2>Cold vs warm latency</h2>
+      <div class="desc">Cold = .rlat download + encoder load on UDF cold-start. Warm = in-memory cache hit. The split tells you whether you need pre-warming.</div>
+
+      <div class="latency-split">
+        <div class="mini cold">
+          <div class="label">Cold p50</div>
+          <div class="value">5,081 ms</div>
+        </div>
+        <div class="mini warm">
+          <div class="label">Warm p50</div>
+          <div class="value">446 ms</div>
+        </div>
+      </div>
+
+      <svg viewBox="0 0 480 120" preserveAspectRatio="xMidYMid meet" style="height: 130px">
+        <line x1="32" y1="20"  x2="470" y2="20"  class="grid-line"/>
+        <line x1="32" y1="50"  x2="470" y2="50"  class="grid-line"/>
+        <line x1="32" y1="80"  x2="470" y2="80"  class="grid-line"/>
+        <text x="6" y="22" class="axis-text">5k</text>
+        <text x="6" y="52" class="axis-text">3k</text>
+        <text x="6" y="82" class="axis-text">0</text>
+
+        <!-- cold (red) line: noisy spike pattern -->
+        <polyline points="50,30 100,82 150,80 200,30 250,82 300,32 350,80 400,82 450,30"
+                  fill="none" stroke="var(--red)" stroke-width="2"/>
+        <!-- warm (green) line: flat low -->
+        <polyline points="50,80 100,79 150,80 200,78 250,80 300,79 350,80 400,79 450,78"
+                  fill="none" stroke="var(--green)" stroke-width="2"/>
+
+        <text x="46"  y="105" class="axis-text">W1</text>
+        <text x="146" y="105" class="axis-text">W3</text>
+        <text x="246" y="105" class="axis-text">W5</text>
+        <text x="346" y="105" class="axis-text">W7</text>
+        <text x="442" y="105" class="axis-text">now</text>
+      </svg>
+
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--red)"></span>Cold p50</span>
+        <span><span class="swatch" style="background:var(--green)"></span>Warm p50</span>
+        <span style="color:var(--muted)">Cold rate now: 33%</span>
+      </div>
+    </div>
+
+    <!-- Verified rate by km × week -->
+    <div class="tile span-12">
+      <h2>Verified rate by km × week</h2>
+      <div class="desc">Share of hits whose source bytes still match the build hash. Crossing below ~95% is the signal to rebuild that .rlat.</div>
+
+      <svg viewBox="0 0 1200 180" preserveAspectRatio="xMidYMid meet" style="height: 180px">
+        <!-- y-axis: 90% -> 100% -->
+        <line x1="40" y1="20"  x2="1190" y2="20"  class="grid-line"/>
+        <line x1="40" y1="60"  x2="1190" y2="60"  class="grid-line"/>
+        <line x1="40" y1="100" x2="1190" y2="100" class="grid-line"/>
+        <line x1="40" y1="140" x2="1190" y2="140" class="axis-line"/>
+        <text x="6" y="24"  class="axis-text">100%</text>
+        <text x="6" y="64"  class="axis-text">97%</text>
+        <text x="6" y="104" class="axis-text">94%</text>
+        <text x="6" y="144" class="axis-text">90%</text>
+
+        <!-- threshold line at 95% -->
+        <line x1="40" y1="80" x2="1190" y2="80" stroke="var(--amber)" stroke-width="1" stroke-dasharray="3 3"/>
+        <text x="46" y="76" class="axis-text" fill="var(--amber)">rebuild threshold (95%)</text>
+
+        <!-- verified rate trending: stays at 100%, dips on a drift event -->
+        <polyline class="verified-line" points="
+          60,20 130,20 200,20 270,20 340,22 410,20 480,20 550,30 620,55 690,65 760,40 830,20 900,20 970,20 1040,20 1110,22 1170,20
+        "/>
+
+        <!-- markers -->
+        <circle cx="620"  cy="55" r="4" class="verified-marker"/>
+        <circle cx="690"  cy="65" r="4" class="verified-marker"/>
+        <circle cx="1170" cy="20" r="4" class="verified-marker"/>
+
+        <!-- annotation on the dip -->
+        <text x="660" y="48" class="axis-text" fill="var(--amber)" text-anchor="middle">drift event → rebuild → recovery</text>
+
+        <!-- x-axis week labels -->
+        <text x="60"   y="160" class="axis-text">W-16</text>
+        <text x="270"  y="160" class="axis-text">W-12</text>
+        <text x="480"  y="160" class="axis-text">W-8</text>
+        <text x="690"  y="160" class="axis-text">W-4</text>
+        <text x="900"  y="160" class="axis-text">W-2</text>
+        <text x="1170" y="160" class="axis-text" text-anchor="end">now</text>
+      </svg>
+
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--green)"></span>rlat-self-test verified rate</span>
+        <span style="color:var(--muted)">One line per km when more KMs are registered.</span>
+      </div>
+    </div>
+
+  </div>
+
+  <footer class="page">
+    <span class="live-dot"></span>Direct Lake · refreshes automatically as fabric_demo_udf.ipynb appends rows · last seen 2026-05-10
+  </footer>
+
+</div>
+</body>
+</html>

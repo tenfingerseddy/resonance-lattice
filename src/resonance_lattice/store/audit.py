@@ -5,23 +5,22 @@ to source. This module provides the read-only interface that exposes
 the full provenance state of a knowledge model:
 
   audit_summary(km)        -> layer sizes, drift counts, stale count
-  audit_stale(km)          -> list of stale insights with reasons
-  audit_orphans(km)        -> insights whose source has been removed
-  trace_insight(km, id)    -> full citation chain for one insight
-  trace_source(km, id)     -> insights that cite a given source
+  audit_stale(km)          -> list of stale corpus claims with reasons
+  audit_orphans(km)        -> corpus claims whose source has been removed
+  trace_insight(km, id)    -> full citation chain for one corpus claim
+  trace_source(km, id)     -> corpus claims that cite a given source
 
 These functions are the substrate for the `rlat audit` / `rlat trace`
-CLI commands (Day 7) and for any future inspector UI. Read-only — no
-mutation, no hidden side-effects.
+CLI commands and for any future inspector UI. Read-only — no mutation,
+no hidden side-effects.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
+from ..state.claim import FINAL_STATES, Claim
 from . import archive
-from .insight import FINAL_STATES, InsightPassage
 
 
 @dataclass(frozen=True)
@@ -29,10 +28,9 @@ class AuditSummary:
     """High-level archive audit. One per archive."""
     source_passages: int
     insight_total: int
-    insight_accepted: int
+    insight_active: int
     insight_candidate: int
     insight_stale: int
-    insight_rejected: int
     insight_retired: int
     source_drift_status_counts: dict[str, int]   # verified / drifted / missing
     insight_orphans: int                          # cited source no longer exists
@@ -40,24 +38,23 @@ class AuditSummary:
 
 @dataclass(frozen=True)
 class InsightTrace:
-    """Full provenance trail for one insight passage."""
-    insight: InsightPassage
+    """Full provenance trail for one corpus claim."""
+    insight: Claim
     source_passages: list[dict]      # resolved citations (passage_id, source_file, content_hash, drift)
     source_orphans: list[str]        # cited passage_ids that no longer exist
-    lineage_chain: list[InsightPassage]  # parent insights (currently always empty in v1)
+    lineage_chain: list[Claim]       # parent claims walked via `parent_ids`
 
 
 def audit_summary(contents: archive.ArchiveContents) -> AuditSummary:
     """Compute the archive's audit summary in one pass."""
-    state_counts = {
-        "accepted": 0, "candidate": 0, "stale": 0,
-        "rejected": 0, "rejected_corrected": 0, "retired": 0,
-    }
+    state_counts = {"active": 0, "candidate": 0, "stale": 0, "retired": 0}
     source_ids = {c.passage_id for c in contents.registry}
     orphans = 0
     for ins in contents.insights:
-        state_counts[ins.verdict_state] = state_counts.get(ins.verdict_state, 0) + 1
-        if not all(c.passage_id in source_ids for c in ins.citations):
+        state_counts[ins.state] = state_counts.get(ins.state, 0) + 1
+        # Only corpus claims carry CorpusFacts.citations — an experience/attribute claim in the insight list has
+        # no citations to orphan, and reading `.facts.citations` on it would AttributeError.
+        if ins.source == "corpus" and not all(c.passage_id in source_ids for c in ins.facts.citations):
             orphans += 1
 
     # `content_hash` is build-time and live drift is a retrieval-time
@@ -69,57 +66,56 @@ def audit_summary(contents: archive.ArchiveContents) -> AuditSummary:
     return AuditSummary(
         source_passages=len(contents.registry),
         insight_total=len(contents.insights),
-        insight_accepted=state_counts.get("accepted", 0),
+        insight_active=state_counts.get("active", 0),
         insight_candidate=state_counts.get("candidate", 0),
         insight_stale=state_counts.get("stale", 0),
-        insight_rejected=state_counts.get("rejected", 0)
-                          + state_counts.get("rejected_corrected", 0),
         insight_retired=state_counts.get("retired", 0),
         source_drift_status_counts=drift_counts,
         insight_orphans=orphans,
     )
 
 
-def audit_stale(contents: archive.ArchiveContents) -> list[InsightPassage]:
-    """All insights currently in the `stale` state. Returns input-order
-    list."""
-    return [ins for ins in contents.insights if ins.verdict_state == "stale"]
+def audit_stale(contents: archive.ArchiveContents) -> list[Claim]:
+    """All corpus claims currently in the `stale` state. Returns
+    input-order list."""
+    return [ins for ins in contents.insights if ins.state == "stale"]
 
 
-def audit_orphans(contents: archive.ArchiveContents) -> list[InsightPassage]:
-    """Insights whose citations point to passage_ids that no longer
+def audit_orphans(contents: archive.ArchiveContents) -> list[Claim]:
+    """Corpus claims whose citations point to passage_ids that no longer
     exist in the source registry. Caused by source deletion + refresh.
     """
     source_ids = {c.passage_id for c in contents.registry}
-    out: list[InsightPassage] = []
+    out: list[Claim] = []
     for ins in contents.insights:
-        if ins.verdict_state in FINAL_STATES:
+        if ins.state in FINAL_STATES or ins.source != "corpus":
             continue
-        if any(c.passage_id not in source_ids for c in ins.citations):
+        if any(c.passage_id not in source_ids for c in ins.facts.citations):
             out.append(ins)
     return out
 
 
 def trace_insight(
-    contents: archive.ArchiveContents, insight_id: str,
+    contents: archive.ArchiveContents, claim_id: str,
 ) -> InsightTrace:
-    """Full provenance chain for one insight_id.
+    """Full provenance chain for one corpus claim_id.
 
     Resolves every citation against the source registry; flags orphans
     (cited passages that no longer exist). Lineage chain follows
-    parent_ids (v1: always empty until insight-to-insight promotion
-    lands).
+    `parent_ids` — claim→claim provenance.
 
-    Raises KeyError if insight_id is not in the archive.
+    Raises KeyError if claim_id is not in the archive.
     """
-    target = next((i for i in contents.insights if i.insight_id == insight_id), None)
+    target = next(
+        (i for i in contents.insights if i.claim_id == claim_id), None
+    )
     if target is None:
-        raise KeyError(f"insight_id {insight_id!r} not in this archive")
+        raise KeyError(f"claim_id {claim_id!r} not in this archive")
 
     coords_by_id = {c.passage_id: c for c in contents.registry}
     source_passages: list[dict] = []
     orphans: list[str] = []
-    for cit in target.citations:
+    for cit in target.facts.citations:
         coord = coords_by_id.get(cit.passage_id)
         if coord is None:
             orphans.append(cit.passage_id)
@@ -134,21 +130,22 @@ def trace_insight(
             "citation_char_span": cit.char_span,
         })
 
-    # Lineage chain: walk parent insights (v1: empty, but the
-    # iterator is here so v2 doesn't need to add the surface).
-    lineage: list[InsightPassage] = []
-    seen: set[str] = {target.insight_id}
-    parents = list(target.lineage)
+    # Lineage chain: walk parent claims via `parent_ids`.
+    lineage: list[Claim] = []
+    seen: set[str] = {target.claim_id}
+    parents = list(target.parent_ids)
     while parents:
         pid = parents.pop(0)
         if pid in seen:
             continue
         seen.add(pid)
-        parent = next((i for i in contents.insights if i.insight_id == pid), None)
+        parent = next(
+            (i for i in contents.insights if i.claim_id == pid), None
+        )
         if parent is None:
             continue
         lineage.append(parent)
-        parents.extend(parent.lineage)
+        parents.extend(parent.parent_ids)
 
     return InsightTrace(
         insight=target,
@@ -160,14 +157,17 @@ def trace_insight(
 
 def trace_source(
     contents: archive.ArchiveContents, source_passage_id: str,
-) -> list[InsightPassage]:
-    """Reverse trace — every insight that cites a given source passage.
+) -> list[Claim]:
+    """Reverse trace — every corpus claim that cites a given source passage.
 
     Used by the audit to answer 'what claims depend on this passage?'
     before editing it.
     """
-    out: list[InsightPassage] = []
+    out: list[Claim] = []
     for ins in contents.insights:
-        if any(c.passage_id == source_passage_id for c in ins.citations):
+        if ins.source != "corpus":
+            continue  # experience/attribute claims have no corpus citations to reverse-trace
+        if any(c.passage_id == source_passage_id
+               for c in ins.facts.citations):
             out.append(ins)
     return out

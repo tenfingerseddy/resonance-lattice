@@ -2,7 +2,7 @@
 
 Single encoder: gte-modernbert-base 768d, CLS pooling, L2-normalised.
 Three inference runtimes (auto-selected): ONNX (non-Intel CPU), OpenVINO
-(Intel CPU), PyTorch (build/optimise only).
+(Intel CPU), PyTorch (build only).
 
 Phase 1 deliverable. See base plan §1, §3.
 Lensed-knowledge Day 1: `retrieve_insight` adds insight-band retrieval
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from . import ann, dense
+from . import ann, capture, dense
 
 if TYPE_CHECKING:
     # Type-only imports to avoid circular load order: store/bands.py imports
@@ -37,25 +37,31 @@ def retrieve(
 ) -> list[tuple[int, float]]:
     """Single retrieval entry point — ANN when an index is bound, exact dense
     cosine otherwise. Both paths return `[(passage_idx, score), ...]`
-    descending by score, with a `projection_matrix` applied if the band is a
-    optimised (handle.projection != None).
+    descending by score.
 
     Lifted from `cli/search.py` + `cli/summary.py`; the if/else dispatch
     was duplicated across both call sites.
+
+    The capture heart (`capture.observe`, capture.md §3): every retrieval is
+    observed against its corpus (`handle.km_id`) — fingerprint + scores into the
+    in-memory buffer, never the query text. `is_user_query` is inferred from
+    `capture.internal_retrieval()`; an internal caller wraps its call to opt out.
+    Observation never raises and never alters the result.
     """
     if ann_index is not None:
-        return ann.search(
+        result = ann.search(
             ann_index, query_emb,
             registry=registry,
-            projection_matrix=handle.projection,
             top_k=top_k,
         )
-    return dense.search(
-        query_emb, handle.band,
-        registry=registry,
-        projection_matrix=handle.projection,
-        top_k=top_k,
-    )
+    else:
+        result = dense.search(
+            query_emb, handle.band,
+            registry=registry,
+            top_k=top_k,
+        )
+    capture.observe(getattr(handle, "km_id", None), query_emb, result, "source")
+    return result
 
 
 def retrieve_insight(
@@ -63,6 +69,7 @@ def retrieve_insight(
     insight_band: np.ndarray,
     ann_index: object | None,
     top_k: int,
+    km_id: str | None = None,
 ) -> list[tuple[int, float]]:
     """Cosine top-k against the insight band.
 
@@ -78,19 +85,25 @@ def retrieve_insight(
 
     Empty band → empty list; same shape contract as `retrieve()` on an
     empty corpus.
+
+    `km_id` is the corpus identity for the capture heart (the insight band has
+    no `BandHandle` here, so the caller passes `insight_handle.km_id`); the
+    insight retrieval is observed under it (capture.md §3). Observation never
+    raises and never alters the result.
     """
     if insight_band is None or insight_band.shape[0] == 0:
         return []
     if ann_index is not None:
-        return ann.search(
+        result = ann.search(
             ann_index, query_emb,
             registry=None,
-            projection_matrix=None,
             top_k=top_k,
         )
-    return dense.search(
-        query_emb, insight_band,
-        registry=None,
-        projection_matrix=None,
-        top_k=top_k,
-    )
+    else:
+        result = dense.search(
+            query_emb, insight_band,
+            registry=None,
+            top_k=top_k,
+        )
+    capture.observe(km_id, query_emb, result, "insight")
+    return result

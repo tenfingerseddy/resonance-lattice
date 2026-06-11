@@ -12,14 +12,10 @@ fails. Then it exercises:
   - rlat audit (text + json)
   - rlat trace
   - rlat lens create + show
-  - viewpoint.deliberate (default depth=0)
   - drift cascade via rlat refresh
 
 If any of these raise during the test, the LLM-free guarantee has been
 broken and we need to investigate.
-
-Day 7 regression. Documents the manifesto's "retrieval-only mode always
-works" property.
 """
 
 from __future__ import annotations
@@ -32,7 +28,7 @@ from pathlib import Path
 import numpy as np
 
 from ._testutil import build_corpus as _build
-from ._testutil import make_insight_passage, run_cli, unpatch_zero_encoder
+from ._testutil import make_corpus_claim, run_cli, unpatch_zero_encoder
 
 
 class _NoAnthropicSentinel:
@@ -74,7 +70,6 @@ def run() -> int:
     unpatch_zero_encoder()
     from resonance_lattice.field.encoder import Encoder
     from resonance_lattice.store import archive
-    from resonance_lattice.viewpoint import deliberate
 
     failures = 0
     with _llm_guard(), tempfile.TemporaryDirectory() as d:
@@ -97,9 +92,9 @@ def run() -> int:
         # ---- Guarantee 2: manual insight promotion, no LLM ----
         try:
             encoder = Encoder()                       # encoder is local, not LLM
-            ins = [make_insight_passage(
-                0, "Sessions use 24h tokens; refresh weekly.",
-                src_ids[:2], src_hashes[:2], state="accepted",
+            ins = [make_corpus_claim(
+                "Sessions use 24h tokens; refresh weekly.",
+                src_ids[:2], src_hashes[:2], state="active",
             )]
             band = encoder.encode([ins[0].content]).astype("float32")
             archive.write_insight_layer_in_place(km, ins, band)
@@ -147,7 +142,7 @@ def run() -> int:
 
         # ---- Guarantee 5: rlat trace, no LLM ----
         try:
-            rc, out, _ = run_cli(["trace", str(km), ins[0].insight_id])
+            rc, out, _ = run_cli(["trace", str(km), ins[0].claim_id])
             if rc != 0:
                 print(f"[llm_free_retrieval] FAIL g5: rc={rc}", file=sys.stderr)
                 failures += 1
@@ -183,25 +178,7 @@ def run() -> int:
             print(f"[llm_free_retrieval] FAIL g6: {e}", file=sys.stderr)
             failures += 1
 
-        # ---- Guarantee 7: viewpoint.deliberate at depth=0, no LLM ----
-        try:
-            c1 = archive.read(km)
-            from resonance_lattice.store import open_store
-            store = open_store(km, c1)
-            q_emb = encoder.encode(["session tokens"])[0].astype("float32")
-            pos = deliberate("session tokens", q_emb, c1, source_store=store, top_k=5)
-            if not pos.answer or not pos.source_only_alternative:
-                print("[llm_free_retrieval] FAIL g7: viewpoint output empty",
-                      file=sys.stderr)
-                failures += 1
-            else:
-                print("[llm_free_retrieval] g7 (viewpoint deliberate, no LLM) OK",
-                      file=sys.stderr)
-        except AssertionError as e:
-            print(f"[llm_free_retrieval] FAIL g7: {e}", file=sys.stderr)
-            failures += 1
-
-        # ---- Guarantee 8: rlat refresh + drift cascade, no LLM ----
+        # ---- Guarantee 7: rlat refresh + drift cascade, no LLM ----
         try:
             (root / "a.md").write_text(
                 "# Auth (revised)\n\nSession tokens expire after 12h now.",
@@ -216,7 +193,7 @@ def run() -> int:
                 failures += 1
             else:
                 c_after = archive.read(km)
-                if not any(i.verdict_state == "stale" for i in c_after.insights):
+                if not any(i.state == "stale" for i in c_after.insights):
                     print("[llm_free_retrieval] FAIL g8: drift didn't cascade",
                           file=sys.stderr)
                     failures += 1

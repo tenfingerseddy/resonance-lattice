@@ -13,4 +13,4 @@ import sys
 
 def run() -> int:
     print("[golden] SKIP — golden fixtures not committed", file=sys.stderr)
-    return 0
+    return 2  # harness SKIP sentinel — runner reports as skipped, not passed

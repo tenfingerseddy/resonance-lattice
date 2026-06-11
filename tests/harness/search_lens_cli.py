@@ -1,15 +1,14 @@
-"""search_lens_cli — `rlat search --lens` end-to-end + auto-recorded dogfood
-events.
+"""search_lens_cli — `rlat search --lens` end-to-end.
 
 Guarantees:
 
   1. `rlat search --lens X.lens` re-ranks source hits by lens.trust_weights.
   2. `rlat search --lens X.lens` re-ranks insight hits by lens.insight_preferences.
   3. `rlat search --source-only` ignores the lens even when --lens is passed.
-  4. With `.rlat-state/ledger/` present, every search appends one dogfood
-     event with the lens_id stamped.
-  5. Without `.rlat-state/ledger/`, no event is recorded (opt-in by presence).
-  6. `bench_lensed_dogfood scorecard` aggregates the recorded events.
+  4. Search spills NO sidecar beside the corpus, and a bare search (persistence
+     default-off) is read-only — capture lives in-memory at the heart
+     (field.retrieve / retrieve_insight) and folds INSIDE the .rlat only at a
+     session boundary (tests/harness/telemetry.py), never into a sidecar.
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from ._testutil import build_corpus as _build
-from ._testutil import make_insight_passage, run_cli, unpatch_zero_encoder
+from ._testutil import make_corpus_claim, run_cli, unpatch_zero_encoder
 
 
 def _make_lens(d: Path, lens_id: str, name: str,
@@ -61,9 +60,9 @@ def run() -> int:
         src_hashes = [c.content_hash for c in c0.registry]
 
         encoder = Encoder()
-        insights = [make_insight_passage(
-            0, "Sessions last 24h via session tokens.",
-            src_ids[:1], src_hashes[:1], state="accepted",
+        insights = [make_corpus_claim(
+            "Sessions last 24h via session tokens.",
+            src_ids[:1], src_hashes[:1], state="active",
         )]
         band = encoder.encode([insights[0].content]).astype("float32")
         archive.write_insight_layer_in_place(km, insights, band)
@@ -72,7 +71,7 @@ def run() -> int:
         lens_path = _make_lens(
             Path(d), "lens-eng", "engineering",
             trust_weights=[("src/*", 2.0), ("docs/external/*", 0.1)],
-            insight_prefs=[(insights[0].insight_id, 3.0)],
+            insight_prefs=[(insights[0].facts.content_fingerprint, 3.0)],
         )
         rc, out, _ = run_cli([
             "search", str(km), "session tokens",
@@ -169,87 +168,121 @@ def run() -> int:
                     print("[search_lens_cli] g3 (--source-only ignores --lens) OK",
                           file=sys.stderr)
 
-        # ---- Guarantee 4+5: auto-record dogfood event ----
-        ledger_dir = Path(d) / ".rlat-state" / "ledger"
-
-        # G5: no ledger dir → no event
-        rc, _, _ = run_cli([
-            "search", str(km), "any query",
-            "--top-k", "1", "--format", "json", "--quiet",
-        ])
-        if (ledger_dir / "dogfood_events.jsonl").exists():
-            print("[search_lens_cli] FAIL g5: event recorded without ledger dir",
-                  file=sys.stderr)
-            failures += 1
-
-        # G4: create ledger dir, run search, expect event appended.
-        # The cwd-based check means we cd into the tmp dir for this part.
+        # ---- Guarantee 4: no sidecar; persistence is in-file + opt-in ----
+        # Capture lives at the heart (field.retrieve / retrieve_insight, in
+        # memory — pinned by tests/harness/capture.py) and folds INSIDE the
+        # .rlat at a session boundary (store.telemetry — pinned by
+        # tests/harness/telemetry.py), never into a sidecar next to the corpus.
+        #   4a: a bare search (persistence default-off) writes nothing at all.
+        #   4b: with persistence ON, the SAME shipped cmd_search path folds a
+        #       row INTO the .rlat — locks the cmd_search->telemetry.flush wiring
+        #       positively, not just the negative read-only check.
         import os
-        old_cwd = Path.cwd()
+        from resonance_lattice.field import capture as _capture
+        km_key = str(Path(km).resolve())
+        persist_env = {k: os.environ.pop(k, None)
+                       for k in ("RLAT_CAPTURE_PERSIST", "RLAT_DOGFOOD_SESSION")}
         try:
-            ledger_dir.mkdir(parents=True, exist_ok=True)
-            os.chdir(d)
-            rc, _, _ = run_cli([
+            before = {p for p in Path(d).rglob("*") if p.is_file()}
+            run_cli([
                 "search", str(km), "auto-record test",
-                "--top-k", "3", "--format", "json", "--quiet",
-                "--lens", str(lens_path),
+                "--top-k", "3", "--format", "json", "--quiet", "--lens", str(lens_path),
             ])
-            events_file = ledger_dir / "dogfood_events.jsonl"
-            if not events_file.exists():
-                print("[search_lens_cli] FAIL g4: no event file created",
-                      file=sys.stderr)
+            spilled = sorted(
+                str(p) for p in ({q for q in Path(d).rglob("*") if q.is_file()} - before)
+            )
+            if spilled:
+                print(f"[search_lens_cli] FAIL g4a: search spilled file(s) beside "
+                      f"the corpus: {spilled}", file=sys.stderr)
+                failures += 1
+            elif archive.read_telemetry(km):
+                print("[search_lens_cli] FAIL g4a: bare search mutated the .rlat "
+                      "(persistence is opt-in)", file=sys.stderr)
                 failures += 1
             else:
-                lines = events_file.read_text(encoding="utf-8").splitlines()
-                if not lines:
-                    print("[search_lens_cli] FAIL g4: event file empty",
-                          file=sys.stderr)
-                    failures += 1
-                else:
-                    event = json.loads(lines[-1])
-                    if event["query"] != "auto-record test":
-                        print(f"[search_lens_cli] FAIL g4: event query wrong: "
-                              f"{event['query']}", file=sys.stderr)
-                        failures += 1
-                    elif event["lens_id"] != "lens-eng":
-                        print(f"[search_lens_cli] FAIL g4: event lens_id wrong: "
-                              f"{event['lens_id']}", file=sys.stderr)
-                        failures += 1
-                    elif event["duration_ms"] <= 0:
-                        print(f"[search_lens_cli] FAIL g4: duration_ms not positive: "
-                              f"{event['duration_ms']}", file=sys.stderr)
-                        failures += 1
-                    else:
-                        print("[search_lens_cli] g4 (auto-record dogfood event) OK",
-                              file=sys.stderr)
-                        print("[search_lens_cli] g5 (no record without ledger dir) OK",
-                              file=sys.stderr)
+                print("[search_lens_cli] g4a (no sidecar; bare search is "
+                      "read-only) OK", file=sys.stderr)
 
-                        # ---- Guarantee 6: scorecard aggregates events ----
-                        # Import the bench module and aggregate.
-                        sys.path.insert(0, str(old_cwd / "benchmarks"))
-                        try:
-                            import bench_lensed_dogfood as bld
-                            events = bld.read_events(events_file)
-                            sc = bld.compute_scorecard(events)
-                            if sc.total_events < 1:
-                                print(f"[search_lens_cli] FAIL g6: scorecard "
-                                      f"total_events={sc.total_events}",
-                                      file=sys.stderr)
-                                failures += 1
-                            else:
-                                print("[search_lens_cli] g6 (scorecard aggregates events) OK",
-                                      file=sys.stderr)
-                        finally:
-                            sys.path.pop(0)
+            os.environ["RLAT_CAPTURE_PERSIST"] = "1"
+            run_cli([
+                "search", str(km), "auto-record test",
+                "--top-k", "3", "--format", "json", "--quiet", "--lens", str(lens_path),
+            ])
+            telem = archive.read_telemetry(km)
+            spilled2 = sorted(
+                str(p) for p in ({q for q in Path(d).rglob("*") if q.is_file()} - before)
+            )
+            if not telem:
+                print("[search_lens_cli] FAIL g4b: persisted search wrote NO "
+                      "telemetry row into the .rlat (cmd_search->flush wiring "
+                      "broken)", file=sys.stderr)
+                failures += 1
+            elif spilled2:
+                print(f"[search_lens_cli] FAIL g4b: persisted search spilled a "
+                      f"sidecar beside the corpus: {spilled2}", file=sys.stderr)
+                failures += 1
+            else:
+                print(f"[search_lens_cli] g4b (persist-on: CLI search folds "
+                      f"{len(telem)} row(s) INTO the .rlat, no sidecar) OK",
+                      file=sys.stderr)
         finally:
-            os.chdir(old_cwd)
+            for k, v in persist_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                else:
+                    os.environ.pop(k, None)
+            _capture.drain(km_key)  # don't leave a dead-path buffer entry
+
+    failures += _check_set_trust_round_trip()
 
     if failures:
         print(f"[search_lens_cli] {failures} guarantee(s) failed",
               file=sys.stderr)
         return 1
     print("[search_lens_cli] all guarantees OK", file=sys.stderr)
+    return 0
+
+
+def _check_set_trust_round_trip() -> int:
+    """Guarantee: `rlat lens set-trust` — the write surface the 2026-06
+    review added (the lens layer was write-blind) — adds, updates, and
+    removes a pattern, surviving the save/load round trip."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        lens_path = str(Path(d) / "t.lens")
+        rc, _, _ = run_cli(["lens", "create", "--id", "t1", "--name", "T",
+                            "-o", lens_path])
+        rc1, out1, _ = run_cli(["lens", "set-trust", lens_path,
+                                "docs/external/*", "0.2"])
+        rc2, out2, _ = run_cli(["lens", "set-trust", lens_path,
+                                "docs/external/*", "0.5"])
+        rc3, show_out, _ = run_cli(["lens", "show", lens_path,
+                                    "--format", "json"])
+        try:
+            weights = {tw["pattern"]: tw["weight"]
+                       for tw in json.loads(show_out)["trust_weights"]}
+        except (ValueError, KeyError):   # non-JSON / failed show -> guarantee fails, not a crash
+            weights = None
+        rc4, _, _ = run_cli(["lens", "set-trust", lens_path,
+                             "docs/external/*", "--remove"])
+        rc5, show2, _ = run_cli(["lens", "show", lens_path, "--format", "json"])
+        try:
+            gone = json.loads(show2)["trust_weights"] == []
+        except (ValueError, KeyError):
+            gone = False
+        rc6, _, err6 = run_cli(["lens", "set-trust", lens_path, "x/*", "-1"])
+
+    ok = (rc == 0 and rc1 == 0 and rc2 == 0 and rc3 == 0
+          and weights == {"docs/external/*": 0.5}
+          and rc4 == 0 and rc5 == 0 and gone and rc6 != 0)
+    if not ok:
+        print(f"[search_lens_cli] FAIL set-trust round trip: rcs="
+              f"{(rc, rc1, rc2, rc3, rc4, rc5, rc6)} weights={weights!r} "
+              f"gone={gone}", file=sys.stderr)
+        return 1
+    print("[search_lens_cli] set-trust add/update/remove round trip OK",
+          file=sys.stderr)
     return 0
 
 

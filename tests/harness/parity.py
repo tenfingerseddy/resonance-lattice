@@ -12,4 +12,4 @@ import sys
 
 def run() -> int:
     print("[parity] SKIP — cross-mode KM fixture not built", file=sys.stderr)
-    return 0
+    return 2  # harness SKIP sentinel — runner reports as skipped, not passed

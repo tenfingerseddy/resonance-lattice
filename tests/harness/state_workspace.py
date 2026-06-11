@@ -173,6 +173,72 @@ def _check_resolve_state_root_env_override() -> int:
     return 0
 
 
+def _check_resolve_primary_km() -> int:
+    """(g) `resolve_primary_km` discovers the workspace's primary `.rlat`:
+    none → None; exactly one → that one; several → the `<root-name>.rlat`
+    tie-break, else None (ambiguous, never guess); and it scans the resolved
+    workspace ROOT, so a subdirectory cwd still finds a root-level archive.
+    """
+    from resonance_lattice.state import declare_workspace, resolve_primary_km
+
+    with tempfile.TemporaryDirectory() as td:
+        # none → None
+        empty = Path(td) / "empty"
+        empty.mkdir()
+        if resolve_primary_km(empty) is not None:
+            print("[state_workspace] FAIL (g): empty workspace not None",
+                  file=sys.stderr)
+            return 1
+
+        # exactly one → that one (any name)
+        one = Path(td) / "one"
+        one.mkdir()
+        (one / "anything.rlat").write_bytes(b"")
+        got = resolve_primary_km(one)
+        if got is None or got.name != "anything.rlat":
+            print(f"[state_workspace] FAIL (g): single archive → {got!r}",
+                  file=sys.stderr)
+            return 1
+
+        # several + <root-name>.rlat present → the named one (tie-break)
+        multi = Path(td) / "proj"
+        multi.mkdir()
+        for n in ("aaa.rlat", "proj.rlat", "zzz.rlat"):
+            (multi / n).write_bytes(b"")
+        got = resolve_primary_km(multi)
+        if got is None or got.name != "proj.rlat":
+            print(f"[state_workspace] FAIL (g): tie-break → {got!r} "
+                  f"(want proj.rlat)", file=sys.stderr)
+            return 1
+
+        # several, none named <root-name> → None (ambiguous, never guess)
+        amb = Path(td) / "ambiguous"
+        amb.mkdir()
+        (amb / "a.rlat").write_bytes(b"")
+        (amb / "b.rlat").write_bytes(b"")
+        if resolve_primary_km(amb) is not None:
+            print("[state_workspace] FAIL (g): ambiguous not None",
+                  file=sys.stderr)
+            return 1
+
+        # scans the resolved workspace ROOT, not raw cwd: a subdir cwd finds
+        # the root-level archive (a declaration pins the root).
+        decl_root = Path(td) / "declared"
+        sub = decl_root / "packages" / "leaf"
+        sub.mkdir(parents=True)
+        declare_workspace(decl_root, name="declared", workspace_id="abcdef")
+        (decl_root / "declared.rlat").write_bytes(b"")
+        got = resolve_primary_km(sub)
+        if got is None or got.name != "declared.rlat":
+            print(f"[state_workspace] FAIL (g): subdir→root archive → {got!r}",
+                  file=sys.stderr)
+            return 1
+
+    print("[state_workspace] (g) resolve_primary_km discovery + tie-break OK",
+          file=sys.stderr)
+    return 0
+
+
 def run() -> int:
     for check in [
         _check_cwd_fallback,
@@ -181,6 +247,7 @@ def run() -> int:
         _check_subdir_resolves_to_root,
         _check_redeclaration_overwrites,
         _check_resolve_state_root_env_override,
+        _check_resolve_primary_km,
     ]:
         rc = check()
         if rc != 0:

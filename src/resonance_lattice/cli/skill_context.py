@@ -42,7 +42,7 @@ from pathlib import Path
 import numpy as np
 
 from ..config import MaterialiserConfig
-from ..field import ann, retrieve
+from ..field import ann, capture, retrieve
 from ..field.encoder import Encoder
 from ..rql.types import ConfidenceMetrics
 from ..store.verified import VerifiedHit, verify_hits
@@ -153,9 +153,12 @@ def cmd_skill_context(args: argparse.Namespace) -> int:
     any_drift = False
     missing_by_query: dict[str, list[str]] = {}
     for q_text, q_emb in zip(args.query, query_embeddings):
-        hits = retrieve(
-            np.asarray(q_emb), handle, ann_index, contents.registry, args.top_k
-        )
+        # Skill-template batch queries, not user intent — raise the hand
+        # (capture.md §3).
+        with capture.internal_retrieval():
+            hits = retrieve(
+                np.asarray(q_emb), handle, ann_index, contents.registry, args.top_k
+            )
         verified = verify_hits(hits, store, contents.registry)
         block, missing = _format_query_block(q_text, verified, handle.name, mode)
         blocks.append(block)

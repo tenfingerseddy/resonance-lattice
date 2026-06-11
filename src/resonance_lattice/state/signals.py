@@ -9,9 +9,12 @@ Architecture §"Outcomes" splits the closed loop into:
 
 The split lets the hook layer fire fast (no LLM calls, no heavy I/O on the
 hot path) while the slower intent-resolution path is free to LLM-judge or
-ask the user. Pending signals decay — anything older than the
-configured window is ignored at resolution time (engineering-spec
-parameter).
+ask the user. Pending signals decay two ways: resolution ignores anything
+older than its window (`since`), and the log itself is a ring buffer —
+the file trims to the most recent `DEFAULT_CACHE_SIZE` entries on append
+(2026-06 review: it was appended on EVERY tool call with the promised
+decay never implemented, growing without bound and re-parsed in full on
+every read).
 
 This module owns *only* the pending-signal record + log; the consumer-side
 synthesis (signals → criterion check) is a Horizon 2 deliverable.
@@ -19,15 +22,13 @@ synthesis (signals → criterion check) is a Horizon 2 deliverable.
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-import portalocker
-
 from ..memory._common import utcnow_iso, validate_enum as _validate_enum
-from .ledger import LEDGER_DIR, SIGNAL_SOURCES, SignalSource
+from ._jsonl_log import JsonlRingBufferLog
+from .claim_outcome import SIGNAL_SOURCES, SignalSource
 
 PENDING_SIGNALS_FILE = "pending_signals.jsonl"
 
@@ -63,24 +64,21 @@ def _validate(signal: PendingSignal) -> None:
         raise ValueError("tool_payload must be a dict")
 
 
-class PendingSignalLog:
-    """Append-only pending-signals log under `<state-root>/ledger/`.
+class PendingSignalLog(JsonlRingBufferLog[PendingSignal]):
+    """Ring-buffered pending-signals log under `<state-root>/ledger/`.
 
     Lock-protected appends so concurrent PostToolUse + Stop don't
-    interleave their lines. Reads are unlocked — JSONL parsing tolerates
-    a truncated trailing line.
+    interleave their lines; the file trims to the most recent
+    `DEFAULT_CACHE_SIZE` entries on overflow (same base as `RecallCache`).
+    Reads are unlocked — JSONL parsing tolerates a truncated trailing line.
     """
 
-    def __init__(self, state_root: Path | str):
-        self._root = Path(state_root) / LEDGER_DIR
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._lock_path = self._root / ".signals.lock"
-        self._lock_path.touch(exist_ok=True)
-
-    def _lock(self) -> portalocker.Lock:
-        return portalocker.Lock(
-            str(self._lock_path), mode="r+b", flags=portalocker.LOCK_EX,
-        )
+    LOCK_FILENAME = ".signals.lock"
+    FILE_NAME = PENDING_SIGNALS_FILE
+    # PostToolUse fires per tool call; resolution reads recent, intent-
+    # filtered slices. 2000 entries ≈ several heavy sessions of headroom
+    # while keeping the every-read full parse bounded.
+    DEFAULT_CACHE_SIZE = 2000
 
     def append(
         self,
@@ -101,11 +99,7 @@ class PendingSignalLog:
             captured_at=utcnow_iso(),
         )
         _validate(signal)
-        path = self._root / PENDING_SIGNALS_FILE
-        line = json.dumps(asdict(signal), sort_keys=True) + "\n"
-        with self._lock():
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(line)
+        self._append_dict(asdict(signal))
         return signal
 
     def read(
@@ -120,19 +114,12 @@ class PendingSignalLog:
         is `None` (un-bound signals are ambient and may be relevant to any
         intent). `since` is an ISO timestamp lower bound on `captured_at`.
         """
-        path = self._root / PENDING_SIGNALS_FILE
-        if not path.exists():
-            return []
         out: list[PendingSignal] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        for payload in self._read_dicts():
             try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            sig = PendingSignal(**payload)
+                sig = PendingSignal(**payload)
+            except TypeError:
+                continue  # foreign/future writer's row — skip, don't crash
             if intent_id is not None and sig.intent_id is not None and sig.intent_id != intent_id:
                 continue
             if since is not None and sig.captured_at < since:

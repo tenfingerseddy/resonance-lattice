@@ -12,7 +12,6 @@ which arm of the resolver fired.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from ..state import declare_workspace, resolve_workspace, state_root_for

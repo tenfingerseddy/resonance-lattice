@@ -1,16 +1,15 @@
-"""`rlat memory <subcommand>` — v2.1 flat-memory CLI.
+"""`rlat memory <subcommand>` — flat-memory CLI.
 
 The Sub-MVP slice of the §0.7 surface:
 
-  add    — append a manual `["factual", ...]` row to the per-user store
+  add    — append a manual `["factual", ...]` claim to the per-user store
   list   — tabular view of the sidecar with optional polarity / recurrence filters
   gc     — manual escape hatch (§0.5); never automatic
 
-The full §0.7 surface ships: add / list / recall / distil / train /
-feedback / verify / consolidate / gc / doctor / migrate, plus the
+The full §0.7 surface ships: add / list / recall / train /
+feedback / verify / consolidate / gc / doctor, plus the
 eval / rollup / dedup / session-mark / corroborate / capture / hook
-entry points. v2.0 names with no v2.1 successor (`primer`) print a
-deprecation banner.
+entry points.
 """
 
 from __future__ import annotations
@@ -22,13 +21,14 @@ import sys
 from pathlib import Path
 
 from ..memory._common import workspace_tag_for_cwd
-from ..memory.feedback import FEEDBACK_VERDICTS
-from ..memory.store import (
-    MANUAL_TRANSCRIPT_HASH,
-    PRIMARY_POLARITY,
-    Memory,
-    path_for_user,
+from ..memory.claim_store import (
+    ExperienceClaimStore,
+    _claim_to_row,
+    new_experience_claim,
 )
+from ..memory.feedback import FEEDBACK_VERDICTS
+from ..memory.store import path_for_user
+from ..state.claim import MANUAL_TRANSCRIPT_HASH, PRIMARY_POLARITY, Claim
 from ._errors import EXIT_OK, EXIT_USER_ERROR, user_error as _user_error
 
 DEFAULT_PRIMARY_POLARITY = "factual"
@@ -37,10 +37,8 @@ PRIMARY_CHOICES: list[str] = sorted(PRIMARY_POLARITY)
 # Exit codes:
 #   0 — success (EXIT_OK, imported)
 #   1 — user input error (EXIT_USER_ERROR, imported)
-#   2 — deprecated subcommand: removed permanently in v2.1
 #   3 — slash-command surface: the operation runs as a Claude Code slash
 #       command, not a CLI body (currently `train <task>` → /rlat-train)
-EXIT_DEPRECATED = 2
 EXIT_PENDING_MVP = 3
 
 
@@ -64,30 +62,29 @@ def _parse_iso_strict(value: str) -> _dt.datetime:
     return parsed
 
 
-def _open_memory(args: argparse.Namespace) -> Memory:
+def _open_memory(args: argparse.Namespace) -> ExperienceClaimStore:
     """Resolve the per-user memory root.
 
     `--memory-root` overrides the *base* directory (default
     `~/.rlat/memory/`); `--user` always picks the per-user subdirectory
-    inside it. Passing both composes as `<base>/<user>/`. Memory's own
+    inside it. Passing both composes as `<base>/<user>/`. The store's own
     constructor still accepts an exact root for tests + internal callers
     that need to bypass the user layer.
     """
     base = Path(args.memory_root) if args.memory_root else None
-    return Memory(root=path_for_user(user_id=args.user, root=base))
+    return ExperienceClaimStore(root=path_for_user(user_id=args.user, root=base))
 
 
-def _print_banner(message: str, *, code: int) -> int:
-    print(message, file=sys.stderr)
-    return code
-
-
-def _deprecation_banner(old: str, replacement: str) -> int:
-    return _print_banner(
-        f"[rlat memory] `{old}` was removed in v2.1.\n"
-        f"  → use `{replacement}` instead.\n"
-        f"  See .claude/plans/fabric-agent-flat-memory.md §15 for the full deletion list.",
-        code=EXIT_DEPRECATED,
+def _claim_summary(claim: Claim, *, max_text: int = 80) -> str:
+    """Single-line tabular view of a claim — claim_id, primary polarity,
+    recurrence, bad-flag, and truncated content."""
+    text = claim.content.replace("\n", " ").strip()
+    if len(text) > max_text:
+        text = text[: max_text - 1] + "…"
+    bad = " [bad]" if claim.facts.is_bad else ""
+    return (
+        f"{claim.claim_id}  [{claim.facts.primary_polarity():<7}]  "
+        f"rec={claim.facts.recurrence_count:<3}{bad}  {text}"
     )
 
 
@@ -104,8 +101,8 @@ def cmd_memory_add(args: argparse.Namespace) -> int:
     if not text:
         return _user_error("refusing to add empty text")
 
-    # §0.6 retrieval drops rows without a `workspace:<hash>` or
-    # `cross-workspace` scope tag — manual rows must always carry one or
+    # §0.6 retrieval drops claims without a `workspace:<hash>` or
+    # `cross-workspace` scope tag — manual claims must always carry one or
     # the other or they're unretrievable. Default to the cwd hash;
     # `--scope cross-workspace` adds the cross-workspace tag in addition.
     polarity = [args.polarity, workspace_tag_for_cwd()]
@@ -113,16 +110,18 @@ def cmd_memory_add(args: argparse.Namespace) -> int:
         polarity.append("cross-workspace")
 
     memory = _open_memory(args)
+    claim = new_experience_claim(
+        content=text,
+        polarity=tuple(polarity),
+        transcript_hash=MANUAL_TRANSCRIPT_HASH,
+    )
     try:
-        row_id = memory.add_row(
-            text=text,
-            polarity=polarity,
-            transcript_hash=MANUAL_TRANSCRIPT_HASH,
-        )
+        memory.write(claim)
     except ValueError as exc:
         return _user_error(str(exc))
 
-    print(f"[rlat memory] added row {row_id} ({polarity[0]})", file=sys.stderr)
+    print(f"[rlat memory] added claim {claim.claim_id} ({polarity[0]})",
+          file=sys.stderr)
     return EXIT_OK
 
 
@@ -133,29 +132,31 @@ def cmd_memory_add(args: argparse.Namespace) -> int:
 
 def cmd_memory_list(args: argparse.Namespace) -> int:
     memory = _open_memory(args)
-    rows, _ = memory.read_all()
+    claims = memory.read_all()
 
-    rows = [
-        r
-        for r in rows
-        if (args.polarity is None or args.polarity in r.polarity)
-        and (args.min_recurrence is None or r.recurrence_count >= args.min_recurrence)
-        and (args.include_bad or not r.is_bad)
+    claims = [
+        c
+        for c in claims
+        if (args.polarity is None or args.polarity in c.facts.polarity)
+        and (args.min_recurrence is None
+             or c.facts.recurrence_count >= args.min_recurrence)
+        and (args.include_bad or not c.facts.is_bad)
     ]
-    rows.sort(key=lambda r: (r.recurrence_count, r.created_at), reverse=True)
+    claims.sort(
+        key=lambda c: (c.facts.recurrence_count, c.created_at), reverse=True)
     if args.limit is not None:
-        rows = rows[: args.limit]
+        claims = claims[: args.limit]
 
     if args.format == "json":
-        print(json.dumps([r.to_jsonl_dict() for r in rows], indent=2))
+        print(json.dumps([_claim_to_row(c) for c in claims], indent=2))
         return EXIT_OK
 
-    if not rows:
-        print("(no rows match)", file=sys.stderr)
+    if not claims:
+        print("(no claims match)", file=sys.stderr)
         return EXIT_OK
-    for row in rows:
-        print(row.summary())
-    print(f"\n[rlat memory] {len(rows)} row(s)", file=sys.stderr)
+    for claim in claims:
+        print(_claim_summary(claim))
+    print(f"\n[rlat memory] {len(claims)} claim(s)", file=sys.stderr)
     return EXIT_OK
 
 
@@ -196,23 +197,23 @@ def _run_recall_oneshot(args: argparse.Namespace) -> int:
         auto_tune_cold_start=True,
     )
     if args.polarity is not None:
-        hits = [h for h in hits if args.polarity in h.row.polarity]
+        hits = [h for h in hits if args.polarity in h.claim.facts.polarity]
 
     if args.format == "json":
         print(json.dumps(
-            [{"row": h.row.to_jsonl_dict(), "cosine": h.cosine} for h in hits],
+            [{"row": _claim_to_row(h.claim), "cosine": h.cosine} for h in hits],
             indent=2,
         ))
         return EXIT_OK
 
     if not hits:
-        print("(no rows pass the §0.6 gates for this query)", file=sys.stderr)
+        print("(no claims pass the §0.6 gates for this query)", file=sys.stderr)
         return EXIT_OK
     for hit in hits:
         if args.explain:
-            print(f"{hit.row.summary()}  cos={hit.cosine:.3f}")
+            print(f"{_claim_summary(hit.claim)}  cos={hit.cosine:.3f}")
         else:
-            print(hit.row.summary())
+            print(_claim_summary(hit.claim))
     print(f"\n[rlat memory] {len(hits)} hit(s)", file=sys.stderr)
     return EXIT_OK
 
@@ -254,46 +255,14 @@ def _run_recall_daemon(args: argparse.Namespace) -> int:
 
 def cmd_memory_doctor(args: argparse.Namespace) -> int:
     """`rlat memory doctor` — probe per-user store + daemon."""
-    from ..field.encoder import MODEL_ID
+    from ..field.encoder import get_pinned_revision
     from ..memory.daemon import diagnose
 
     memory = _open_memory(args)
-    report = diagnose(memory.root, encoder_revision=MODEL_ID)
+    report = diagnose(memory.root, encoder_revision=get_pinned_revision())
     for check in report.checks:
         marker = "OK" if check["ok"] else "FAIL"
         print(f"[{marker}] {check['name']}: {check['message']}")
-    return EXIT_OK
-
-
-def cmd_memory_migrate(args: argparse.Namespace) -> int:
-    """`rlat memory migrate <v2.0-root> --to <v2.1-root> --user <id>`.
-
-    One-shot v2.0 LayeredMemory → v2.1 flat-memory migration per §14.4.
-    Lossy by design (see §14.5 honest list); recommended first invocation
-    is `--dry-run` to preview the polarity-heuristic classification.
-    """
-    from ..memory.migrate import migrate
-
-    v20_root = Path(args.v20_root)
-    v21_root = Path(args.to)
-    if not v20_root.exists():
-        return _user_error(f"v2.0 memory root not found: {v20_root}")
-    if args.polarity_default not in PRIMARY_POLARITY:
-        return _user_error(
-            f"--polarity-default {args.polarity_default!r} not in "
-            f"{sorted(PRIMARY_POLARITY)}"
-        )
-    try:
-        result = migrate(
-            v20_root,
-            v21_root=v21_root,
-            user_id=args.migrate_user,
-            dry_run=args.dry_run,
-            polarity_default=args.polarity_default,
-        )
-    except Exception as exc:
-        return _user_error(f"migrate failed: {type(exc).__name__}: {exc}")
-    print(result.summary(), file=sys.stderr)
     return EXIT_OK
 
 
@@ -325,7 +294,7 @@ def cmd_memory_eval(args: argparse.Namespace) -> int:
     import json as _json
 
     from ..state import (
-        OutcomeLedger,
+        ClaimOutcomeLog,
         RecallCache,
         WindowSpec,
         aggregate_windows,
@@ -344,12 +313,12 @@ def cmd_memory_eval(args: argparse.Namespace) -> int:
     # Read ledger + cache + memory depth once and reuse across all
     # windows — without this, default `--sessions=20` would do 40 full
     # JSONL parses where 2 + filtering does the same work.
-    outcomes = list(OutcomeLedger(state_root).iter_records())
+    outcomes = list(ClaimOutcomeLog(state_root).iter_records(kind="intent"))
     recalls = RecallCache(state_root).read_recent(limit=None)
-    rows, _ = memory.read_all()
+    claims = memory.read_all()
     memory_depth: dict[str, int] = {}
-    for row in rows:
-        memory_depth[row.level] = memory_depth.get(row.level, 0) + 1
+    for claim in claims:
+        memory_depth[claim.kind] = memory_depth.get(claim.kind, 0) + 1
 
     if args.since is not None or args.until is not None:
         # Explicit window overrides the daily-window default. Must be
@@ -440,7 +409,7 @@ def cmd_memory_rollup(args: argparse.Namespace) -> int:
     last 2 weeks. Default N=2 is the "this week vs last week" case.
     """
     from ..state import (
-        OutcomeLedger,
+        ClaimOutcomeLog,
         RecallCache,
         aggregate_windows,
         compute_session_scorecard,
@@ -459,12 +428,12 @@ def cmd_memory_rollup(args: argparse.Namespace) -> int:
             f"--weeks must be ≥2 to compare; got {args.weeks}"
         )
 
-    outcomes = list(OutcomeLedger(state_root).iter_records())
+    outcomes = list(ClaimOutcomeLog(state_root).iter_records(kind="intent"))
     recalls = RecallCache(state_root).read_recent(limit=None)
-    rows, _ = memory.read_all()
+    claims = memory.read_all()
     memory_depth: dict[str, int] = {}
-    for row in rows:
-        memory_depth[row.level] = memory_depth.get(row.level, 0) + 1
+    for claim in claims:
+        memory_depth[claim.kind] = memory_depth.get(claim.kind, 0) + 1
 
     windows = weekly_windows(n_weeks=args.weeks)
     scorecards = [
@@ -490,6 +459,9 @@ def cmd_memory_rollup(args: argparse.Namespace) -> int:
         }, indent=2))
     else:
         print(render_comparison(comparison))
+    # Stamp so the SessionStart hook can nudge when a rollup is overdue.
+    (memory.root / ".last_rollup").write_text(
+        _dt.datetime.now(_dt.timezone.utc).isoformat(), encoding="utf-8")
     return EXIT_OK
 
 
@@ -498,21 +470,21 @@ def cmd_memory_dedup(args: argparse.Namespace) -> int:
 
     Capture-time dedup (commit 46b74013) prevents new duplicates from
     accumulating. Memory written before that fix still carries N copies
-    of every recurring captured event. This pass groups event rows by
+    of every recurring captured event. This pass groups event claims by
     `(text, workspace_tag)`, keeps the oldest of each group with
     `recurrence_count` set to the cluster total, and deletes the rest.
 
     Idempotent. `--dry-run` reports what would change without touching disk.
     """
-    from ..memory.dedup import dedup_event_rows
+    from ..memory.dedup import dedup_event_claims
 
     memory = _open_memory(args)
-    result = dedup_event_rows(memory, dry_run=args.dry_run)
+    result = dedup_event_claims(memory, dry_run=args.dry_run)
     verb = "would collapse" if args.dry_run else "collapsed"
     print(
-        f"[rlat memory] dedup: {verb} {result.rows_collapsed} row(s) into "
-        f"{result.groups_collapsed} group(s); {result.rows_examined} event "
-        f"rows examined"
+        f"[rlat memory] dedup: {verb} {result.claims_collapsed} claim(s) into "
+        f"{result.groups_collapsed} group(s); {result.claims_examined} event "
+        f"claims examined"
     )
     return EXIT_OK
 
@@ -538,66 +510,26 @@ def cmd_memory_session_mark(args: argparse.Namespace) -> int:
 
 
 def cmd_memory_corroborate(args: argparse.Namespace) -> int:
-    """`rlat memory corroborate <row_id>` — calibration mechanism 4.
+    """`rlat memory corroborate <claim_id>` — calibration mechanism 4.
 
-    The user explicitly confirms a row is trustworthy; its confidence
+    The user explicitly confirms a claim is trustworthy; its confidence
     raises one step immediately (low→medium→high→verified). A no-op
-    when the row is already `verified`.
+    when the claim is already `verified`.
     """
-    from ..memory.confidence import corroborate_row
+    from ..memory.confidence import corroborate_claim
 
     memory = _open_memory(args)
-    change = corroborate_row(memory, args.row_id)
+    change = corroborate_claim(memory, args.claim_id)
     if change is None:
-        rows, _ = memory.read_all()
-        if not any(r.row_id == args.row_id for r in rows):
-            return _user_error(f"no row with id {args.row_id!r}")
-        print(f"[rlat memory] {args.row_id} already at verified — no change",
+        claims = memory.read_all()
+        if not any(c.claim_id == args.claim_id for c in claims):
+            return _user_error(f"no claim with id {args.claim_id!r}")
+        print(f"[rlat memory] {args.claim_id} already at verified — no change",
               file=sys.stderr)
         return EXIT_OK
-    print(f"[rlat memory] corroborated {change.row_id}: "
+    print(f"[rlat memory] corroborated {change.claim_id}: "
           f"{change.from_confidence} → {change.to_confidence}",
           file=sys.stderr)
-    return EXIT_OK
-
-
-def cmd_memory_distil(args: argparse.Namespace) -> int:
-    """`rlat memory distil` — §7 LLM lesson extraction over captured rows.
-
-    Reads the recently-captured side of the per-user store, runs the
-    distil prompt against an Anthropic model, and writes the resulting
-    prefer/avoid/factual lessons back — corroborating near-duplicates
-    instead of writing new rows. Needs an Anthropic API key; a store
-    with no fresh capture rows is a no-op that returns before any LLM
-    call. `--dry-run` reports candidates without writing.
-    """
-    from ..memory.distil import distil
-    from ..memory.redaction import Redactor
-    from .intent import _maybe_llm_client
-
-    llm = _maybe_llm_client()
-    if llm is None:
-        return _user_error(
-            "distil needs an Anthropic API key "
-            "(set CLAUDE_API_2 / CLAUDE_API / ANTHROPIC_API_KEY)."
-        )
-    memory = _open_memory(args)
-    redactor = Redactor(audit_log_path=memory.root / "redaction.log")
-    result = distil(
-        store=memory, redactor=redactor, client=llm,
-        user_id=args.user or "user",
-        since=args.since, all_rows=args.all, session=args.session,
-        dry_run=args.dry_run, max_lessons=args.max_lessons,
-    )
-    verb = "would write" if args.dry_run else "wrote"
-    print(
-        f"[rlat memory] distil: processed {result.processed_count} capture "
-        f"row(s) — {verb} {len(result.written_row_ids)}, corroborated "
-        f"{len(result.corroborated_row_ids)}, skipped {result.skipped_count}",
-        file=sys.stderr,
-    )
-    for note in result.notes:
-        print(f"  note: {note}", file=sys.stderr)
     return EXIT_OK
 
 
@@ -630,7 +562,7 @@ def _make_corpus_retriever(km_path: Path, source_root: str | None):
     Loads the archive + encoder once; the returned closure runs one
     encode + dense retrieve per call. Drifted / missing passages carry
     empty text from `verify_hits` and are dropped."""
-    from ..field import ann, retrieve
+    from ..field import ann, capture, retrieve
     from ..field.encoder import Encoder
     from ..store.verified import verify_hits
     from ._load import load_or_exit, open_store_or_exit
@@ -643,7 +575,10 @@ def _make_corpus_retriever(km_path: Path, source_root: str | None):
 
     def _retrieve(query: str, top_k: int) -> list[str]:
         emb = encoder.encode([query])[0]
-        raw = retrieve(emb, handle, ann_index, contents.registry, top_k)
+        # Corpus-verification re-retrieval, not user intent — raise the hand
+        # (capture.md §3).
+        with capture.internal_retrieval():
+            raw = retrieve(emb, handle, ann_index, contents.registry, top_k)
         return [
             h.text
             for h in verify_hits(raw, store, contents.registry)
@@ -656,10 +591,10 @@ def _make_corpus_retriever(km_path: Path, source_root: str | None):
 def cmd_memory_verify(args: argparse.Namespace) -> int:
     """`rlat memory verify <corpus.rlat>` — calibration mechanism 2.
 
-    The corpus-verification scan. Checks every high-criticality row at
+    The corpus-verification scan. Checks every high-criticality claim at
     `low` or `verified` confidence against the supplied knowledge model:
-    a confirmed row goes to `verified`, a contradicted one drops to
-    `low` (the corpus-drift response for a row the source no longer
+    a confirmed claim goes to `verified`, a contradicted one drops to
+    `low` (the corpus-drift response for a claim the source no longer
     supports), a silent one is unchanged.
 
     Needs an Anthropic API key for the judge calls.
@@ -669,6 +604,11 @@ def cmd_memory_verify(args: argparse.Namespace) -> int:
     km_path = Path(args.corpus)
     if not km_path.is_file():
         return _user_error(f"corpus knowledge model not found: {km_path}")
+
+    if args.cost_cap_usd is not None and args.cost_cap_usd <= 0:
+        return _user_error(
+            f"--cost-cap-usd must be positive (got {args.cost_cap_usd})"
+        )
 
     from .intent import _maybe_llm_client
     llm = _maybe_llm_client()
@@ -683,16 +623,17 @@ def cmd_memory_verify(args: argparse.Namespace) -> int:
     results = corpus_verification_pass(
         memory, corpus=retriever, llm=llm,
         top_k=args.top_k, dry_run=args.dry_run,
+        cost_cap_usd=args.cost_cap_usd,
     )
     if not results:
-        print("(no high-criticality low/verified rows to verify)",
+        print("(no high-criticality low/verified claims to verify)",
               file=sys.stderr)
         return EXIT_OK
 
     tally = {"confirmed": 0, "contradicted": 0, "unverifiable": 0}
     for r in results:
         tally[r.verdict] += 1
-        print(f"  {r.verdict:13s} {r.row_id}  {r.reason}")
+        print(f"  {r.verdict:13s} {r.claim_id}  {r.reason}")
     suffix = " (dry-run — no writes)" if args.dry_run else ""
     print(
         f"\n[rlat memory] verify: {tally['confirmed']} confirmed, "
@@ -706,12 +647,9 @@ def cmd_memory_verify(args: argparse.Namespace) -> int:
 def cmd_memory_consolidate(args: argparse.Namespace) -> int:
     """`rlat memory consolidate` — run the session-end pass.
 
-    Sequences distil Arrow 1 + Arrow 2 (LLM-driven; skipped when no API
-    key OR `--no-llm`) → confidence raising → forget. Reports a one-line
-    summary per stage so the user sees what happened.
-
-    `--dry-run` runs every stage but skips every write; the per-stage
-    counts then describe what *would* have changed.
+    Sequences confidence raising → forget. Reports a one-line summary
+    per stage. `--dry-run` runs every stage but skips every write; the
+    per-stage counts then describe what *would* have changed.
     """
     from ..memory.session_end_pass import consolidation_pass
     from ..state import resolve_state_root
@@ -719,35 +657,91 @@ def cmd_memory_consolidate(args: argparse.Namespace) -> int:
     cwd = Path(args.cwd) if args.cwd else Path.cwd()
     state_root = resolve_state_root(cwd)
     memory = _open_memory(args)
-    llm = None
-    if not args.no_llm:
-        from .intent import _maybe_llm_client
-        llm = _maybe_llm_client()
     result = consolidation_pass(
-        memory, llm=llm, state_root=state_root, cwd=str(cwd),
-        dry_run=args.dry_run,
+        memory, state_root=state_root, dry_run=args.dry_run,
     )
-    promoted_verb = "would promote" if args.dry_run else "promoted"
-    rejected_verb = "would reject" if args.dry_run else "rejected"
-    def _arrow_line(name: str, result_obj) -> str:
-        if result_obj is None:
-            return f"{name}: skipped (no LLM)"
-        return (
-            f"{name}: {len(result_obj.promoted_row_ids)} {promoted_verb}, "
-            f"{len(result_obj.rejections)} {rejected_verb}"
-        )
-
     if args.dry_run:
         print("[rlat memory] --dry-run: pipeline ran, no writes",
               file=sys.stderr)
-    print(_arrow_line("arrow1", result.arrow1))
-    print(_arrow_line("arrow2", result.arrow2))
-    print(_arrow_line("arrow3", result.arrow3))
     confidence_verb = "would change" if args.dry_run else "change(s)"
     forget_verb = "would drop" if args.dry_run else "dropped"
     print(f"confidence: {len(result.confidence_changes)} {confidence_verb}")
     print(f"forget: {result.forget_dropped} {forget_verb}")
     return EXIT_OK
+
+
+_RLAT_HOOKS = {
+    "UserPromptSubmit": "rlat memory hook",
+    "SessionEnd": "rlat memory capture",
+}
+
+
+def merge_hook_settings(settings: dict, *, mine: bool = False) -> tuple[dict, list[str]]:
+    """Pure idempotent merge of the rlat hook entries (and optionally the
+    world-fact mining opt-in env) into a Claude Code settings dict.
+
+    Never removes, reorders, or rewrites anything foreign - existing hooks
+    and env keys pass through untouched; an rlat entry is added only when
+    its exact command is absent from that event's hook list."""
+    changes: list[str] = []
+    hooks = settings.setdefault("hooks", {})
+    for event, command in _RLAT_HOOKS.items():
+        entries = hooks.setdefault(event, [])
+        present = any(
+            h.get("command") == command
+            for e in entries if isinstance(e, dict)
+            for h in e.get("hooks", []) if isinstance(h, dict))
+        if not present:
+            entries.append({"matcher": "*",
+                            "hooks": [{"type": "command", "command": command}]})
+            changes.append(f"hooks.{event} += {command!r}")
+    if mine:
+        env = settings.setdefault("env", {})
+        if env.get("RLAT_MINE_ATTRIBUTES") != "1":
+            env["RLAT_MINE_ATTRIBUTES"] = "1"
+            changes.append("env.RLAT_MINE_ATTRIBUTES = 1")
+    return settings, changes
+
+
+def cmd_memory_install_hooks(args: argparse.Namespace) -> int:
+    """`rlat memory install-hooks` - wire the Claude Code recall +
+    capture hooks into settings.json with an idempotent merge (v3 S1:
+    registration was previously a hand-edit). `--mine` also opts the
+    workspace into world-fact mining (RLAT_MINE_ATTRIBUTES=1), the
+    E2c-validated extractor's consent gate."""
+    target = (Path.home() / ".claude" / "settings.json" if args.user
+              else Path(args.project_dir or ".") / ".claude" / "settings.json")
+    try:
+        settings = (json.loads(target.read_text(encoding="utf-8"))
+                    if target.is_file() else {})
+    except ValueError as e:
+        print(f"error: {target} is not valid JSON ({e}) - fix or remove it "
+              "first", file=sys.stderr)
+        return 1
+    if not isinstance(settings, dict):
+        print(f"error: {target} top level is not a JSON object", file=sys.stderr)
+        return 1
+    hooks = settings.get("hooks", {})
+    bad_shape = (
+        not isinstance(hooks, dict)
+        or any(not isinstance(v, list) for v in hooks.values())
+        or not isinstance(settings.get("env", {}), dict)
+    )
+    if bad_shape:
+        print(f"error: {target} has an unexpected hooks/env shape - fix or "
+              "remove the malformed section first (nothing was changed)",
+              file=sys.stderr)
+        return 1
+    settings, changes = merge_hook_settings(settings, mine=args.mine)
+    if not changes:
+        print(f"[memory] {target}: rlat hooks already installed - no changes")
+        return 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    for ch in changes:
+        print(f"[memory] {target.name}: {ch}")
+    print("[memory] restart Claude Code for hooks to take effect")
+    return 0
 
 
 def cmd_memory_capture(args: argparse.Namespace) -> int:
@@ -774,11 +768,11 @@ def _format_train_status(result) -> str:
     """One status line per train operator action."""
     if result.field_changed == "recurrence_count":
         return (
-            f"[rlat memory] {result.action} {result.row_id} "
+            f"[rlat memory] {result.action} {result.claim_id} "
             f"({result.field_changed}: {result.before} -> {result.after})"
         )
     return (
-        f"[rlat memory] {result.action} {result.row_id} "
+        f"[rlat memory] {result.action} {result.claim_id} "
         f"({result.field_changed}: {str(result.before).lower()} -> "
         f"{str(result.after).lower()})"
     )
@@ -786,7 +780,7 @@ def _format_train_status(result) -> str:
 
 def cmd_memory_train(args: argparse.Namespace) -> int:
     """Train operator surface — `--bad-vote` / `--good-vote` /
-    `--corroborate` mutate individual rows. The full §8 GRPO loop ships
+    `--corroborate` mutate individual claims. The full §8 GRPO loop ships
     as the `/rlat-train` slash command (Day 9-10) — `train <task>`
     here just points at the slash command and exits 3 (pending-MVP).
     """
@@ -811,21 +805,22 @@ def cmd_memory_train(args: argparse.Namespace) -> int:
             return _user_error(
                 "`rlat memory train` requires either a <task> "
                 "argument (GRPO loop) or one of "
-                "`--bad-vote` / `--good-vote` / `--corroborate <row_id>`."
+                "`--bad-vote` / `--good-vote` / `--corroborate <claim_id>`."
             )
-        return _print_banner(
+        print(
             f"[rlat memory] `train <task>` runs the §8 GRPO loop, which "
             f"requires Claude Code's Task primitive — invoke "
             f"`/rlat-train {args.task}` from a Claude Code session "
             f"instead. The slash command ships in v2.1 MVP "
             f"(https://github.com/tenfingerseddy/resonance-lattice/issues/88).",
-            code=EXIT_PENDING_MVP,
+            file=sys.stderr,
         )
+        return EXIT_PENDING_MVP
 
     name, op, kwargs = chosen[0]
     memory = _open_memory(args)
     try:
-        result = op(store=memory, row_id=getattr(args, name), **kwargs)
+        result = op(store=memory, claim_id=getattr(args, name), **kwargs)
     except KeyError as exc:
         return _user_error(str(exc))
     print(_format_train_status(result), file=sys.stderr)
@@ -848,58 +843,39 @@ def cmd_memory_gc(args: argparse.Namespace) -> int:
         cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     memory = _open_memory(args)
-    rows, _ = memory.read_all()
-    # Per §0.5 + Appendix D D.4 (c): bad-voted rows are kept for re-distil
+    claims = memory.read_all()
+    # Per §0.5 + Appendix D D.4 (c): bad-voted claims are kept for re-distil
     # suppression. Without `--is-bad`, gc skips them entirely; `--is-bad`
-    # is the only way to delete a row tagged is_bad=True. Per §15.2 the
-    # age clock uses `last_corroborated_at`, not `created_at` — a row that
+    # is the only way to delete a claim tagged is_bad=True. Per §15.2 the
+    # age clock uses `last_corroborated_at`, not `created_at` — a claim that
     # corroborates again resets its eligibility window.
     targets = [
-        r
-        for r in rows
-        if (r.is_bad if args.is_bad else not r.is_bad)
-        and (args.polarity is None or args.polarity in r.polarity)
-        and (args.min_recurrence is None or r.recurrence_count <= args.min_recurrence)
-        and (cutoff_str is None or r.last_corroborated_at < cutoff_str)
+        c
+        for c in claims
+        if (c.facts.is_bad if args.is_bad else not c.facts.is_bad)
+        and (args.polarity is None or args.polarity in c.facts.polarity)
+        and (args.min_recurrence is None
+             or c.facts.recurrence_count <= args.min_recurrence)
+        and (cutoff_str is None
+             or c.facts.last_corroborated_at < cutoff_str)
     ]
 
     if not targets:
-        print("(no rows match the filters)", file=sys.stderr)
+        print("(no claims match the filters)", file=sys.stderr)
         return EXIT_OK
 
     if args.dry_run:
-        for r in targets:
-            print(r.summary())
+        for c in targets:
+            print(_claim_summary(c))
         print(
-            f"\n[rlat memory] would delete {len(targets)} row(s) (--dry-run; nothing written)",
+            f"\n[rlat memory] would delete {len(targets)} claim(s) (--dry-run; nothing written)",
             file=sys.stderr,
         )
         return EXIT_OK
 
-    n = memory.delete_rows([r.row_id for r in targets])
-    print(f"[rlat memory] gc deleted {n} row(s)", file=sys.stderr)
+    n = memory.delete([c.claim_id for c in targets])
+    print(f"[rlat memory] gc deleted {n} claim(s)", file=sys.stderr)
     return EXIT_OK
-
-
-# ---------------------------------------------------------------------------
-# Stubs / deprecation banners
-# ---------------------------------------------------------------------------
-
-
-# `(removed_name, v2.1 successor or guidance)`. v2.2 reclaims `consolidate`
-# for the agent-harness session-end pass (distil → confidence → forget) —
-# the v0.11 `consolidate` redirect to `distil` shipped through v2.0/v2.1
-# and is removed here.
-_DEPRECATED_SUBCOMMANDS: tuple[tuple[str, str], ...] = (
-    ("primer",
-     "the per-prompt UserPromptSubmit hook (no static primer in v2.1; see §17.3)"),
-)
-
-
-def _make_deprecation_handler(name: str, replacement: str):
-    def handler(_args: argparse.Namespace) -> int:
-        return _deprecation_banner(name, replacement)
-    return handler
 
 
 # ---------------------------------------------------------------------------
@@ -921,8 +897,8 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     )
     sub_mem = p.add_subparsers(dest="memory_subcommand", required=True)
 
-    p_add = sub_mem.add_parser("add", help="Append a manual row.")
-    p_add.add_argument("text", help="Row text (or `-` for stdin).")
+    p_add = sub_mem.add_parser("add", help="Append a manual claim.")
+    p_add.add_argument("text", help="Claim text (or `-` for stdin).")
     p_add.add_argument(
         "--polarity",
         default=DEFAULT_PRIMARY_POLARITY,
@@ -933,7 +909,7 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
         "--scope",
         default=None,
         choices=["cross-workspace"],
-        help="Scope tag. Without this, the row is workspace-implicit.",
+        help="Scope tag. Without this, the claim is workspace-implicit.",
     )
     p_add.set_defaults(func=cmd_memory_add)
 
@@ -942,7 +918,7 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     p_list.add_argument("--min-recurrence", type=int, default=None)
     p_list.add_argument("--limit", type=int, default=None)
     p_list.add_argument("--include-bad", action="store_true",
-                        help="Show is_bad rows (default: hidden).")
+                        help="Show is_bad claims (default: hidden).")
     p_list.add_argument("--format", default="text", choices=["text", "json"])
     p_list.set_defaults(func=cmd_memory_list)
 
@@ -990,6 +966,25 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     )
     p_capture.set_defaults(func=cmd_memory_capture)
 
+    p_install = sub_mem.add_parser(
+        "install-hooks",
+        help="Wire the Claude Code recall + capture hooks into settings.json "
+             "(idempotent merge; --mine opts into world-fact mining).",
+    )
+    p_install.add_argument(
+        "--user", action="store_true",
+        help="target ~/.claude/settings.json instead of the project's")
+    p_install.add_argument(
+        "--project-dir", default=None,
+        help="project root containing .claude/ (default: cwd)")
+    p_install.add_argument(
+        "--mine", action="store_true",
+        help="also set env.RLAT_MINE_ATTRIBUTES=1 - mine durable world "
+             "facts from your sessions into the project's knowledge model. "
+             "Note: LLM event extraction also runs for session capture "
+             "(one hook client serves both extractors).")
+    p_install.set_defaults(func=cmd_memory_install_hooks)
+
     p_eval = sub_mem.add_parser(
         "eval",
         help="Compute the longitudinal scorecard (useful + effortless "
@@ -1035,16 +1030,16 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
 
     p_corroborate = sub_mem.add_parser(
         "corroborate",
-        help="Calibration mechanism 4 — user corroboration. Raise a row's "
+        help="Calibration mechanism 4 — user corroboration. Raise a claim's "
              "confidence one step (low→medium→high→verified).",
     )
-    p_corroborate.add_argument("row_id", help="The row id to corroborate.")
+    p_corroborate.add_argument("claim_id", help="The claim id to corroborate.")
     p_corroborate.set_defaults(func=cmd_memory_corroborate)
 
     p_verify = sub_mem.add_parser(
         "verify",
         help="Calibration mechanism 2 — corpus verification. Check "
-             "high-criticality low/verified rows against a knowledge "
+             "high-criticality low/verified claims against a knowledge "
              "model; confirm raises to verified, contradict drops to low.",
     )
     p_verify.add_argument(
@@ -1052,7 +1047,7 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     )
     p_verify.add_argument(
         "--top-k", type=int, default=5,
-        help="Corpus passages retrieved per row (default: 5).",
+        help="Corpus passages retrieved per claim (default: 5).",
     )
     p_verify.add_argument(
         "--source-root", default=None,
@@ -1062,6 +1057,12 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     p_verify.add_argument(
         "--dry-run", action="store_true",
         help="Run the judge but skip the confidence write.",
+    )
+    p_verify.add_argument(
+        "--cost-cap-usd", type=float, default=None,
+        help="Cap cumulative LLM spend in USD; the pass stops before the "
+             "next call once observed spend crosses the cap. Remaining "
+             "qualifying claims stay scannable for the next pass.",
     )
     p_verify.set_defaults(func=cmd_memory_verify)
 
@@ -1087,7 +1088,7 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
 
     p_dedup = sub_mem.add_parser(
         "dedup",
-        help="Retroactively collapse same-text-same-workspace event rows. "
+        help="Retroactively collapse same-text-same-workspace event claims. "
              "Idempotent — safe to re-run.",
     )
     p_dedup.add_argument(
@@ -1095,34 +1096,6 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
         help="report what would collapse; do not touch disk",
     )
     p_dedup.set_defaults(func=cmd_memory_dedup)
-
-    p_distil = sub_mem.add_parser(
-        "distil",
-        help="Run §7 LLM lesson extraction over recently-captured rows; "
-             "writes prefer/avoid/factual lessons back to the store.",
-    )
-    p_distil.add_argument(
-        "--since", default=None,
-        help="Only distil capture rows created after this ISO-8601 "
-             "timestamp (overrides the saved watermark).",
-    )
-    p_distil.add_argument(
-        "--all", action="store_true",
-        help="Distil every capture row, ignoring the watermark.",
-    )
-    p_distil.add_argument(
-        "--session", default=None,
-        help="Distil only the capture rows of one transcript hash.",
-    )
-    p_distil.add_argument(
-        "--max-lessons", type=int, default=2,
-        help="Cap on lessons written per invocation (default: 2).",
-    )
-    p_distil.add_argument(
-        "--dry-run", action="store_true",
-        help="Report the candidate lessons without writing.",
-    )
-    p_distil.set_defaults(func=cmd_memory_distil)
 
     p_feedback = sub_mem.add_parser(
         "feedback",
@@ -1137,15 +1110,11 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
 
     p_consolidate = sub_mem.add_parser(
         "consolidate",
-        help="Run the per-session-end consolidation pass: distil arrows "
-             "(events → patterns → learnings) → confidence raise → forget.",
+        help="Run the per-session-end consolidation pass: "
+             "confidence raise → forget.",
     )
     p_consolidate.add_argument(
         "--cwd", help="override workspace cwd (defaults to $PWD)",
-    )
-    p_consolidate.add_argument(
-        "--no-llm", action="store_true",
-        help="skip distil arrows; run only confidence raise + forget",
     )
     p_consolidate.add_argument(
         "--dry-run", action="store_true",
@@ -1153,39 +1122,19 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     )
     p_consolidate.set_defaults(func=cmd_memory_consolidate)
 
-    p_migrate = sub_mem.add_parser(
-        "migrate",
-        help="One-shot v2.0 LayeredMemory → v2.1 flat-memory migration "
-             "(§14). Lossy by design; --dry-run to preview the polarity "
-             "heuristic. Module deleted in v2.2.",
-    )
-    p_migrate.add_argument("v20_root", help="Path to the v2.0 memory root.")
-    p_migrate.add_argument("--to", dest="to", required=True,
-                            help="v2.1 base directory (per-user subdir created).")
-    p_migrate.add_argument("--migrate-user", dest="migrate_user", required=True,
-                            help="User id under <to>/<id>/ (distinct from --user).")
-    p_migrate.add_argument("--dry-run", action="store_true",
-                            help="Preview the migration without writing or "
-                                 "archiving the v2.0 root.")
-    p_migrate.add_argument("--polarity-default", default="factual",
-                            choices=PRIMARY_CHOICES,
-                            help="Polarity for rows the verb-scan heuristic "
-                                 "doesn't classify (default: factual).")
-    p_migrate.set_defaults(func=cmd_memory_migrate)
-
     p_train = sub_mem.add_parser(
         "train",
-        help="Mutate a row (--bad-vote / --good-vote / --corroborate). "
+        help="Mutate a claim (--bad-vote / --good-vote / --corroborate). "
              "GRPO loop runs via /rlat-train slash command.",
     )
     p_train.add_argument("task", nargs="?", default=None,
                          help="Task id (positional) — banner-only stub; use "
                               "/rlat-train slash command from Claude Code.")
-    p_train.add_argument("--bad-vote", default=None, metavar="ROW_ID",
-                         help="Mark row_id is_bad=True (drops from recall).")
-    p_train.add_argument("--good-vote", default=None, metavar="ROW_ID",
+    p_train.add_argument("--bad-vote", default=None, metavar="CLAIM_ID",
+                         help="Mark a claim is_bad=True (drops from recall).")
+    p_train.add_argument("--good-vote", default=None, metavar="CLAIM_ID",
                          help="Reverse a bad-vote: is_bad=False.")
-    p_train.add_argument("--corroborate", default=None, metavar="ROW_ID",
+    p_train.add_argument("--corroborate", default=None, metavar="CLAIM_ID",
                          help="Bump recurrence_count + last_corroborated_at.")
     p_train.add_argument("--why", default=None,
                          help="Optional rationale for --bad-vote (audit log).")
@@ -1198,20 +1147,14 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     p_gc.add_argument("--polarity", default=None, help="Filter by polarity tag.")
     p_gc.add_argument(
         "--min-recurrence", type=int, default=None,
-        help="Delete rows with recurrence_count <= this value.",
+        help="Delete claims with recurrence_count <= this value.",
     )
     p_gc.add_argument(
         "--max-age-days", type=int, default=None,
-        help="Delete rows whose created_at is older than this many days.",
+        help="Delete claims whose created_at is older than this many days.",
     )
     p_gc.add_argument("--is-bad", action="store_true",
-                      help="Delete rows tagged is_bad=true.")
+                      help="Delete claims tagged is_bad=true.")
     p_gc.add_argument("--dry-run", action="store_true",
                       help="Print what would go; don't write.")
     p_gc.set_defaults(func=cmd_memory_gc)
-
-    # v2.0 names with no v2.1 successor — banner-only.
-    for name, replacement in _DEPRECATED_SUBCOMMANDS:
-        sp = sub_mem.add_parser(name, help=f"(removed) `{name}` — see banner.")
-        sp.add_argument("args", nargs="*", help=argparse.SUPPRESS)
-        sp.set_defaults(func=_make_deprecation_handler(name, replacement))

@@ -1,6 +1,6 @@
 """incremental_sync — `rlat sync` is correct under remote edits.
 
-Six guarantees:
+Eight guarantees:
 
   1. Build → sync against unchanged upstream is a no-op.
   2. Modify one upstream file → sync re-encodes only that file's
@@ -83,7 +83,113 @@ def _sha(text: str) -> str:
     return sha256_hex(text)
 
 
+def _check_sync_parity_with_refresh() -> int:
+    """Guarantees 7 + 8 — `rlat sync` keeps the derived layers honest, like
+    `rlat refresh` does (2026-06 review: cmd_sync returned straight after
+    apply_delta, silently dropping the stored self-audit and never running
+    the insight drift cascade — so on remote archives a changed source
+    never flipped the insights citing it to stale).
+
+      7. The stored self-audit member survives (is recomputed across) a
+         delta-applying sync.
+      8. An active insight citing a passage whose upstream content changed
+         flips to stale after sync (drift cascade parity).
+    """
+    from resonance_lattice.cli.maintain import cmd_sync
+    from resonance_lattice.store import archive
+    import resonance_lattice.store.remote_index as ri_mod
+
+    from ._testutil import make_corpus_claim
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        contents_initial = {
+            "a.md": "# Alpha\n\nDoc about authentication and login flows. "
+                    "Sessions persist for 24 hours by default.",
+            "b.md": "# Beta\n\nDoc about credentials and tokens. "
+                    "Tokens rotate weekly.",
+        }
+        km = _build_remote(root, contents_initial)
+        c0 = _read(km)
+
+        # Plant a stored self-audit (what build/refresh would have stored).
+        archive.write_self_audit_in_place(km, {
+            "counts": {"high_cosine_pairs": 0, "gaps": 0},
+            "pairs": [], "gaps": [],
+        })
+        # Land an ACTIVE insight citing b.md's first passage at its current
+        # content hash — the cascade's drift trigger when b.md changes.
+        b_coord = next(c for c in c0.registry if c.source_file == "b.md")
+        claim = make_corpus_claim(
+            "tokens rotate weekly", [b_coord.passage_id],
+            [b_coord.content_hash], state="active",
+        )
+        band = np.zeros((1, c0.bands["base"].shape[1]), dtype=np.float32)
+        archive.write_insight_layer_in_place(km, [claim], band)
+
+        manifest = dict(_read(km).remote_manifest)
+        contents_modified = dict(contents_initial)
+        contents_modified["b.md"] = (
+            "# Beta v2\n\nRewritten: tokens now rotate DAILY and revocation "
+            "is immediate. The weekly-rotation claim above is stale."
+        )
+        responses = {
+            spec["url"]: contents_modified[path].encode("utf-8")
+            for path, spec in manifest.items()
+        }
+        original = ri_mod._default_opener
+        ri_mod._default_opener = _make_opener(responses)
+        try:
+            rc = cmd_sync(_Args(
+                knowledge_model=str(km),
+                upstream_manifest=None, batch_size=4,
+                dry_run=False,
+                treat_unreachable_as_removed=False,
+            ))
+        finally:
+            ri_mod._default_opener = original
+        if rc != 0:
+            print(f"[incremental_sync] FAIL guarantees 7+8: sync rc={rc}",
+                  file=sys.stderr)
+            return 1
+
+        rep = archive.read_self_audit(km)
+        if not rep:
+            print("[incremental_sync] FAIL guarantee 7: stored self-audit "
+                  "dropped by sync (refresh preserves/recomputes it)",
+                  file=sys.stderr)
+            return 1
+        print("[incremental_sync] guarantee 7 (self-audit survives sync) OK",
+              file=sys.stderr)
+
+        c2 = _read(km)
+        states = [cl.state for cl in c2.insights]
+        if states != ["stale"]:
+            print(f"[incremental_sync] FAIL guarantee 8: citing insight not "
+                  f"flipped stale after upstream change (states={states})",
+                  file=sys.stderr)
+            return 1
+        print("[incremental_sync] guarantee 8 (sync drift cascade) OK",
+              file=sys.stderr)
+    return 0
+
+
+
 def run() -> int:
+    # Hermeticity guard: `store/remote.py` binds `_default_opener` BY VALUE
+    # (separate from remote_index's), and RemoteStore paths (e.g. a drift
+    # re-check) would otherwise hit the real urllib opener. Block it for
+    # the whole suite — any URL raises ConnectionError, never live network.
+    import resonance_lattice.store.remote as _remote_mod
+    _remote_original = _remote_mod._default_opener
+    _remote_mod._default_opener = _make_opener({})
+    try:
+        return _run_body()
+    finally:
+        _remote_mod._default_opener = _remote_original
+
+
+def _run_body() -> int:
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         contents_initial = {
@@ -114,7 +220,7 @@ def run() -> int:
             rc = cmd_sync(_Args(
                 knowledge_model=str(km),
                 upstream_manifest=None, batch_size=4,
-                discard_optimised=False, dry_run=False,
+                dry_run=False,
                 treat_unreachable_as_removed=False,
             ))
         finally:
@@ -148,7 +254,7 @@ def run() -> int:
             rc = cmd_sync(_Args(
                 knowledge_model=str(km),
                 upstream_manifest=None, batch_size=4,
-                discard_optimised=False, dry_run=False,
+                dry_run=False,
                 treat_unreachable_as_removed=False,
             ))
         finally:
@@ -210,7 +316,7 @@ def run() -> int:
             rc = cmd_sync(_Args(
                 knowledge_model=str(km),
                 upstream_manifest=catalog_url, batch_size=4,
-                discard_optimised=False, dry_run=False,
+                dry_run=False,
             ))
         finally:
             ri_mod._default_opener = original_opener
@@ -279,7 +385,7 @@ def run() -> int:
             rc_abort = cmd_sync(_Args(
                 knowledge_model=str(km_unreach),
                 upstream_manifest=None, batch_size=4,
-                discard_optimised=False, dry_run=False,
+                dry_run=False,
                 treat_unreachable_as_removed=False,
             ))
         finally:
@@ -305,7 +411,7 @@ def run() -> int:
             rc_proceed = cmd_sync(_Args(
                 knowledge_model=str(km_unreach),
                 upstream_manifest=None, batch_size=4,
-                discard_optimised=False, dry_run=False,
+                dry_run=False,
                 treat_unreachable_as_removed=True,
             ))
         finally:
@@ -324,6 +430,10 @@ def run() -> int:
             return 1
         print("[incremental_sync] guarantee 6 (unavailable-bucket safety) OK",
               file=sys.stderr)
+
+    rc = _check_sync_parity_with_refresh()
+    if rc != 0:
+        return rc
 
     print("[incremental_sync] PASS", file=sys.stderr)
     return 0

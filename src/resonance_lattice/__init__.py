@@ -1,15 +1,18 @@
-"""Resonance Lattice — knowledge-model retrieval for AI assistants.
+"""Resonance Lattice — a knowledge model that knows its own world.
 
-v2.0.0 base-first architecture:
-- Field (router):      gte-modernbert-base 768d, dense cosine, opt-in MRL optimised d=512.
-- Store (authority):   bundled / local / remote, knowledge-model format v4 (ZIP+JSON+NPZ).
-- Reader:              not in v2.0 — consumer composes synthesis on retrieved passages.
+Three layers:
+- Field (router):      gte-modernbert-base 768d, dense cosine.
+- Store (authority):   bundled / local / remote, knowledge-model format v4 (ZIP+JSON+NPZ),
+                       plus the insight band — earned claims about the corpus and its world
+                       (facts, standing constraints, tried-and-falsified findings).
+- Grounded synthesis:  passages and, via deep-search, faithfully-grounded answers —
+                       every claim traces to the corpus (docs/internal/GROUNDING_MODEL.md).
 
-See `.claude/plans/base-first-rebuild.md` for the technical spec and
-`.claude/plans/yes-i-want-to-glowing-lynx.md` for the process plan.
+Spec: docs/internal/ARCHITECTURE.md. The version below must match
+pyproject.toml's `[project] version` (cli_smoke guarantee K6 enforces parity).
 """
 
-__version__ = "2.1.0a15"
+__version__ = "3.0.0"
 
 # The public Python flow for v2.0 is `archive.read(path)` + `open_store(...)`;
 # RQL ops compose on top. See `docs/internal/RQL.md`. The `build.*` symbols

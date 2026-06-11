@@ -21,12 +21,19 @@ def cmd_reverify(args: argparse.Namespace) -> int:
     except ImportError:
         print(
             "error: rlat reverify requires the `anthropic` package "
-            "(pip install rlat[optimise] or pip install anthropic)",
+            "(pip install rlat[llm] or pip install anthropic)",
             file=sys.stderr,
         )
         return 1
 
-    from ..optimise.synth_queries import api_key_or_error
+    if args.cost_cap_usd is not None and args.cost_cap_usd <= 0:
+        print(
+            f"error: --cost-cap-usd must be positive (got {args.cost_cap_usd})",
+            file=sys.stderr,
+        )
+        return 1
+
+    from .._anthropic import api_key_or_error
     try:
         api_key = api_key_or_error()
     except RuntimeError as e:
@@ -39,7 +46,7 @@ def cmd_reverify(args: argparse.Namespace) -> int:
     km_path = Path(args.knowledge_model)
     contents = archive.read(km_path)
     stale_count = sum(
-        1 for ins in contents.insights if ins.verdict_state == "stale"
+        1 for ins in contents.insights if ins.state == "stale"
     )
     if stale_count == 0:
         print(f"[reverify] {km_path}: no stale insights — nothing to do")
@@ -51,17 +58,18 @@ def cmd_reverify(args: argparse.Namespace) -> int:
     client = anthropic.Anthropic(api_key=api_key)
     outcomes = reverify_stale_insights(
         km_path, client, model=args.model, limit=args.limit,
+        cost_cap_usd=args.cost_cap_usd,
     )
 
-    n_accepted = sum(1 for o in outcomes if o.new_state == "accepted")
+    n_active = sum(1 for o in outcomes if o.new_state == "active")
     n_retired = sum(1 for o in outcomes if o.new_state == "retired")
     n_skipped = sum(1 for o in outcomes if o.new_state == "skipped")
 
     print(f"[reverify] processed {len(outcomes)} stale insight(s): "
-          f"accepted={n_accepted} retired={n_retired} skipped={n_skipped}")
+          f"active={n_active} retired={n_retired} skipped={n_skipped}")
     if args.verbose:
         for o in outcomes:
-            print(f"  {o.insight_id}  -> {o.new_state}  ({o.reason})")
+            print(f"  {o.claim_id}  -> {o.new_state}  ({o.reason})")
     return 0
 
 
@@ -72,7 +80,12 @@ def add_subparser(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument("knowledge_model", help="Path to a .rlat knowledge model")
     p.add_argument("--limit", type=int, default=None,
-                   help="Cap number of LLM calls (cost control)")
+                   help="Cap number of LLM calls (hard count)")
+    p.add_argument("--cost-cap-usd", type=float, default=None,
+                   help="Cap cumulative LLM spend in USD; "
+                        "the pass stops before the next call once "
+                        "observed spend crosses the cap. "
+                        "Remaining insights stay stale for the next pass.")
     p.add_argument("--model", default=None,
                    help="Anthropic model id (default: SONNET_MODEL)")
     p.add_argument("--verbose", "-v", action="store_true",

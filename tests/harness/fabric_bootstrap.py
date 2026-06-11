@@ -101,6 +101,13 @@ class _MockDownload:
     def readall(self) -> bytes:
         return self._payload
 
+    def chunks(self):
+        """Mirror StorageStreamDownloader.chunks() — yield the payload in a few
+        blocks so fetch_rlat's chunked-download loop is exercised."""
+        step = max(len(self._payload) // 3, 1)
+        for i in range(0, len(self._payload), step):
+            yield self._payload[i:i + step]
+
 
 class _MockDirectoryClient:
     """Quacks like the stripped DataLakeDirectoryClient the Fabric UDF
@@ -190,7 +197,6 @@ def run() -> int:
             registry=c.registry,
             bands=c.bands,
             ann_blobs=c.ann_blobs,
-            projections=c.projections,
         )
 
         payload = _km_bytes(km_path)
@@ -200,7 +206,7 @@ def run() -> int:
 
         # ---- Guarantee 1: cold bootstrap returns a state tuple ----
         state, cold = bs.bootstrap(lakehouse, "team-docs")
-        contents, store, enc = state
+        contents, store, enc, _ann = state
         passed_g1 = (
             cold is True
             and len(contents.registry) > 0
@@ -231,13 +237,12 @@ def run() -> int:
             registry=c2.registry,
             bands=c2.bands,
             ann_blobs=c2.ann_blobs,
-            projections=c2.projections,
         )
         t2 = t1 + datetime.timedelta(hours=1)
         lakehouse._dir._files["rlat/team-docs.rlat"] = (km2.read_bytes(), t2)
 
         state3, cold3 = bs.bootstrap(lakehouse, "team-docs")
-        contents3, _, _ = state3
+        contents3, _, _, _ = state3
         passed_g3 = (
             cold3 is True
             and id(state3) != prev_state_id
@@ -260,7 +265,6 @@ def run() -> int:
                 registry=ci.registry,
                 bands=ci.bands,
                 ann_blobs=ci.ann_blobs,
-                projections=ci.projections,
             )
             t_i = t1 + datetime.timedelta(minutes=i)
             ts.append(t_i)
@@ -329,7 +333,6 @@ def run() -> int:
                 registry=cb.registry,
                 bands=cb.bands,
                 ann_blobs=cb.ann_blobs,
-                projections=cb.projections,
             )
         t_blank = t1 + datetime.timedelta(hours=2)
         lakehouse._dir._files["rlat/blank.rlat"] = (km_blank.read_bytes(), t_blank)
@@ -357,7 +360,6 @@ def run() -> int:
             registry=c8.registry,
             bands=c8.bands,
             ann_blobs=c8.ann_blobs,
-            projections=c8.projections,
         )
         t_g8 = t1 + datetime.timedelta(hours=3)
         lakehouse._dir._files["rlat/g8.rlat"] = (km_g8.read_bytes(), t_g8)
@@ -404,7 +406,7 @@ def run() -> int:
         bs._ENCODER_CACHE.clear()
         # Use km_g8 (already in mock lakehouse from guarantee 8).
         state_g8, _cold = bs.bootstrap(lakehouse, "g8")
-        _, _, enc_in_state = state_g8
+        _, _, enc_in_state, _ = state_g8
         v_warm = bs.embed_query(lakehouse, "what is auth")
         # Identity-equal proves the warm path actually reused the existing
         # encoder, not silently fell through to the fallback.
@@ -512,6 +514,58 @@ def run() -> int:
 
         passed_g11 = upload_ok and seed_ok
         failures += not _check(passed_g11, "guarantee 11 (encoder cache self-heals via OneLake)")
+
+        # ---- Guarantee 12: slice_stream_native — the OOM-safe streaming slicer ----
+        # Fetch the .rlat + embed + stream_topk -> deduped keys, WITHOUT
+        # bootstrap (no band load, no faiss). Build a row-mode (keyed) km so
+        # stream_topk yields keys; the ZeroEncoder zero-band ranks by the
+        # key tie-break, enough to exercise fetch + encode + stream + dedup +
+        # the {keys, hits} wire shape.
+        from resonance_lattice.build.pipeline import build_rlat
+        from resonance_lattice.build.walker import RowSourceWalker
+        from resonance_lattice.config import Kind, StoreMode
+        from ._testutil import ZeroEncoder as _ZE
+
+        rows_km = root / "slicer-rows.rlat"
+        build_rlat(
+            RowSourceWalker(
+                [("K1", "peaceful quiet flat"), ("K2", "bright airy loft"),
+                 ("K3", "central busy studio")],
+                source_name="listings"),
+            rows_km, store_mode=StoreMode.BUNDLED, kind=Kind.CORPUS,
+            encoder=_ZE(), row_mode=True, batch_size=2)
+        cr = archive.read(rows_km)
+        cr.metadata.backbone.revision = "test-rev-aaaaaaaa"
+        # Preserve the bundled source/ (zstd-framed, copied through as-is) so the
+        # revision-stamp rewrite doesn't strip it — SourceSnippets reads it for the
+        # snippet receipt. archive.read is lazy on source, so re-read the members.
+        import zipfile as _zipfile
+        with _zipfile.ZipFile(rows_km) as _zf:
+            _src = {n[len("source/"):]: _zf.read(n)
+                    for n in _zf.namelist() if n.startswith("source/")}
+        archive.write(path=rows_km, metadata=cr.metadata, registry=cr.registry,
+                      bands=cr.bands, ann_blobs=cr.ann_blobs, source_files=_src)
+        lakehouse._dir._files["rlat/slicer-rows.rlat"] = (rows_km.read_bytes(), t1)
+        bs._STATE.clear()
+        bs._ENCODER_CACHE.clear()
+
+        out = bs.slice_stream_native(lakehouse, "slicer-rows", "anything", 2)
+        all_keys = {"K1", "K2", "K3"}
+        src = {"K1": "peaceful quiet flat", "K2": "bright airy loft",
+               "K3": "central busy studio"}
+        passed_g12 = (
+            isinstance(out, dict)
+            and set(out.get("keys", [])) <= all_keys
+            and len(out.get("keys", [])) == 2                     # top_k=2
+            and len(set(out["keys"])) == len(out["keys"])          # deduped
+            and all(set(h) == {"key", "score", "text"} for h in out.get("hits", []))
+            and all(h["text"] == src[h["key"]] for h in out["hits"])  # snippet receipt
+            and [h["key"] for h in out["hits"]] == out["keys"]     # hits align with keys
+        )
+        failures += not _check(passed_g12, "guarantee 12 (slice_stream_native streaming slicer)")
+        # Release the cached band mmap so the tempdir cleanup can unlink the
+        # /tmp .npy on Windows (Linux/Fabric unlinks fine while mmap'd).
+        bs._clear_slicer_cache()
 
     if failures:
         print(f"[fabric_bootstrap] {failures} guarantee(s) failed", file=sys.stderr)

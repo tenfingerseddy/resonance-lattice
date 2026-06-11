@@ -1,0 +1,426 @@
+{
+ "summary": {
+  "model": "claude-haiku-4-5",
+  "decisive_subset": "pre-registered run-2 subset (unchanged)",
+  "blind_full": "5/20",
+  "blind_decisive_confirmed": "5/7",
+  "rates_on_decisive": {
+   "ledger": 0.0,
+   "topical": 0.8571428571428571,
+   "placebo": 0.7142857142857143,
+   "blind2": 0.5714285714285714
+  },
+  "collateral_blind": 1.0,
+  "collateral_served": 1.0,
+  "bars": {
+   "ledger_le_third_of_blind": true,
+   "active_ingredient_topical_minus_ledger_ge_25pp": true,
+   "placebo_flips_le_blind2_flips": true,
+   "collateral_drop_lt_10pp": true
+  },
+  "placebo_flip_ids": [
+   "q12",
+   "q18"
+  ],
+  "blind2_flip_ids": [
+   "q12",
+   "q15",
+   "q18"
+  ],
+  "agreement_with_subscription": {
+   "blind": "18/20",
+   "ledger": "7/7",
+   "topical": "7/7",
+   "placebo": "7/7",
+   "blind2": "6/7",
+   "coll_blind": "8/8",
+   "coll_served": "8/8"
+  }
+ },
+ "verdicts": [
+  {
+   "kind": "blind",
+   "id": "q01",
+   "recommends": true,
+   "evidence": "the answer explicitly endorses adding a cross-encoder reranker as a valid approach: \"If recall@100 is healthy and nDCG@10 still lags, then pilot a cross-encoder over the top 50\u2013100: bge-reranker-v2-m3 (self-hosted) or Cohere Rerank 3.5 (managed)\""
+  },
+  {
+   "kind": "blind",
+   "id": "q02",
+   "recommends": true,
+   "evidence": "\"Add a cross-encoder reranker over your dense top-k. It is the single highest-leverage addition on top of a good bi-encoder\" \u2014 This is presented as a primary, affirmative recommendation with strong benefits (+3-6 nDCG@10), concrete implementation guidance, and model suggestions, without any acknowledgment of prior local failure."
+  },
+  {
+   "kind": "blind",
+   "id": "q03",
+   "recommends": false,
+   "evidence": "The answer explicitly argues \"Don't fine-tune on MS MARCO\" and instead pivots to an alternative approach (in-domain synthetic queries + hard negatives). This is a steering away from the approach under test, not a recommendation of it."
+  },
+  {
+   "kind": "blind",
+   "id": "q04",
+   "recommends": false,
+   "evidence": "\"Generally no \u2014 not on public data\" and the answer explicitly advises to \"skip the public-data fine-tune\" on MS MARCO. The answer actively steers away from the approach."
+  },
+  {
+   "kind": "blind",
+   "id": "q05",
+   "recommends": false,
+   "evidence": "\"It's feasible but rarely pays off in quality; treat it as a cost lever, not a quality lever\" and \"Better-odds alternatives first: hard-negative mining... cross-encoder reranker... upgrading the base model.\" The answer explicitly steers away from recommending this approach, positioning it as rarely worthwhile and recommending superior alternatives instead."
+  },
+  {
+   "kind": "blind",
+   "id": "q06",
+   "recommends": false,
+   "evidence": "\"Not as a first move\" and \"Per-corpus MRL adapters are an ops and quality trap\" \u2014 the answer explicitly rejects the approach as primary recommendation and steers toward alternatives (HNSW/IVF-PQ, scalar quantization, shared Matryoshka models instead)."
+  },
+  {
+   "kind": "blind",
+   "id": "q07",
+   "recommends": false,
+   "evidence": "The answer explicitly advises \"Don't blend structure signals directly into the ranking score\" and states this \"almost always regress nDCG@10.\" It recommends alternatives instead (chunking at indexing time, learned rerankers), but does NOT recommend the approach under test as a primary solution or endorsed option."
+  },
+  {
+   "kind": "blind",
+   "id": "q08",
+   "recommends": false,
+   "evidence": "not by adding them into the dense score... additively blending them into a cosine score is fragile... tend to land neutral-to-negative on BEIR-style prose... Don't touch the dense score itself."
+  },
+  {
+   "kind": "blind",
+   "id": "q09",
+   "recommends": false,
+   "evidence": "\"Be careful about baking BM25 scores into the artifact as a precomputed 'band.'\" The answer explicitly steers away from the approach under test by advising against precomputing lexical scores into the index artifact, instead recommending running BM25 as a parallel retriever with query-time fusion. This is a rejection of the precomputed band strategy, not an endorsement of it."
+  },
+  {
+   "kind": "blind",
+   "id": "q10",
+   "recommends": true,
+   "evidence": "Precompute at build time. BM25-family scoring depends on corpus-level statistics... Build a proper inverted index (Lucene via Elasticsearch/OpenSearch, or Pyserini/Anserini) as a sibling artifact to your dense index"
+  },
+  {
+   "kind": "blind",
+   "id": "q11",
+   "recommends": false,
+   "evidence": "\"don't ship it as a default \u2014 test it end-to-end first, and expect it to disappoint\" and \"Only adopt if the paired end-to-end comparison shows a significant win\" - this is explicitly steering away from the approach"
+  },
+  {
+   "kind": "blind",
+   "id": "q12",
+   "recommends": false,
+   "evidence": "\"Be cautious \u2014 CRAG-style filtering usually costs more quality than the tokens are worth\" and \"If you still pilot CRAG filtering, gate the rollout on a paired A/B... Expect single-shot synthesis to be more sensitive to filtering\" - the answer actively steers away from the approach, lists failure modes, and proposes alternatives first"
+  },
+  {
+   "kind": "blind",
+   "id": "q13",
+   "recommends": false,
+   "evidence": "The answer explicitly steers away from the approach under test: \"Mostly no \u2014 don't make an upfront LLM classifier the gatekeeper.\" The primary recommendation is instead \"escalate on evidence, not prediction\" and to avoid the small-model router approach in favor of an evidence-driven alternative."
+  },
+  {
+   "kind": "blind",
+   "id": "q14",
+   "recommends": false,
+   "evidence": "The answer explicitly recommends AGAINST the approach: \"Skip the prompt classifier \u2014 prompt-only 'query complexity' routers (Adaptive-RAG style) are poorly calibrated, add a model call to every query, and typically over-route.\" It then proposes an alternative pattern (retrieve-then-decide) instead."
+  },
+  {
+   "kind": "blind",
+   "id": "q15",
+   "recommends": true,
+   "evidence": "The answer provides a detailed \"Practical recipe\" that prescriptively guides implementation: \"Generate in-domain training pairs\", \"Keep the head small\", \"Apply the same head to queries and documents\", and \"Hold out real queries per domain and gate on nDCG@10\". This is affirmative guidance to try the approach, without acknowledging any prior local failure at the organization."
+  },
+  {
+   "kind": "blind",
+   "id": "q16",
+   "recommends": false,
+   "evidence": "\"probably not as a default\" and \"If you still trial projections, gate hard\" \u2014 the answer actively recommends against this as a primary approach, acknowledging it may cause \"overfitting\" and \"cross-corpus regression,\" and explicitly steers toward alternatives: \"Better spend: hard-negative fine-tuning of the encoder, or hybrid fusion.\""
+  },
+  {
+   "kind": "blind",
+   "id": "q17",
+   "recommends": false,
+   "evidence": "\"No \u2014 don't fuse it into the ranking score by default\" and \"Blending it with cosine mostly reorders results by passage 'typicality'... which typically flattens or hurts nDCG@10\""
+  },
+  {
+   "kind": "blind",
+   "id": "q18",
+   "recommends": false,
+   "evidence": "\"Be skeptical, and don't ship it as the default scorer\" and \"Keep e5 dense as the production ranker. Treat energy as an opt-in re-rank feature\" - the answer explicitly steers away from adopting the approach and recommends keeping the existing e5 dense ranker instead."
+  },
+  {
+   "kind": "blind",
+   "id": "q19",
+   "recommends": false,
+   "evidence": "The answer explicitly rejects the approach as primary: \"Mostly no \u2014 don't expect query-free geometry to predict passage value.\" It then characterizes the specific signals as having \"known failure modes\" and states \"Topological features...have repeatedly failed to beat trivial baselines.\" The answer steers away from geometry-based value prediction, recommending instead demand-conditioned signals and explicitly identifying what geometry IS good for (detection, filtering, mapping)\u2014not passage importance scoring."
+  },
+  {
+   "kind": "blind",
+   "id": "q20",
+   "recommends": true,
+   "evidence": "The answer provides a detailed, constructive technical approach: \"Build a cosine kNN graph (k\u224820)... then compute per passage: 1. Redundancy... 2. Local density... 3. Centrality... 4. Hubness... 5. Outlierness\" with explicit composite scoring guidance. This is presented as a primary recommendation without any acknowledgment of prior local failure or rejection at the organization."
+  },
+  {
+   "kind": "ledger",
+   "id": "q01",
+   "recommends": false,
+   "evidence": "\"don't re-add an off-the-shelf cross-encoder. Your A/B already showed why\" \u2014 the answer explicitly acknowledges prior failure and explicitly recommends AGAINST the approach, offering alternative solutions instead."
+  },
+  {
+   "kind": "ledger",
+   "id": "q02",
+   "recommends": false,
+   "evidence": "The answer recommends hybrid BM25+dense as primary approach instead of the cross-encoder reranker approach under test. The answer explicitly states \"Your reranker A/B already showed the failure mode\" and proposes hybrid retrieval as the solution, while mentioning cross-encoder reranking only as a distant \"second-best option\" requiring more budget and being \"riskier.\""
+  },
+  {
+   "kind": "ledger",
+   "id": "q10",
+   "recommends": false,
+   "evidence": "The answer explicitly states the approach \"failed parity on 4 of 5 corpora (-2.5 nDCG@10)\" and uses this as evidence to argue AGAINST precomputed banding. The practical recommendation pivots to \"Run true BM25 at query time\" \u2014 a fundamentally different approach that avoids baking anything into the artifact at build time. The answer acknowledges the prior failure and steers away from the tested approach."
+  },
+  {
+   "kind": "ledger",
+   "id": "q12",
+   "recommends": false,
+   "evidence": "The answer explicitly rejects the approach: \"No \u2014 your own evidence says don't.\" It then diagnoses why it fails (\"Remove them and you trade tokens for confident hallucination\") and proposes alternative methods instead. This is steering away from the approach, not recommending it."
+  },
+  {
+   "kind": "ledger",
+   "id": "q15",
+   "recommends": false,
+   "evidence": "The answer explicitly rejects this approach: \"No \u2014 don't retry this. Your own evidence (bench/projection_heads_2025-11.md) already settles it: trained projection heads on the frozen e5-large-v2 went 0-for-9\" and clearly acknowledges prior local failure before proposing alternatives."
+  },
+  {
+   "kind": "ledger",
+   "id": "q18",
+   "recommends": false,
+   "evidence": "\"No \u2014 don't ship this\" and \"That's a structural problem...re-weighting won't fix it.\" The answer explicitly rejects the approach and cites prior local failure (\"your own evidence...already falsified exponential fusion three times\"), only proposing alternatives as different paths forward."
+  },
+  {
+   "kind": "ledger",
+   "id": "q20",
+   "recommends": false,
+   "evidence": "The answer explicitly advises against the approach: \"I'd advise against this as framed\" and cites specific local bench results showing the method \"killed 4 of 5\" signals and failed to predict passage value. The answer steers away from standalone geometry signals and proposes demand-weighted alternatives as the correct path forward."
+  },
+  {
+   "kind": "topical",
+   "id": "q01",
+   "recommends": true,
+   "evidence": "\"If recall@100 is healthy (say >0.85) but nDCG@10 lags, then yes \u2014 a cross-encoder reranker is the right next step\" and \"Use bge-reranker-v2-m3... re-scoring the top 50\u2013100\""
+  },
+  {
+   "kind": "topical",
+   "id": "q02",
+   "recommends": true,
+   "evidence": "\"Add a cross-encoder reranker over your top-k candidates \u2014 it is the highest-leverage single component on top of a dense-only stack like e5-large-v2.\" This is a direct, primary recommendation to adopt the approach without any acknowledgment of prior local failure."
+  },
+  {
+   "kind": "topical",
+   "id": "q10",
+   "recommends": true,
+   "evidence": "Recommended architecture: at build time, store the BM25 index alongside the dense embeddings as one versioned artifact... At query time, run both retrievers in parallel and fuse with Reciprocal Rank Fusion"
+  },
+  {
+   "kind": "topical",
+   "id": "q12",
+   "recommends": false,
+   "evidence": "The answer explicitly advises \"Be cautious\" and warns against this approach, listing \"Three concerns\" about why it \"usually costs more than it saves and can hurt answer quality.\" The primary recommendation is to try \"cheaper levers first\" like cross-encoder reranking or trained extractive compressors instead."
+  },
+  {
+   "kind": "topical",
+   "id": "q15",
+   "recommends": true,
+   "evidence": "\"Yes, it's cheap to try\" and \"Start symmetric: one shared linear layer (1024\u21921024), residual or identity-initialized, trained with InfoNCE\" \u2014 the answer endorses the approach as a primary recommendation with a detailed practical recipe, despite acknowledging modest gains and risks."
+  },
+  {
+   "kind": "topical",
+   "id": "q18",
+   "recommends": true,
+   "evidence": "The answer recommends: \"A/B it: final = dense + \u03bb\u00b7energy, tune \u03bb on a held-out split, gate strictly on nDCG@10. Test the negative weight (favoring atypical/surprising passages) too \u2014 it may win for specific queries.\" This is an active endorsement of trying the approach experimentally."
+  },
+  {
+   "kind": "topical",
+   "id": "q20",
+   "recommends": true,
+   "evidence": "The answer provides a detailed, actionable implementation of corpus-geometry signals with specific techniques (kNN-graph centrality, local density, frontier distance, local intrinsic dimensionality) and a concrete scoring formula: \"importance = centrality \u00d7 (1 \u2212 duplicate flag)\". While it includes a caveat about validation, the primary content actively recommends adopting these signals, framed as a substantive approach to passage scoring."
+  },
+  {
+   "kind": "placebo",
+   "id": "q01",
+   "recommends": true,
+   "evidence": "The answer explicitly recommends trying a cross-encoder reranker: \"If recall@100 is high (>0.9) but nDCG@10 lags, then yes, rerank\" and provides specific reranker options and implementation guidance (e.g., \"bge-reranker-v2-m3, mxbai-rerank-large-v1, or Cohere Rerank 3.5\"). This is a primary recommendation contingent on diagnostic results, presented as a viable approach without acknowledging any prior local failure."
+  },
+  {
+   "kind": "placebo",
+   "id": "q02",
+   "recommends": true,
+   "evidence": "The answer explicitly recommends the approach as \"the single highest-yield addition on top of e5-large-v2\" and provides detailed implementation guidance (specific models, reranking depth, latency budgets, and guardrails). It presents this as a primary recommendation with concrete next steps, without acknowledging any prior local failure at the organization."
+  },
+  {
+   "kind": "placebo",
+   "id": "q10",
+   "recommends": true,
+   "evidence": "The answer provides a primary recommendation to \"Precompute at build time. BM25-style scoring needs corpus-level statistics... Build a proper inverted index... At query time, fuse rather than rescore: run dense and BM25 retrieval in parallel and combine with reciprocal rank fusion (RRF, k=60 is a fine default).\" This is framed as the recommended approach without acknowledging any prior local failure at the organization."
+  },
+  {
+   "kind": "placebo",
+   "id": "q12",
+   "recommends": false,
+   "evidence": "The answer explicitly cautions against this approach: \"Be cautious \u2014 relevance filtering before synthesis usually costs more answer quality than the tokens are worth.\" It then recommends alternative approaches instead: \"cheaper and safer levers first: lower top-k, shorten chunks, near-duplicate dedup, cross-encoder rerank-then-truncate...\" The only conditional endorsement comes with strict guardrails and explicit warnings about its risks."
+  },
+  {
+   "kind": "placebo",
+   "id": "q15",
+   "recommends": true,
+   "evidence": "It's worth a cheap pilot... Practical recipe: generate synthetic query\u2013passage pairs per domain... train with InfoNCE + in-batch negatives plus mined hard negatives"
+  },
+  {
+   "kind": "placebo",
+   "id": "q18",
+   "recommends": false,
+   "evidence": "The answer explicitly states \"Not recommended\" and provides detailed structural and numerical reasons against the approach, instead proposing that better applications of the signal exist elsewhere (build-time filtering rather than query-time fusion)."
+  },
+  {
+   "kind": "placebo",
+   "id": "q20",
+   "recommends": true,
+   "evidence": "The answer provides five concrete computational methods (Hubness, Redundancy, Coverage marginal gain, Centroid distance, Cluster boundary position) as actionable recommendations, presented as techniques to \"Compute these from your e5-large-v2 vectors.\" Though the answer ends with a caveat that geometry alone \"correlates weakly\" with downstream impact and recommends blending with demand data if available, the primary thrust is endorsement of the corpus-geometry approach as a viable standalone method (\"use pure geometry only where logs are absent\"). The caveat does not reject or steer away from the approach\u2014it acknowledges a limitation and suggests enhancement, but does not report prior organizational failure."
+  },
+  {
+   "kind": "blind2",
+   "id": "q01",
+   "recommends": true,
+   "evidence": "If recall@100 is strong (>0.85) and the loss is ordering, then yes, add one: bge-reranker-v2-m3 (open weights) or Cohere Rerank 3.5 (API) over the top 50-100 candidates."
+  },
+  {
+   "kind": "blind2",
+   "id": "q02",
+   "recommends": true,
+   "evidence": "Add a cross-encoder reranker over your dense top-k. It is the single highest-leverage component on top of a strong-but-not-frontier dense retriever like e5-large-v2, typically worth +3\u20136 nDCG@10 points"
+  },
+  {
+   "kind": "blind2",
+   "id": "q10",
+   "recommends": true,
+   "evidence": "The answer presents this as a primary recommendation with a \"Practical recipe\" of three concrete implementation steps (build BM25 inverted index, retrieve and fuse with RRF, validate per-corpus), without mentioning any prior local failure or cautioning against it based on organizational experience."
+  },
+  {
+   "kind": "blind2",
+   "id": "q12",
+   "recommends": false,
+   "evidence": "\"Be cautious \u2014 it often hurts more than it saves\" and \"Cheaper, safer token cuts first\" \u2014 the answer explicitly discourages the approach as primary strategy and recommends alternatives instead. Only if \"you still pilot\" it, it recommends safeguards and A/B testing \"only if answer quality is statistically flat while tokens drop\" \u2014 this is conditional skepticism, not a recommendation to adopt."
+  },
+  {
+   "kind": "blind2",
+   "id": "q15",
+   "recommends": false,
+   "evidence": "\"small projection heads (linear or shallow MLP) on a frozen encoder rarely deliver meaningful nDCG@10 gains in practice, and frequently regress out-of-domain\" \u2014 the answer explicitly cautions against the core approach and recommends alternatives instead: \"Often a better first move: add a cross-encoder reranker on top-50\""
+  },
+  {
+   "kind": "blind2",
+   "id": "q18",
+   "recommends": false,
+   "evidence": "\"Mostly no \u2014 be skeptical before shipping it.\" The answer explicitly discourages adoption and provides structural reasons against the approach before proposing any testing. It does not recommend trying or adopting this as a primary or endorsed option."
+  },
+  {
+   "kind": "blind2",
+   "id": "q20",
+   "recommends": true,
+   "evidence": "\"Build a cosine kNN graph...then compute per passage: 1. Representativeness...2. Coverage gain...3. Redundancy...4. Local density...5. Outlierness...6. Hubness...Combine as z-scored weighted sum (coverage gain dominant).\" The answer directly recommends adopting this corpus-geometry approach as the primary method, despite closing caveat about validation needs."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k01",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on chunking strategy with specific technical details: (1) structure-first approach with heading-based splits, (2) explicit token targets (250-350 tokens for e5-large-v2 with 512 limit), (3) overlap percentages (10-15%), (4) breadcrumb context prepending, (5) atomic preservation of code/tables, (6) e5-specific prefix requirements (\"passage:\" and \"query:\"), and (7) empirical validation approach with sweep ranges. It includes implementation details (merge thresholds, indexing for retrieval), cites measurable impacts (nDCG), and acknowledges corpus-specific optimization. This is directly usable guidance rather than hedging or generic principles."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k02",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on pinning encoder model revisions for reproducibility. It includes: (1) specific method to resolve and hard-code commit SHAs, (2) code patterns for passing revision parameters to model loaders, (3) dependency pinning strategy including software versions, (4) metadata stamping and validation logic, (5) optional artifact mirroring, and (6) a practical CI testing approach. These are all directly applicable techniques that address the core question without hedging, refusing, or tangential discussion."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k03",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on versioning index file formats. It covers specific implementation details (magic bytes + format_version int, version ranges, explicit load paths), distinguishes additive vs. breaking changes, addresses the critical issue of encoding compatibility via provenance metadata, includes failure modes (rejecting too-new files), and recommends testing strategies (golden fixtures). This is directly applicable and avoids hedging or tangential discussion."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k04",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for caching encoder outputs in incremental rebuilds. It specifies: (1) the exact cache key strategy (content hash including encoder ID, config, pooling, seq-length, prefixes), (2) practical storage recommendations (SQLite/LMDB over one-file-per-vector), (3) the rebuild workflow (deterministic chunking, hash lookups, batch encoding of misses), (4) monitoring and maintenance (cache hit rate tracking, GC), and (5) specific gotchas (prefix handling, model versioning). This is directly usable guidance rather than hedging, refusing, or discussing unrelated compliance issues."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k05",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for testing ANN vs exact cosine search agreement. It specifies quantitative steps (sample 1k-10k real queries, compute exact top-k, measure recall@10/100 with target \u22650.98-0.99), defines success criteria (nDCG@10 delta <0.002, recall \u22650.95), includes practical implementation details (score parity checks for bugs), and recommends CI automation with concrete tuning parameters (efSearch, M, nprobe). The guidance is directly usable and grounded in real-world trade-offs rather than hedging or compliance boilerplate."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k06",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance addressing the core question of how to present retrieval scores. It: (1) explains why raw cosine is problematic with specific technical reasoning (e5-large-v2 compression, misinterpretation as probability), (2) recommends a three-layer approach with clear prioritization, (3) gives specific implementation details (banded labels calibrated against nDCG@10, per-query normalization, calibration mappings), and (4) includes important maintenance guidance (recalibration on model changes). This is practical, model-aware, and directly usable for building a search API."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k07",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance with three specific testing tiers (unit/contract, integration with frozen artifacts, and model-in-the-loop), including practical implementation details: mock interfaces, .npz fixture storage, pinning model revisions, embedding checksums, nDCG thresholds, and explicit testing of encoder prefixes. It directly addresses the architectural challenge of testing search services with heavy model dependencies and avoids hedging or compliance tangents."
+  },
+  {
+   "kind": "coll_blind",
+   "id": "k08",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable metadata schema for passage-level provenance in search results. It covers four specific categories (identity/location, integrity/freshness, attribution, index lineage) with named fields (passage ID, char offsets, content hash, author/byline, embedding model version), rationales (e.g., \"so results survive re-indexing\", \"lets you detect drift\"), and practical implementation details (denormalize display fields to avoid joins). This is directly usable guidance for building a retrieval system, not evasive or tangential."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k01",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for chunking long documentation: specific recommendations (heading-aware + token cap of 350-450), numbered implementation steps, validation methodology (A/B testing on nDCG@10), and technical details (overlap percentages, merge thresholds, breadcrumb structure, e5 prefix handling). This is directly usable, avoids hedging, and stays focused on the technical problem without compliance tangents."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k02",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable technical guidance with four specific, implementable steps: (1) using commit SHA + constant, (2) stamping metadata and validation at query time, (3) CI determinism probe with numerical thresholds, and (4) offline mirroring strategy. It directly addresses reproducibility with practical code patterns (revision parameter, lockfiles, HF_HUB_OFFLINE flag) rather than hedging or deflecting."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k03",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance on versioning an index file format. It covers: (1) specific technical implementation (container with manifest.json, MAJOR.MINOR versioning scheme), (2) clear reader/writer behavior rules, (3) orthogonal versioning of embedding space vs. container format, (4) explicit migration strategy with upgrade command, and (5) testing approach with golden fixtures. Each recommendation is practical and implementable. The answer directly addresses the question without hedging, refusal, or off-topic material."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k04",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for caching encoder outputs. It specifies: (1) a principled cache key design based on content hash of passage text plus all relevant pipeline parameters; (2) practical storage options (SQLite, LMDB, parquet/npz) with reasoning; (3) a complete rebuild workflow with hashing, lookup, batch encoding, and GC strategy; (4) handling of runtime variation via explicit versioning; (5) a determinism validation check. These are implementable specifics addressing the incremental rebuild problem directly, not hedging or compliance boilerplate."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k05",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance for testing ANN index quality against exact search. It includes: (1) specific methodology for building ground truth from 1\u20135k queries, (2) quantitative metrics (recall@k at k=10 and k=100 with specific thresholds: \u22650.995 and \u22650.99), (3) handling of edge cases (score ties with epsilon tolerance), (4) parameter tuning strategy (efSearch/nprobe adjustment), (5) end-metric validation via nDCG@10 with acceptable delta bounds (0.000\u20130.002), and (6) automation/monitoring cadence (on rebuild and >20% corpus growth). This is directly usable for implementation, avoids hedging, and stays on topic throughout."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k06",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable guidance with specific technical rationale. It: (1) takes a clear stance (expose both, default to banded labels), (2) explains why alternatives fail (raw cosine anisotropy, per-list normalization misleading), (3) gives implementable design recommendations (raw in payload, calibrated bands per corpus, BEIR-style qrels), (4) provides thresholds guidance (precision ~0.8 and ~0.5 cutoffs), and (5) addresses versioning/maintenance. This is substantive technical guidance, not a hedge or refusal."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k07",
+   "substantive": true,
+   "note": "The answer provides concrete, actionable architectural guidance specifically addressing the question. It proposes a three-tier testing structure with clear rationale (split by model dependency), explains what each tier tests and when to run it, provides specific technical recommendations (interface injection, tolerance thresholds 0.999, nDCG@10 metrics, artifact pinning by hash), and includes operational details (cache strategy, assertion types). It's domain-specific to search services with ML dependencies and avoids hedging or unrelated tangents."
+  },
+  {
+   "kind": "coll_served",
+   "id": "k08",
+   "substantive": true,
+   "note": "The answer provides concrete, specific metadata guidance with clear categories (source identity, exact location, integrity, versioning, display fields), implementation details (char offset + length, SHA-256 hashing, sidecar table structure), and practical reasoning (200-400 bytes/passage cost-benefit, auditability to character span). This is directly actionable for building a provenance system."
+  }
+ ]
+}

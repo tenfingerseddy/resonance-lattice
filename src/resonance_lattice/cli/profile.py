@@ -4,7 +4,7 @@ Knowledge-model diagnostics — what's in the .rlat without running a query.
 Reports:
 
 - Backbone: model id, pinned HF revision, dim, pooling, max-seq-length.
-- Bands: name → role, dim, passage_count, MRL projection shape if present.
+- Bands: name → role, dim, l2_norm, passage_count.
 - Storage mode + source root (or manifest pointer for remote).
 - Build config: chunker, min/max chars, file count, build timestamp.
 - ANN: per-band index params if present.
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..store import archive, open_store
@@ -68,6 +68,7 @@ def _build_profile(
         "kind": meta.kind,
         "rlat_version": meta.rlat_version,
         "created_utc": meta.created_utc,
+        "insight_layer_last_reverify_utc": meta.insight_layer_last_reverify_utc,
         "backbone": {
             "name": meta.backbone.name,
             "revision": meta.backbone.revision,
@@ -81,8 +82,6 @@ def _build_profile(
                 "dim": info.dim,
                 "l2_norm": info.l2_norm,
                 "passage_count": info.passage_count,
-                "w_shape": list(info.w_shape) if info.w_shape else None,
-                "trained_from": info.trained_from,
             }
             for name, info in meta.bands.items()
         },
@@ -107,6 +106,23 @@ def _build_profile(
     return profile
 
 
+def _days_since(iso_ts: str) -> int | None:
+    """Whole days since the ISO-8601 UTC timestamp, or None if empty/unparseable.
+
+    Naive timestamps (no tzinfo) are assumed UTC. Negative results
+    (future timestamps from clock skew or hand-edits) are clamped to 0
+    so display reads sanely."""
+    if not iso_ts:
+        return None
+    try:
+        ts = datetime.fromisoformat(iso_ts)
+    except (ValueError, TypeError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - ts).days)
+
+
 def _format_text(profile: dict) -> str:
     out: list[str] = []
 
@@ -117,6 +133,15 @@ def _format_text(profile: dict) -> str:
     out.append(f"format_version   {profile['format_version']}  "
                f"kind={profile['kind']}  rlat={profile['rlat_version']}")
     out.append(f"created          {profile['created_utc']}")
+    insight_meta = profile["bands"].get("insight") if profile.get("bands") else None
+    if insight_meta:
+        last = profile["insight_layer_last_reverify_utc"]
+        days = _days_since(last)
+        if last and days is not None:
+            when = "today" if days == 0 else f"{days} day(s) ago"
+            out.append(f"insight reverify {last}  ({when})")
+        else:
+            out.append("insight reverify (never — run `rlat reverify` after drift)")
     out.append("")
     out.append("backbone")
     bb = profile["backbone"]
@@ -129,9 +154,7 @@ def _format_text(profile: dict) -> str:
     out.append(f"bands  ({len(profile['bands'])})")
     for name, b in profile["bands"].items():
         kv(name, f"role={b['role']}  dim={b['dim']}  N={b['passage_count']}"
-                 f"  l2={b['l2_norm']}"
-                 + (f"  W={tuple(b['w_shape'])}" if b["w_shape"] else "")
-                 + (f"  trained_from={b['trained_from']}" if b["trained_from"] else ""))
+                 f"  l2={b['l2_norm']}")
     out.append("")
     out.append(f"store_mode       {profile['store_mode']}")
     if profile["ann"]:
