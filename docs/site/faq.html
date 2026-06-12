@@ -369,14 +369,20 @@ for hit in report.hits:
 
     <h3 id="api-key-required">Is the API key required?</h3>
     <p>
-      Only for the commands that call an LLM. Most of the surface — build,
-      search, profile, compare, summary, skill-context, refresh, watch, sync,
-      freshness, convert, init-project, lens, audit (including
-      <code>--shape</code>/<code>--external</code>), trace, intent, expertise,
-      workspace, capture-env, capture-attribute, consolidate-insights — is offline
-      and LLM-free.
+      <strong>No — a key is not a prerequisite for anything rlat can
+      do.</strong> Most of the surface — build, search, profile, compare,
+      summary, skill-context, refresh, watch, sync, freshness, convert,
+      init-project, lens, audit (including
+      <code>--shape</code>/<code>--external</code>), trace, expertise,
+      workspace, capture-env, capture-attribute, consolidate-insights —
+      is offline and LLM-free. The loops that do need an LLM all run free
+      on your Claude subscription as in-session skills: deep research is
+      the <code>deep-research</code> skill, capture is
+      <code>rlat-learn</code>, curation is the four curation skills.
     </p>
-    <p>An Anthropic API key is needed only for the unattended LLM verbs:</p>
+    <p>An Anthropic API key matters only when you want those same loops
+    <em>unattended</em> — automation, CI, scheduled runs — via the CLI
+    verbs:</p>
     <ul class="checklist">
       <li><code>rlat deep-search</code> — the multi-hop research loop.</li>
       <li><code>rlat grow</code> — the opt-in self-improvement pass that
@@ -388,6 +394,11 @@ for hit in report.hits:
       (fully mechanical), <code>add</code>, <code>recall</code>,
       <code>capture</code>, <code>corroborate</code>, <code>feedback</code>,
       <code>gc</code>, <code>install-hooks</code> — need no key.</li>
+      <li><code>rlat intent decompose</code> — the one LLM-driven intent
+      subcommand (it refuses cleanly without a key). The other ten need no
+      key; <code>intent what-next</code> uses an LLM to phrase its
+      recommendation when a key is present and falls back to a plain
+      readout without one.</li>
       <li>The opt-in background capture hooks
       (<code>rlat memory install-hooks --mine</code> /
       <code>RLAT_ATOMIC_CAPTURE=1</code>) — they fail open and stay silent
@@ -395,15 +406,12 @@ for hit in report.hits:
     </ul>
     <div class="callout callout-tip">
       <span class="callout-tag">Tip</span>
-      <p>Every one of those loops also runs free on your Claude
-      subscription, in-session: the <code>deep-research</code> skill is the
-      no-key <code>deep-search</code>; the <code>rlat-learn</code> skill is
-      the no-key capture path (you approve every fact); the four curation
-      skills (<code>rlat-gap-scan</code>, <code>rlat-contradictions</code>,
-      <code>rlat-refresh-facts</code>, <code>rlat-curate</code>) are the
-      no-key <code>grow</code>. The key is for <em>unattended</em> runs —
-      automation and CI. See the <a href="api-keys.html">API keys</a> page
-      for the full two-ways table.</p>
+      <p>The skill paths keep you in the loop — <code>rlat-learn</code> has
+      you approve every fact before it lands. The full loop-by-loop mapping
+      (<code>rlat-gap-scan</code>, <code>rlat-contradictions</code>,
+      <code>rlat-refresh-facts</code>, <code>rlat-curate</code> are the
+      no-key <code>grow</code>) is on the
+      <a href="api-keys.html">API keys</a> page.</p>
     </div>
     <p>
       API key discovery order: <code>RLAT_LLM_API_KEY_ENV</code> (an indirection
@@ -435,13 +443,23 @@ for hit in report.hits:
       how tasks actually turn out, not from a verdict you give it.
     </p>
     <p>
-      Capture, distillation, calibration, and forgetting all run on their own at
-      session end. Lessons that keep proving useful climb the ladder; ones that
-      stay at low confidence and go stale are dropped, so memory stays small and
-      sharp. The only command you usually reach for is <code>rlat memory
-      add</code>, to write a lesson by hand. Memory is scoped to a workspace and
-      is independent from knowledge models — see the
-      <a href="claim-system.html">claim system</a> page for the full model.
+      Two hooks make it hands-free: recall injects relevant lessons at the
+      prompt, capture lands what happened at session end. The housekeeping
+      pass — confidence raise, then forget — is one mechanical command,
+      <code>rlat memory consolidate</code>; lessons that keep proving
+      useful climb the ladder, ones that stay weak are dropped, so memory
+      stays small and sharp. The only command you usually reach for is
+      <code>rlat memory add</code>, to write a lesson by hand.
+    </p>
+    <p>
+      Where it lives: these per-user lessons are <em>yours</em> — stored on
+      your disk at <code>~/.rlat/memory/&lt;user&gt;/</code>, scoped per
+      workspace, never inside a knowledge model. Shareable knowledge —
+      world facts, constraints, falsified findings — lands in the
+      <code>.rlat</code> file instead, because that file is built to be
+      handed to a teammate. The split is deliberate. Full operational
+      detail: <a href="memory.html">Memory &amp; sessions</a>; the
+      conceptual model: <a href="claim-system.html">the claim system</a>.
     </p>
 
     <h3 id="intent-now">Can I declare what I am working on?</h3>
@@ -452,7 +470,8 @@ for hit in report.hits:
       switches the live one, and <code>accept</code> / <code>reject</code>
       record a verdict on whether an intent was satisfied. These verdicts are
       about intent only — they are not a gate on what memory or the insight
-      layer keeps.
+      layer keeps. One subcommand, <code>decompose</code>, calls an LLM and
+      needs an <a href="api-keys.html">API key</a>; the rest are key-free.
     </p>
   </section>
 

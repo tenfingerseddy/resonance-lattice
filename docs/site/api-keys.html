@@ -37,10 +37,11 @@
   <div class="tagline">Resonance Lattice · Docs</div>
   <h1>API keys</h1>
   <p class="lede">
-    Almost everything <code>rlat</code> does runs on your machine with no
-    key and no internet. A small set of commands call an LLM and need an
-    Anthropic API key — they are opt-in, and each one has a free
-    in-session alternative.
+    An API key is not a prerequisite for anything <code>rlat</code> can
+    do. Almost everything runs on your machine with no key and no
+    internet, and every LLM-driven loop runs free on your Claude
+    subscription as an in-session skill. The key buys exactly one thing:
+    running those same loops <em>unattended</em> through the CLI.
   </p>
 
   <section id="what-needs-a-key">
@@ -91,16 +92,23 @@
           <td>Checks high-criticality memory claims against a corpus knowledge model — confirmed claims rise to <em>verified</em>, contradicted ones drop to <em>low</em>.</td>
           <td>Asks Sonnet whether the corpus supports each claim. The rest of <code>rlat memory</code> — capture, recall, consolidate, add — is key-free.</td>
         </tr>
+        <tr>
+          <td><code>rlat intent decompose</code></td>
+          <td>Breaks a declared task intent into mechanical step children.</td>
+          <td>Asks Sonnet for the decomposition; without a key it refuses with a clear message. The rest of <code>rlat intent</code> is key-free.</td>
+        </tr>
       </tbody>
     </table>
     <p>
-      Two opt-in memory features degrade silently instead of erroring:
+      Three opt-in features degrade gracefully instead of erroring:
       passive world-fact mining (<code>RLAT_MINE_ATTRIBUTES=1</code>, set
       by <code>rlat memory install-hooks --mine</code>) and atomic event
       extraction (<code>RLAT_ATOMIC_CAPTURE=1</code>) add LLM steps to the
-      session-end capture hook. Each activates only when a key resolves —
-      without one the hook stays silent and capture falls back to its
-      key-free path.
+      session-end capture hook — each activates only when a key resolves,
+      and without one the hook stays silent and capture falls back to its
+      key-free path. <code>rlat intent what-next</code> likewise uses an
+      LLM to phrase its recommendation when a key is present and falls
+      back to a plain top-candidate readout without one.
     </p>
     <div class="callout callout-note">
       <p>An <em>insight</em> is an earned, cited summary the knowledge

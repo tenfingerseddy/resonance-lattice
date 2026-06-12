@@ -75,7 +75,7 @@
         <tr><td><code>grow</code></td><td>opt-in self-improvement pass: fill the archive's most-demanded, worst-covered gaps from its own telemetry</td><td><strong>yes</strong></td></tr>
         <tr><td><code>probe</code></td><td>idle-cycle self-probe of weak-zone queries</td><td><strong>yes</strong></td></tr>
         <tr><td><code>memory</code></td><td>per-user flat memory (17 subcommands — full table on <a href="memory.html">Memory &amp; sessions</a>)</td><td>only <code>verify</code></td></tr>
-        <tr><td><code>intent</code></td><td>declare and resolve the live intent graph</td><td>some subcommands</td></tr>
+        <tr><td><code>intent</code></td><td>declare and resolve the live intent graph</td><td>only <code>decompose</code> (<code>what-next</code> uses one when present)</td></tr>
         <tr><td><code>expertise</code></td><td>build the expertise primer (memory + intent synthesis)</td><td>no</td></tr>
         <tr><td><code>lens</code></td><td>manage <code>.lens</code> perspective artefacts</td><td>no</td></tr>
         <tr><td><code>workspace</code></td><td>resolve / declare the workspace identity</td><td>no</td></tr>
@@ -85,6 +85,12 @@
         <tr><td><code>consolidate-insights</code></td><td>fold accumulated outcome signals into each insight's confidence</td><td>no</td></tr>
       </tbody>
     </table>
+    <p>
+      A "yes" above means the <em>CLI verb</em> needs a key for unattended
+      runs — not that the capability does. Every keyed loop also runs free
+      in-session on your Claude subscription
+      (<a href="api-keys.html">API keys — the free path</a>).
+    </p>
     <div class="callout callout-note">
       <p>An <em>insight</em> is an earned, cited summary stored alongside
       the raw source passages. <code>rlat search</code> retrieves over
@@ -773,8 +779,8 @@ rlat memory gc --is-bad --dry-run</code></pre>
         <tr><td><code>accept</code></td><td>Record a user-source <em>satisfied</em> verdict on an intent.</td></tr>
         <tr><td><code>reject</code></td><td>Record a user-source <em>not satisfied</em> verdict on an intent.</td></tr>
         <tr><td><code>activate</code></td><td>Flip a proposed intent to active.</td></tr>
-        <tr><td><code>what-next</code></td><td>Recommend the next move from the live intent graph.</td></tr>
-        <tr><td><code>decompose</code></td><td>Decompose a task intent into step children via an LLM.</td></tr>
+        <tr><td><code>what-next</code></td><td>Recommend the next move from the live intent graph. Uses an LLM to phrase the recommendation when a key is present; falls back to a plain top-candidate readout without one (<code>--no-llm</code> forces the fallback).</td></tr>
+        <tr><td><code>decompose</code></td><td>Decompose a task intent into step children via an LLM. <em>Needs an API key</em> — refuses cleanly without one.</td></tr>
         <tr><td><code>declare-durable</code></td><td>Declare a durable goal or direction, written to the per-user store.</td></tr>
         <tr><td><code>durable</code></td><td>List durable goals and directions.</td></tr>
         <tr><td><code>capture-plan</code></td><td>Capture plan-mode output as a proposed task plus steps.</td></tr>

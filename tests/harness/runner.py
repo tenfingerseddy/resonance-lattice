@@ -50,6 +50,7 @@ SUITES: dict[str, str] = {
     "drift": "tests.harness.drift",
     "property": "tests.harness.property",
     "doc_examples": "tests.harness.doc_examples",
+    "docs_truth": "tests.harness.docs_truth",
     "encoder_determinism": "tests.harness.encoder_determinism",
     "encoder_ragged_batch": "tests.harness.encoder_ragged_batch",
     "band_parity": "tests.harness.band_parity",
@@ -267,6 +268,10 @@ def select(changed: Iterable[str]) -> set[str]:
             suites |= {"conversion"}
         if p.startswith("src/resonance_lattice/cli/") or p.startswith("docs/user/"):
             suites |= {"doc_examples"}
+        if p.startswith("src/resonance_lattice/cli/") or p.startswith("docs/site/"):
+            # Behavioural docs claims (command surface, key requirements)
+            # validated against the parser — drifted three audit cycles.
+            suites |= {"docs_truth"}
         if p.startswith("src/resonance_lattice/cli/"):
             # Cheap whole-surface dispatch check: every command's --help +
             # init-project end-to-end (catches hand-built-Namespace drift).

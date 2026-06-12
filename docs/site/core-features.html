@@ -260,10 +260,11 @@ rlat skill-context fabric.rlat \
       — and each lesson carries a <em>confidence</em> on a four-step ladder
       (low → medium → high → verified) that rises as the lesson keeps proving
       useful.</li>
-      <li><strong>Automatic capture, distil, and forget.</strong> At session
-      end the harness records what was learned and how the task went, distils
-      raw notes into lessons, and prunes the weak ones — you are never asked to
-      rate, tag, or file anything.</li>
+      <li><strong>Hands-free capture, mechanical housekeeping.</strong> A
+      session-end hook records what was learned (deduplicated, credential-
+      scrubbed); one mechanical command — <code>rlat memory consolidate</code>
+      — re-derives confidence from outcomes and prunes the weak rows. You are
+      never asked to rate, tag, or file anything.</li>
       <li><strong>Confidence orders recall.</strong> When several lessons are
       equally relevant, the more confident one surfaces first, and every
       recalled lesson shows its confidence so a low-confidence guess is never
@@ -311,8 +312,9 @@ rlat memory list</code></pre>
       published (<a href="benchmarks.html#r4-suppression">R4</a>), so
       corrections stay explicit — you state the new fact or delete the old
       one. The full model — what gets captured, the
-      confidence ladder, the distillation arrows, and how forgetting stays
-      careful — is on the <a href="claim-system.html">claim system</a> page.
+      confidence ladder, and how forgetting stays careful — is on the
+      <a href="claim-system.html">claim system</a> page; the hooks, daemon,
+      and command table are on <a href="memory.html">Memory &amp; sessions</a>.
     </p>
   </section>
 
