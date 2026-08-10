@@ -19,7 +19,11 @@ can be repeated where the pinned encoder lives. Fourth, after the owner's verdic
 that earlier graph features were discarded as add-ons — the edge-free
 reformulation: orbit retrieval and the quotient band
 ([`ORBIT_RETRIEVAL.md`](ORBIT_RETRIEVAL.md)), which withdraws the sidecar proposal
-and moves corpus structure into the coordinates themselves.
+and moves corpus structure into the coordinates themselves. Fifth, in response to
+*"rlat is a knowledge source and should facilitate better reasoning"* — the
+evidence curriculum ([`EVIDENCE_CURRICULUM.md`](EVIDENCE_CURRICULUM.md)): the
+context block treated as the consumer model's in-context training set, with
+pair verdicts, calibrated coverage, and join keys served LLM-free with receipts.
 
 Everything follows this repository's receipts-before-claims convention: every
 load-bearing identity or construction is machine-checked by a script in `demos/`;
@@ -59,6 +63,14 @@ and negative results from the runs are published alongside the positive ones.
   recall points and global-PCA removal by 5.6, with the topical-precision guard
   improving; transport honestly buys nothing on this band. Pre-registered
   production bench with kill criteria.
+- [`EVIDENCE_CURRICULUM.md`](EVIDENCE_CURRICULUM.md) — the reasoning reframe: the
+  context block is the consumer LLM's in-context training set, so the knowledge
+  source should design it as a curriculum. Four LLM-free served surfaces with
+  receipts: pair verdicts from the raw × quotient decomposition (AUC 0.83 vs
+  0.68 for spotting same-topic-across-register pairs), a calibrated coverage
+  verdict (AUC 0.85 under a redundancy-corrected hold-out protocol), join keys,
+  and curriculum ordering; plus the decisive pre-registered same-evidence A/B on
+  the Fabric hallucination bench with kill criteria.
 - [`demos/`](demos/) — runnable receipts, Python 3.11+ stdlib only (no numpy, no
   torch), deterministic (fixed seeds, exact identities):
   - `demo1_layers_are_online_learners.py` — softmax attention ≡ kernel regression;
@@ -93,6 +105,11 @@ and negative results from the runs are published alongside the positive ones.
     mode selector; the five-arm cross-register ablation (flat / orbit /
     quotient / global-PCA / random control) with the topical-precision guard;
     the reading-continuation negative kept on display. **Requires numpy.**
+  - `demo9_evidence_curriculum.py` — reasoning support without an LLM: pair
+    verdicts from the two-band decomposition (discriminative AUC receipts),
+    the redundancy-corrected coverage protocol, join keys, and the printed
+    end-to-end structured context block. Two corrected protocols are kept
+    visible as design lessons. **Requires numpy.**
   - `corpus.py` — shared corpus utilities for demos 6-7: chunks this repository's
     markdown into passages in reading order (mirroring `passages.jsonl`
     semantics), embeds with hashed-ngram TF-IDF + LSA (a stand-in, not the
@@ -113,10 +130,11 @@ python3 demo2_transition_algebra.py
 python3 demo3_one_dual_map_two_timescales.py
 python3 demo4_rotor_gate.py
 python3 demo5_interior_vs_boundary.py
-pip install numpy                      # demos 6-8 only
+pip install numpy                      # demos 6-9 only
 python3 demo6_rotor_intent_ops.py
 python3 demo7_latent_graph.py          # optionally: demo7 ... /path/to/model.rlat
 python3 demo8_orbit_retrieval.py
+python3 demo9_evidence_curriculum.py
 ```
 
 Each script exits 0 and prints `ALL PASS` when every check holds. Demo 5 trains

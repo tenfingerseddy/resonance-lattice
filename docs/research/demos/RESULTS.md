@@ -1,9 +1,11 @@
 # Demo run record
 
-Environment: CPython 3.11. Demos 1-5: stdlib only. Demos 6-8: numpy 2.4 (only
+Environment: CPython 3.11. Demos 1-5: stdlib only. Demos 6-9: numpy 2.4 (only
 third-party package). Seeds fixed in-source. Demos 1-5 are bit-deterministic
-across platforms (IEEE-754 + stdlib); demos 6-8 are deterministic per numpy/
+across platforms (IEEE-754 + stdlib); demos 6-9 are deterministic per numpy/
 BLAS build (tiny float variations possible across platforms, conclusions stable).
+Note: demos 6-9 measure on the repository docs themselves, so passage counts
+drift as this research folder grows; conclusions are re-verified per run.
 
 ## `demo1_layers_are_online_learners.py`
 
@@ -208,24 +210,24 @@ ALL PASS
     -> multi-intent composition is well-behaved: order matters in principle
        (non-abelian), negligibly at small strengths, exactly invertibly always.
 6d. disambiguation on real text (repo docs, LSA stand-in — mechanism scale)
-    corpus: repo-docs LSA (1071 passages, 256d)
+    corpus: repo-docs LSA (1087 passages, 256d)
     250 ambiguous (internal-docs + benchmarks) midpoint queries;
     primary: group-A precision@10 (intent focus); secondary: median rank of
     the specific A-parent passage (specificity cost of aiming at a centroid):
       method                    | A-prec@10 | median parent rank
-      raw query                  |    51.8   |    1.0
-      rotor->centroid t=0.3 (X)  |    44.3   |    1.0
-      rotor->centroid t=0.6 (X)  |    43.2   |   32.0
-      rotor->contrast t=0.15     |    63.5   |    1.0
-      rotor->contrast t=0.3      |    73.8   |    1.0
-      rotor->contrast t=0.6      |    84.8   |    1.0
-      additive contrast +0.25    |    64.0   |    1.0
-      additive contrast +0.5     |    73.7   |    1.0
-      trust x1.25 (needs glob)   |    88.5   |    1.0
-  [PASS] aiming at a broad centroid is ANTI-discriminative (documented anti-pattern)   (51.8 -> 44.3)
-  [PASS] aiming at the CONTRAST lifts group precision >= 15 points (toward+anti jointly)   (51.8 -> 84.8)
+      raw query                  |    51.9   |    1.0
+      rotor->centroid t=0.3 (X)  |    44.5   |    1.0
+      rotor->centroid t=0.6 (X)  |    42.4   |   36.0
+      rotor->contrast t=0.15     |    63.1   |    1.0
+      rotor->contrast t=0.3      |    73.4   |    1.0
+      rotor->contrast t=0.6      |    85.2   |    1.0
+      additive contrast +0.25    |    63.6   |    1.0
+      additive contrast +0.5     |    73.1   |    1.0
+      trust x1.25 (needs glob)   |    88.4   |    1.0
+  [PASS] aiming at a broad centroid is ANTI-discriminative (documented anti-pattern)   (51.9 -> 44.5)
+  [PASS] aiming at the CONTRAST lifts group precision >= 15 points (toward+anti jointly)   (51.9 -> 85.2)
   [PASS] the anti-pattern also costs specificity (centroid t=0.6 parent rank collapses) while the contrast keeps the parent at rank ~1 even at t=0.6
-    rotor vs additive on the contrast: 84.8 vs 73.7 A-prec@10 — rotor ahead.
+    rotor vs additive on the contrast: 85.2 vs 73.1 A-prec@10 — rotor ahead.
     trust weights win tie-breaking outright WHEN the intent is expressible as
     a source glob; rotors condition toward regions no glob can name. The two
     are complementary dials (amplitude vs phase), not competitors.
@@ -243,37 +245,37 @@ ALL PASS
 ## `demo7_latent_graph.py`
 
 ```
-corpus: repo-docs LSA (1075 passages, 256d)
+corpus: repo-docs LSA (1091 passages, 256d)
 7a. navigability: kNN graph (k=8), long-range links, search discipline
-    connectivity: largest component 1075/1075 passages (100.0%)
-    greedy on DIRECTED kNN edges  :  72.7% reach target
+    connectivity: largest component 1091/1091 passages (100.0%)
+    greedy on DIRECTED kNN edges  :  67.3% reach target
     greedy on BIDIRECTIONAL edges : 100.0% reach target
-    best-first with backtracking  :  99.7% reach target, touching a mean of 5/1075 nodes (1% of corpus)
+    best-first with backtracking  : 100.0% reach target, touching a mean of 6/1091 nodes (1% of corpus)
     -> similarity says who your neighbours are; it does not say who counts
        YOU as a neighbour. Symmetrising the links is the load-bearing step
        (HNSW does exactly this); backtracking then buys efficiency. Measured
        in the open here — production search stays FAISS (field/ann.py).
   [PASS] kNN graph is essentially one connected component (>= 95%)
-  [PASS] edge symmetry is load-bearing: directed greedy fails often, undirected doesn't   (72.7% -> 100.0%)
-  [PASS] best-first navigation is reliable (>= 99%) while touching <= 15% of corpus   (99.7%, 1%)
+  [PASS] edge symmetry is load-bearing: directed greedy fails often, undirected doesn't   (67.3% -> 100.0%)
+  [PASS] best-first navigation is reliable (>= 99%) while touching <= 15% of corpus   (100.0%, 1%)
 7b. the regime diagnostic: are document chains PATHS or CLOUDS?
-    976 chain steps in 49 files; median consecutive-passage angle 61 deg
-    chain curvature mean cos(d_k, d_k+1) = -0.473 +- 0.005
+    990 chain steps in 50 files; median consecutive-passage angle 61 deg
+    chain curvature mean cos(d_k, d_k+1) = -0.474 +- 0.005
     (i.i.d.-cloud signature: -0.500; persistent path: > 0)
-  [PASS] regime detected: documents are clouds, not paths (curvature ~ -1/2)   (-0.473)
+  [PASS] regime detected: documents are clouds, not paths (curvature ~ -1/2)   (-0.474)
     next-passage prediction (find k+1 among all passages):
       method                           | hit@1 | hit@5 |  MRR
-      greedy: similarity to current   |   8.5 |  24.6 | 0.163
-      momentum t=1.0 (path tool)      |   3.7 |  12.9 | 0.085
-      momentum t=0.35 (path tool)     |   6.5 |  21.1 | 0.138
-      midpoint of last two            |   7.9 |  25.6 | 0.165
-      doc centroid, ungated (cloud)   |   4.1 |  16.7 | 0.104
-      typed gate (same doc) + greedy  |  14.9 |  46.1 | 0.300
-      typed gate + doc centroid       |   5.8 |  23.8 | 0.163
-  [PASS] momentum harm is monotone in strength (as the cloud regime demands)   (12.9 < 21.1 < 24.6)
-  [PASS] cloud tool alone cannot rank within the cloud (centroid far below greedy)   (16.7 vs 24.6)
-  [PASS] typed metadata edge + local similarity is where traversal wins (>= 1.5x greedy)   (greedy 24.6 -> gated 46.1)
-  [PASS] the local signal is real beyond membership (gated greedy > gated centroid)   (46.1 vs 23.8)
+      greedy: similarity to current   |   8.1 |  23.2 | 0.158
+      momentum t=1.0 (path tool)      |   3.5 |  12.6 | 0.083
+      momentum t=0.35 (path tool)     |   6.7 |  20.7 | 0.138
+      midpoint of last two            |   7.7 |  24.9 | 0.162
+      doc centroid, ungated (cloud)   |   4.3 |  17.0 | 0.106
+      typed gate (same doc) + greedy  |  14.6 |  45.5 | 0.296
+      typed gate + doc centroid       |   5.8 |  24.1 | 0.164
+  [PASS] momentum harm is monotone in strength (as the cloud regime demands)   (12.6 < 20.7 < 23.2)
+  [PASS] cloud tool alone cannot rank within the cloud (centroid far below greedy)   (17.0 vs 23.2)
+  [PASS] typed metadata edge + local similarity is where traversal wins (>= 1.5x greedy)   (greedy 23.2 -> gated 45.5)
+  [PASS] the local signal is real beyond membership (gated greedy > gated centroid)   (45.5 vs 24.1)
     -> the original hypothesis (momentum beats greedy) FAILED on this band;
        the curvature diagnostic explains why (clouds, not paths) and would
        flip the recommendation wherever it measures > 0. What actually makes
@@ -282,17 +284,17 @@ corpus: repo-docs LSA (1075 passages, 256d)
        ranking. Run against a production .rlat, this demo re-measures the
        regime and re-scores every method.
 7c. relation types from raw pairs: k-planes clustering of displacements
-    identifiability boundary: purity 84.3% on fully-random concepts (weak in-plane mass) vs 98.8% on feature-bearing concepts
-  [PASS] k-planes separates planted relations on feature-bearing entities (>= 95%)   (purity 98.8%; selected by unsupervised objective over 10 restarts)
-    plane recovery error (last relation) 0.127; recovered rotors match the
+    identifiability boundary: purity 88.2% on fully-random concepts (weak in-plane mass) vs 99.5% on feature-bearing concepts
+  [PASS] k-planes separates planted relations on feature-bearing entities (>= 95%)   (purity 99.5%; selected by unsupervised objective over 10 restarts)
+    plane recovery error (last relation) 0.126; recovered rotors match the
     true relation on 200/200 unseen nodes — typed edges generated, not stored
   [PASS] recovered relations APPLY correctly to unseen nodes (>= 90%)   (200/200)
-    real corpus: 4300 kNN edges; adjacent-in-document base rate 10.1%; max k-planes cluster enrichment 1.67x
-  [PASS] displacement geometry carries SOME unseen structural signal (>= 1.25x)   (1.67x — weak at LSA quality; production-band test pre-registered)
+    real corpus: 4364 kNN edges; adjacent-in-document base rate 9.9%; max k-planes cluster enrichment 2.17x
+  [PASS] displacement geometry carries SOME unseen structural signal (>= 1.25x)   (2.17x — weak at LSA quality; production-band test pre-registered)
 7d. hierarchy for free: single-linkage components across a threshold sweep
-    threshold 0.780: 901 concepts (largest 10, singletons 801)
-    threshold 0.700: 607 concepts (largest 81, singletons 497)
-    threshold 0.645: 373 concepts (largest 570, singletons 325)
+    threshold 0.781: 915 concepts (largest 10, singletons 812)
+    threshold 0.700: 613 concepts (largest 87, singletons 503)
+    threshold 0.646: 385 concepts (largest 581, singletons 338)
   [PASS] levels nest exactly (every fine concept sits inside one coarser concept)
     receipt — one fine concept and its passages:
       docs/internal/benchmarks/02_fabric_failure_analysis.md:10883+423
@@ -318,38 +320,38 @@ ALL PASS
 ## `demo8_orbit_retrieval.py`
 
 ```
-corpus: repo-docs LSA (1082 passages, 256d)
-    displacement fields: 458 fit / 574 held-out reading-adjacency pairs; 2273 cross-file kNN pairs
+corpus: repo-docs LSA (1098 passages, 256d)
+    displacement fields: 494 fit / 553 held-out reading-adjacency pairs; 2312 cross-file kNN pairs
 8a. the quotient proposition: group-averaging == removing the mined planes
   [PASS] averaging over the cyclic group C_5 of a rotor == exact plane removal
   [PASS] ...and the result is an orthogonal projection (idempotent)
     -> group-invariant retrieval is flat retrieval in a projected band:
        the 'graph' collapses into the coordinates. Zero query-time cost.
 8b. eval A — held-out reading-continuation (the hard task from demo 7)
-    mined 4 adjacency rotors (angles [0.02, -0.04, 0.01, 0.11], support [155, 137, 79, 87])
-    flat     : hit@5  27.0  MRR 0.173
-    orbit-max: hit@5  27.0  MRR 0.173   (9 matvecs/query)
+    mined 4 adjacency rotors (angles [0.37, 0.17, -0.01, -0.02], support [111, 105, 144, 134])
+    flat     : hit@5  27.1  MRR 0.169
+    orbit-max: hit@5  26.8  MRR 0.169   (9 matvecs/query)
 8c. eval B — cross-register retrieval (DESIGN -> VERDICT of the same bench)
     4 bench dirs with both DESIGN* and VERDICT* files
-    mined 4 cross-file rotors (angles [-0.07, 0.01, -0.03, 0.01], support [478, 367, 874, 554])
-    mode selector: median |theta| = 0.02 rad — near-zero angles mean
+    mined 4 cross-file rotors (angles [0.02, 0.04, 0.03, 0.03], support [791, 423, 715, 383])
+    mode selector: median |theta| = 0.03 rad — near-zero angles mean
     the mined planes carry SYMMETRIC spread (nuisance axes), not directed
     moves: the group is ~self-inverse, so its quotient, not its orbit, is
     the right functor on this band.
-    flat       : verdict-recall@10  75.9  MRR 0.317
-    orbit      : verdict-recall@10  79.6  MRR 0.319
-    quotient   : verdict-recall@10  87.0  MRR 0.321
-    pca-removal: verdict-recall@10  83.3  MRR 0.335
-    random-quot: verdict-recall@10  77.8  MRR 0.320
+    flat       : verdict-recall@10  77.8  MRR 0.315
+    orbit      : verdict-recall@10  77.8  MRR 0.304
+    quotient   : verdict-recall@10  88.9  MRR 0.329
+    pca-removal: verdict-recall@10  85.2  MRR 0.340
+    random-quot: verdict-recall@10  77.8  MRR 0.296
 8d. regression guard: topical precision must not degrade
-    same-top-level-dir precision@10: flat 84.0 | orbit 83.7 | quotient 87.5 | pca-removal 86.1 | random-quot 83.8
+    same-top-level-dir precision@10: flat 83.8 | orbit 83.6 | quotient 86.2 | pca-removal 84.2 | random-quot 83.4
 
 Measured verdicts (set after running, stated as findings, not hypotheses):
   [PASS] quotient proposition holds exactly (the graph can live in the coordinates)
-  [PASS] orbit-max does NOT rescue reading-continuation (cloud regime, as demo 7 said)   (flat 27.0 vs orbit 27.0)
-  [PASS] cross-register: at least one edge-free mode beats flat recall@10 by >= 5 points   (flat 75.9 -> orbit 79.6 / quotient 87.0)
-  [PASS] targeting matters: removing random directions does not reproduce the gain   (random-quot 77.8 vs flat 75.9)
-    displacement-mined quotient vs global-PCA removal ('all-but-the-top'): 87.0 vs 83.3 — the mining is load-bearing
+  [PASS] orbit-max does NOT rescue reading-continuation (cloud regime, as demo 7 said)   (flat 27.1 vs orbit 26.8)
+  [PASS] cross-register: at least one edge-free mode beats flat recall@10 by >= 5 points   (flat 77.8 -> orbit 77.8 / quotient 88.9)
+  [PASS] targeting matters: removing random directions does not reproduce the gain   (random-quot 77.8 vs flat 77.8)
+    displacement-mined quotient vs global-PCA removal ('all-but-the-top'): 88.9 vs 85.2 — the mining is load-bearing
   [PASS] guard: the winning mode costs <= 5 points of topical precision
 
 Summary: no edges were stored and no query surface was added. The corpus's
@@ -359,6 +361,66 @@ band, zero overhead). Where demo 7's diagnostic says there is no directional
 signal (reading order), orbit honestly buys nothing — the win to check on a
 production band is cross-register recall, pre-registered in
 ORBIT_RETRIEVAL.md with kill criteria.
+
+ALL PASS
+```
+
+## `demo9_evidence_curriculum.py`
+
+```
+corpus: repo-docs LSA (1102 passages, 256d)
+9a. pair verdicts: the (raw, quotient) similarity plane labels pair kinds
+      pair kind       |  n   | s_raw  | s_quot
+      duplicate       |   23 |  0.950 |  0.936
+      sequential      |  400 |  0.470 |  0.228
+      cross-register  |  400 |  0.430 |  0.170
+      unrelated       |  400 |  0.352 |  0.056
+    separating cross-register-same-topic from unrelated: AUC 0.676 (raw) vs 0.817 (quotient)
+  [PASS] the two similarities are informative: duplicates >> sequential >> unrelated in s_raw
+  [PASS] the decomposition adds discriminative power: quotient beats raw at spotting same-topic-across-register pairs   (0.676 -> 0.817)
+    -> an assembler can therefore LABEL relations among served passages
+       ('near-duplicate of', 'continues', 'same topic in another register')
+       from geometry alone, each label carrying its two numbers as receipt.
+9b. coverage, calibrated: can this corpus support an answer here?
+    held-out files chosen for label validity (lowest redundancy 0.50..0.59; corpus median 0.66)
+    protocol: 8 whole files removed from the band; 150 uncovered vs 150 covered queries
+      coverage scorer 'top1': AUC 0.840
+      coverage scorer 'mean5': AUC 0.792
+      coverage scorer 'peak': AUC 0.869
+      coverage scorer 'margin': AUC 0.888
+  [PASS] retrieval geometry alone detects when the corpus cannot support an answer   (best AUC 0.888 (margin))
+    -> served as a per-query epistemic header with the number as receipt,
+       this turns `--mode constrain`'s refusal from a directive into a
+       calibrated, auditable decision. (Production calibration: correlate
+       the scorer with answerability on the 63-question Fabric bench.)
+9c. join keys: shared rare terms between served passages, with offsets
+    125/200 cross-register pairs share >= 1 rare term (example: ['violate', 'preview', 'rules', 'hard'])
+  [PASS] join keys exist to serve on most same-topic pairs
+9d. the assembled artefact: one query, end to end (abridged)
+    query: 'how does rlat detect contradictions in a corpus'
+    <!-- coverage: margin=0.29 (calibrated AUC 0.89) -> answerable; below threshold this block would open with a refusal directive -->
+    [1] CHANGELOG.md:1991+900  score=0.767
+    [2] CHANGELOG.md:8077+727  score=0.727
+    [3] docs/VISION.md:3450+900  score=0.709
+    [4] CHANGELOG.md:7177+900  score=0.703
+    [5] CHANGELOG.md:6277+900  score=0.703
+    [6] CHANGELOG.md:17722+852  score=0.694
+    rel: [2]<->[4] continues  (s_raw=0.74, s_quot=0.40, join keys: web-fetched, re-check, landing)
+    rel: [2]<->[5] continues  (s_raw=0.66, s_quot=0.23, join keys: conflicts, gaps, skills)
+    rel: [4]<->[5] continues  (s_raw=0.71, s_quot=0.29, join keys: external-fact, same-topic, contradiction)
+  [PASS] the block carries structure, not just hits (>= 2 labelled relations served)   (3 pair relations among 6 passages)
+    -> same passages a flat block would serve; the consumer LLM no longer
+       has to guess what relates them, what duplicates what, or whether
+       the corpus can support an answer at all.
+
+Summary: 'facilitate reasoning' decomposes into servable, LLM-free objects:
+labelled relations BETWEEN served passages (from the raw x quotient
+decomposition, k^2 at query time, no stored graph), a calibrated coverage
+verdict (the geometry knows what it doesn't know: AUC above), join keys for
+composition, and receipts on every line. Whether the consumer LLM actually
+reasons better is exactly the pre-registered same-evidence A/B in
+EVIDENCE_CURRICULUM.md — same retrieved passages, structured vs flat block,
+scored on the existing hallucination harness.
 
 ALL PASS
 ```
