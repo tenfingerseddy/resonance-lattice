@@ -108,6 +108,28 @@ def random_orthogonal(rng, n):
     return gram_schmidt(gauss_matrix(rng, n, n))
 
 
+# ------------------------------------------------------------ determinant
+
+def lu_det(A):
+    """Determinant via Gaussian elimination with partial pivoting."""
+    n = len(A)
+    M = [row[:] for row in A]
+    det = 1.0
+    for col in range(n):
+        piv = max(range(col, n), key=lambda r: abs(M[r][col]))
+        if abs(M[piv][col]) < 1e-300:
+            return 0.0
+        if piv != col:
+            M[col], M[piv] = M[piv], M[col]
+            det = -det
+        det *= M[col][col]
+        for r in range(col + 1, n):
+            f = M[r][col] / M[col][col]
+            for c in range(col, n):
+                M[r][c] -= f * M[col][c]
+    return det
+
+
 # ------------------------------------------------- symmetric eigenvalues
 
 def jacobi_eigenvalues(A, sweeps=100, tol=1e-13):

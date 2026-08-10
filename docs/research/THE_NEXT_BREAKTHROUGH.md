@@ -302,6 +302,9 @@ stability with growing n_h; RWKV-7 offers expressivity without a stability guara
 the gap between them is an open question flagged in that literature [12]. Payoff:
 recurrences strictly and *safely* more expressive than transformers — algorithmic
 generalisation (code, maths, agentic state) without CoT overhead on every step.
+*(Addendum, same date: an invented candidate satisfying (a)–(c) at mechanism level —
+with machine-checked receipts and honestly reported training costs — is developed in
+[`ROTOR_DELTA.md`](ROTOR_DELTA.md).)*
 
 **9.2 The inner-geometry problem.** The inner loop just acquired second-order steps
 (ATLAS); it has no μP. Derive the scaling limit and the correct norm for test-time
