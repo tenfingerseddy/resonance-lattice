@@ -10,6 +10,16 @@ The question, as posed by the repository owner: *"whether we can create a graph 
 vectors. Connect vectors somehow in a way that makes them easier to traverse"* — and
 ontology.
 
+> **Addendum (same date, after owner feedback).** Earlier graph attempts on this
+> product were discarded — no meaningful improvement, add-on rather than core. By
+> that bar, the `graph/` sidecar proposed in §5 below is the wrong shape and is
+> **withdrawn**. What survives from this investigation is its *tools* — the
+> chain-curvature regime diagnostic (§2) and k-planes displacement mining (§3) —
+> which feed the edge-free reformulation in
+> [`ORBIT_RETRIEVAL.md`](ORBIT_RETRIEVAL.md): corpus structure entering the score
+> function or the coordinates themselves, with no stored edges and no new query
+> surface. The measurements in this document remain valid as measurements.
+
 ## The verdict
 
 **Yes — and the graph is already latent in the band.** Nodes exist (passages);

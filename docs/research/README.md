@@ -15,7 +15,11 @@ response to *"how can it apply to resonance lattice?"* and *"can we create a gra
 from vectors?"* — two application investigations (rotor intent operators for
 retrieval; the latent graph/ontology) run against real text from this repository's
 own documentation, with a loader for production `.rlat` bands so every measurement
-can be repeated where the pinned encoder lives.
+can be repeated where the pinned encoder lives. Fourth, after the owner's verdict
+that earlier graph features were discarded as add-ons — the edge-free
+reformulation: orbit retrieval and the quotient band
+([`ORBIT_RETRIEVAL.md`](ORBIT_RETRIEVAL.md)), which withdraws the sidecar proposal
+and moves corpus structure into the coordinates themselves.
 
 Everything follows this repository's receipts-before-claims convention: every
 load-bearing identity or construction is machine-checked by a script in `demos/`;
@@ -45,8 +49,16 @@ and negative results from the runs are published alongside the positive ones.
   the chain-curvature regime diagnostic (documents here are clouds, not paths —
   the momentum hypothesis failed and is kept on display); typed metadata gates as
   the traversal win; k-planes relation mining with an identifiability boundary;
-  nested concept levels with receipts; a `graph/` sidecar design sketch and
-  pre-registered production evaluations.
+  nested concept levels with receipts. The `graph/` sidecar sketch it proposed is
+  withdrawn per owner feedback (see the addendum), in favour of:
+- [`ORBIT_RETRIEVAL.md`](ORBIT_RETRIEVAL.md) — the edge-free reformulation: store
+  the group, not the graph. Mined transformation families enter retrieval either
+  as query orbits (directed families; per-hit receipts) or as a quotient band
+  (symmetric families; zero query-time cost) — a measured angle statistic selects
+  the mode. Ablation on real text: displacement-mined quotient beats flat by 13
+  recall points and global-PCA removal by 5.6, with the topical-precision guard
+  improving; transport honestly buys nothing on this band. Pre-registered
+  production bench with kill criteria.
 - [`demos/`](demos/) — runnable receipts, Python 3.11+ stdlib only (no numpy, no
   torch), deterministic (fixed seeds, exact identities):
   - `demo1_layers_are_online_learners.py` — softmax attention ≡ kernel regression;
@@ -76,6 +88,11 @@ and negative results from the runs are published alongside the positive ones.
     k-planes relation recovery with virtual typed edges, nested concept
     hierarchy. Accepts an optional `.rlat` path to re-run every measurement on a
     production band. **Requires numpy.**
+  - `demo8_orbit_retrieval.py` — the edge-free reformulation: the quotient
+    proposition checked exactly; rotor mining with the transport-vs-quotient
+    mode selector; the five-arm cross-register ablation (flat / orbit /
+    quotient / global-PCA / random control) with the topical-precision guard;
+    the reading-continuation negative kept on display. **Requires numpy.**
   - `corpus.py` — shared corpus utilities for demos 6-7: chunks this repository's
     markdown into passages in reading order (mirroring `passages.jsonl`
     semantics), embeds with hashed-ngram TF-IDF + LSA (a stand-in, not the
@@ -96,9 +113,10 @@ python3 demo2_transition_algebra.py
 python3 demo3_one_dual_map_two_timescales.py
 python3 demo4_rotor_gate.py
 python3 demo5_interior_vs_boundary.py
-pip install numpy                      # demos 6-7 only
+pip install numpy                      # demos 6-8 only
 python3 demo6_rotor_intent_ops.py
 python3 demo7_latent_graph.py          # optionally: demo7 ... /path/to/model.rlat
+python3 demo8_orbit_retrieval.py
 ```
 
 Each script exits 0 and prints `ALL PASS` when every check holds. Demo 5 trains
