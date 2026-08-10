@@ -1,7 +1,9 @@
 # Demo run record
 
-Environment: CPython 3.11, no third-party packages. Seeds fixed in-source; IEEE-754
-doubles make these outputs deterministic across platforms.
+Environment: CPython 3.11. Demos 1-5: stdlib only. Demos 6-7: numpy 2.4 (only
+third-party package). Seeds fixed in-source. Demos 1-5 are bit-deterministic
+across platforms (IEEE-754 + stdlib); demos 6-7 are deterministic per numpy/
+BLAS build (tiny float variations possible across platforms, conclusions stable).
 
 ## `demo1_layers_are_online_learners.py`
 
@@ -182,6 +184,133 @@ family's amplitude-shaped. The advantage is structural: where hard state
 tracking needs proper rotations, the delta family has nothing to reach OR
 snap to, while the rotor family trains to exact group structure from
 sequence labels alone — sometimes via a double cover (B).
+
+ALL PASS
+```
+
+## `demo6_rotor_intent_ops.py`
+
+```
+6a. exactness: unit norm, endpoint, geodesic identity, invertibility
+  [PASS] output is unit-norm at every t (scores stay calibrated)   (max dev 4.4e-16)
+  [PASS] t=1 lands exactly on the anchor   (max dev 8.0e-16)
+  [PASS] toward == SLERP (the sphere's geodesic — not an approximation of it)   (max dev 5.8e-16)
+  [PASS] anti undoes toward exactly (auditable, reversible ops)   (max dev 6.2e-16)
+6b. resolution: global lens rotor is an isometry; per-query pulls are not
+  [PASS] lens rotor preserves ALL pairwise query similarities (exact isometry)   (max dev 2.0e-15)
+    mean pairwise query cosine: raw -0.000 | toward(0.5) 0.501 (anchor-align 0.71) | additive(0.8) 0.391 (align 0.63)
+    -> any per-query pull trades resolution for alignment (both do);
+       only the GLOBAL lens rotor conditions retrieval at zero resolution cost.
+  [PASS] per-query pulls collapse resolution; global rotor does not
+    additive pre-renormalisation norm can reach 0.988 (degenerate direction noise near anchors); rotor never leaves the sphere.
+6c. composition: exact products, near-commuting at small angles (BCH law)
+  [PASS] halving both angles shrinks the order effect ~4x (first-order BCH, measured)   (ratio 4.01)
+    -> multi-intent composition is well-behaved: order matters in principle
+       (non-abelian), negligibly at small strengths, exactly invertibly always.
+6d. disambiguation on real text (repo docs, LSA stand-in — mechanism scale)
+    corpus: repo-docs LSA (1055 passages, 256d)
+    250 ambiguous (internal-docs + benchmarks) midpoint queries;
+    primary: group-A precision@10 (intent focus); secondary: median rank of
+    the specific A-parent passage (specificity cost of aiming at a centroid):
+      method                    | A-prec@10 | median parent rank
+      raw query                  |    52.4   |    2.0
+      rotor->centroid t=0.3 (X)  |    45.1   |    1.0
+      rotor->centroid t=0.6 (X)  |    43.4   |   32.5
+      rotor->contrast t=0.15     |    64.2   |    1.0
+      rotor->contrast t=0.3      |    73.9   |    1.0
+      rotor->contrast t=0.6      |    84.2   |    1.0
+      additive contrast +0.25    |    64.6   |    1.0
+      additive contrast +0.5     |    73.8   |    1.0
+      trust x1.25 (needs glob)   |    88.2   |    1.0
+  [PASS] aiming at a broad centroid is ANTI-discriminative (documented anti-pattern)   (52.4 -> 45.1)
+  [PASS] aiming at the CONTRAST lifts group precision >= 15 points (toward+anti jointly)   (52.4 -> 84.2)
+  [PASS] the anti-pattern also costs specificity (centroid t=0.6 parent rank collapses) while the contrast keeps the parent at rank ~1 even at t=0.6
+    rotor vs additive on the contrast: 84.2 vs 73.8 A-prec@10 — rotor ahead.
+    trust weights win tie-breaking outright WHEN the intent is expressible as
+    a source glob; rotors condition toward regions no glob can name. The two
+    are complementary dials (amplitude vs phase), not competitors.
+    (Pre-registered in ROTOR_LENS.md: if additive matches rotor on the real
+     encoder bench, the rotor claim shrinks to exactness/invertibility/audit.)
+
+Summary: toward/anti/compose exist in closed form on the query side of
+`band @ q` — unit-norm always, geodesic-exact, invertible, composable, and
+as a GLOBAL lens rotor, resolution-lossless (an isometry). Per-query pulls
+(rotor or additive) buy alignment with resolution; the lens form does not.
+
+ALL PASS
+```
+
+## `demo7_latent_graph.py`
+
+```
+corpus: repo-docs LSA (1059 passages, 256d)
+7a. navigability: kNN graph (k=8), long-range links, search discipline
+    connectivity: largest component 1059/1059 passages (100.0%)
+    greedy on DIRECTED kNN edges  :  70.0% reach target
+    greedy on BIDIRECTIONAL edges : 100.0% reach target
+    best-first with backtracking  : 100.0% reach target, touching a mean of 5/1059 nodes (1% of corpus)
+    -> similarity says who your neighbours are; it does not say who counts
+       YOU as a neighbour. Symmetrising the links is the load-bearing step
+       (HNSW does exactly this); backtracking then buys efficiency. Measured
+       in the open here — production search stays FAISS (field/ann.py).
+  [PASS] kNN graph is essentially one connected component (>= 95%)
+  [PASS] edge symmetry is load-bearing: directed greedy fails often, undirected doesn't   (70.0% -> 100.0%)
+  [PASS] best-first navigation is reliable (>= 99%) while touching <= 15% of corpus   (100.0%, 1%)
+7b. the regime diagnostic: are document chains PATHS or CLOUDS?
+    962 chain steps in 48 files; median consecutive-passage angle 61 deg
+    chain curvature mean cos(d_k, d_k+1) = -0.474 +- 0.005
+    (i.i.d.-cloud signature: -0.500; persistent path: > 0)
+  [PASS] regime detected: documents are clouds, not paths (curvature ~ -1/2)   (-0.474)
+    next-passage prediction (find k+1 among all passages):
+      method                           | hit@1 | hit@5 |  MRR
+      greedy: similarity to current   |   8.1 |  24.5 | 0.162
+      momentum t=1.0 (path tool)      |   3.7 |  13.3 | 0.085
+      momentum t=0.35 (path tool)     |   6.7 |  20.9 | 0.140
+      midpoint of last two            |   8.0 |  25.7 | 0.166
+      doc centroid, ungated (cloud)   |   4.5 |  16.1 | 0.104
+      typed gate (same doc) + greedy  |  14.2 |  45.7 | 0.296
+      typed gate + doc centroid       |   5.8 |  23.4 | 0.162
+  [PASS] momentum harm is monotone in strength (as the cloud regime demands)   (13.3 < 20.9 < 24.5)
+  [PASS] cloud tool alone cannot rank within the cloud (centroid far below greedy)   (16.1 vs 24.5)
+  [PASS] typed metadata edge + local similarity is where traversal wins (>= 1.5x greedy)   (greedy 24.5 -> gated 45.7)
+  [PASS] the local signal is real beyond membership (gated greedy > gated centroid)   (45.7 vs 23.4)
+    -> the original hypothesis (momentum beats greedy) FAILED on this band;
+       the curvature diagnostic explains why (clouds, not paths) and would
+       flip the recommendation wherever it measures > 0. What actually makes
+       vectors 'easier to traverse' here: TYPED edges from metadata the .rlat
+       already stores (same-document, adjacency), gating a local similarity
+       ranking. Run against a production .rlat, this demo re-measures the
+       regime and re-scores every method.
+7c. relation types from raw pairs: k-planes clustering of displacements
+    identifiability boundary: purity 88.8% on fully-random concepts (weak in-plane mass) vs 99.7% on feature-bearing concepts
+  [PASS] k-planes separates planted relations on feature-bearing entities (>= 95%)   (purity 99.7%; selected by unsupervised objective over 10 restarts)
+    plane recovery error (last relation) 0.078; recovered rotors match the
+    true relation on 200/200 unseen nodes — typed edges generated, not stored
+  [PASS] recovered relations APPLY correctly to unseen nodes (>= 90%)   (200/200)
+    real corpus: 4236 kNN edges; adjacent-in-document base rate 10.2%; max k-planes cluster enrichment 1.82x
+  [PASS] displacement geometry carries SOME unseen structural signal (>= 1.25x)   (1.82x — weak at LSA quality; production-band test pre-registered)
+7d. hierarchy for free: single-linkage components across a threshold sweep
+    threshold 0.780: 888 concepts (largest 10, singletons 787)
+    threshold 0.697: 598 concepts (largest 73, singletons 492)
+    threshold 0.643: 365 concepts (largest 577, singletons 321)
+  [PASS] levels nest exactly (every fine concept sits inside one coarser concept)
+    receipt — one fine concept and its passages:
+      docs/internal/benchmarks/02_fabric_failure_analysis.md:10883+423
+      docs/internal/benchmarks/02_fabric_failure_analysis.md:13255+387
+      docs/internal/benchmarks/02_fabric_failure_analysis.md:13644+508
+    -> broader/narrower (SKOS-style) levels from one threshold sweep; every
+       concept is a set of passages with exact source receipts. (Production
+       variant: complete-linkage, already in field/algebra.py, resists the
+       single-linkage chaining visible in the largest coarse concept.)
+
+Summary: yes — a traversable graph is latent in the band, but each layer
+needs its OWN mathematics, and two hypotheses died honestly on the way:
+connections alone don't give traversal (backtracking does, 7a); momentum
+doesn't help where documents are clouds rather than paths — a one-number
+curvature diagnostic selects the right traversal law per band (7b);
+relations are 2-D planes in displacement space, recoverable by k-planes
+(not k-means) and applicable as virtual typed edges (7c); and nested
+concept levels with receipts come from a threshold sweep (7d).
 
 ALL PASS
 ```

@@ -6,6 +6,10 @@ not a validated breakthrough · **Date:** 2026-08-10 ·
 [`demos/demo5_interior_vs_boundary.py`](demos/demo5_interior_vs_boundary.py) (training) —
 all checks pass, including the ones that came out against the inventor's first claims.
 
+Applications of the same mathematics to this repository's retrieval layer are
+developed in [`ROTOR_LENS.md`](ROTOR_LENS.md) (intent operators, lenses) and
+[`LATENT_GRAPH.md`](LATENT_GRAPH.md) (relations as rotors in the latent graph).
+
 This document was produced on the instruction *"invent it, don't look it up."*
 Accordingly: everything below was derived and tested in this session; no literature
 search was performed for this document (the prior-art section is from memory and says
